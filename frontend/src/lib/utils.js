@@ -92,6 +92,14 @@ export const STATUS_LABELS = {
     approved: 'Aprobado',
 };
 
+export const VEHICLE_STATUS_LABELS = {
+    agendado: 'Agendado',
+    ingresado: 'Ingresado',
+    con_tecnico: 'Con Técnico',
+    en_proceso: 'En Proceso',
+    finalizado: 'Finalizado',
+};
+
 export const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-CO', {
         style: 'currency',

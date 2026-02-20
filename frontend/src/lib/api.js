@@ -88,4 +88,27 @@ export const servicesAPI = {
     getCatalog: () => api.get('/services/catalog'),
 };
 
+// Legacy API aliases for backwards compatibility
+export const appointmentsAPI = {
+    getAll: (date) => api.get('/orders', { params: { date } }),
+    create: (data) => api.post('/orders', data),
+};
+
+export const vehiclesAPI = {
+    getAll: () => api.get('/orders'),
+    assignTechnician: (orderId, technicianId, serviceTime = 60) => 
+        api.post('/orders/assign', { order_id: orderId, technician_id: technicianId, service_time_minutes: serviceTime }),
+    updateStatus: (orderId, status) => api.post(`/orders/${orderId}/start-service`),
+};
+
+export const serviceOrdersAPI = {
+    getAll: () => api.get('/orders'),
+};
+
+export const notificationsAPI = {
+    getUnreadCount: () => api.get('/alerts/unread-count'),
+    getAll: () => api.get('/alerts'),
+    markRead: (id) => api.put(`/alerts/${id}/read`),
+};
+
 export default api;

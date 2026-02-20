@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { notificationsAPI } from '../lib/api';
+import { alertsAPI } from '../lib/api';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -56,7 +56,7 @@ export const Layout = ({ children }) => {
     useEffect(() => {
         const fetchUnreadCount = async () => {
             try {
-                const response = await notificationsAPI.getUnreadCount();
+                const response = await alertsAPI.getUnreadCount();
                 setUnreadCount(response.data.count);
             } catch (error) {
                 console.error('Error fetching notifications:', error);
