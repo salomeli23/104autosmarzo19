@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { quotesAPI, vehiclesAPI } from '../lib/api';
+import { ordersAPI, servicesAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -7,7 +7,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { StatusBadge } from '../components/StatusBadge';
+import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { SERVICE_LABELS, formatCurrency, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
@@ -21,22 +21,18 @@ const SERVICE_PRICES = {
 };
 
 export const Quotes = () => {
-    const [quotes, setQuotes] = useState([]);
-    const [vehicles, setVehicles] = useState([]);
+    const [orders, setOrders] = useState([]);
+    const [serviceCatalog, setServiceCatalog] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [dialogOpen, setDialogOpen] = useState(false);
-    const [selectedVehicle, setSelectedVehicle] = useState(null);
-    const [items, setItems] = useState([]);
-    const [notes, setNotes] = useState('');
 
     const fetchData = async () => {
         try {
-            const [quotesRes, vehiclesRes] = await Promise.all([
-                quotesAPI.getAll(),
-                vehiclesAPI.getAll(),
+            const [ordersRes, catalogRes] = await Promise.all([
+                ordersAPI.getAll(),
+                servicesAPI.getCatalog(),
             ]);
-            setQuotes(quotesRes.data);
-            setVehicles(vehiclesRes.data);
+            setOrders(ordersRes.data);
+            setServiceCatalog(catalogRes.data);
         } catch (error) {
             console.error('Error fetching data:', error);
         } finally {
