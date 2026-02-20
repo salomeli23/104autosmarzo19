@@ -560,6 +560,22 @@ async def save_inspection(data: InspectionData, current_user: dict = Depends(req
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
     
+    # Log history
+    await log_order_history(
+        data.order_id, "INSPECCION_COMPLETADA",
+        OrderStatus.INGRESADO.value, OrderStatus.EN_REVISION.value,
+        current_user["id"], current_user["name"],
+        {"photos_count": len(data.photos), "has_video": bool(data.video_url)}
+    )
+    
+    # Alert coordinators for assignment
+    await create_alert(
+        "coordinador", AlertType.NUEVO_INGRESO,
+        "Vehículo listo para asignación",
+        f"Inspección 360° completada para {order['plate']}",
+        data.order_id
+    )
+    
     return {"message": "Inspección guardada exitosamente"}
 
 # Step 4: Assignment (Coordinator)
