@@ -141,6 +141,40 @@ async def create_alert(recipient_role: str, alert_type: AlertType, title: str, m
         }
         await db.alerts.insert_one(alert_doc)
 
+async def log_order_history(order_id: str, action: str, old_status: str, new_status: str, user_id: str, user_name: str, details: dict = None):
+    """Log order status change for traceability"""
+    history_doc = {
+        "id": str(uuid.uuid4()),
+        "order_id": order_id,
+        "action": action,
+        "old_status": old_status,
+        "new_status": new_status,
+        "changed_by_id": user_id,
+        "changed_by_name": user_name,
+        "details": details or {},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.order_history.insert_one(history_doc)
+
+# Valid state transitions
+VALID_TRANSITIONS = {
+    "agendado": ["ingresado", "desistimiento"],
+    "ingresado": ["en_revision", "desistimiento"],
+    "en_revision": ["asignado", "desistimiento"],
+    "asignado": ["en_proceso", "desistimiento"],
+    "en_proceso": ["servicio_completado", "desistimiento"],
+    "servicio_completado": ["terminado_pagado", "terminado_falta_pago"],
+    "terminado_pagado": ["entregado"],
+    "terminado_falta_pago": ["terminado_pagado", "entregado"],
+    "entregado": [],
+    "desistimiento": [],
+}
+
+def validate_transition(current_status: str, new_status: str) -> bool:
+    """Validate if status transition is allowed"""
+    allowed = VALID_TRANSITIONS.get(current_status, [])
+    return new_status in allowed
+
 # ==================== MODELS ====================
 class UserCreate(BaseModel):
     email: EmailStr
