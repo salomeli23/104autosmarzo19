@@ -189,13 +189,19 @@ export const Appointments = () => {
             };
 
             const response = await ordersAPI.create(submitData);
-            toast.success(`Cita agendada. Código: ${response.data.order_code}`);
+            setCreatedOrder(response.data);
             setDialogOpen(false);
+            setShowQRDialog(true); // Mostrar el diálogo con QR
             fetchOrders(selectedDate);
             resetForm();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al agendar cita');
         }
+    };
+
+    const handleCloseQRDialog = () => {
+        setShowQRDialog(false);
+        setCreatedOrder(null);
     };
 
     // Group orders by time slot
