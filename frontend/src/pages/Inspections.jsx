@@ -137,33 +137,33 @@ export const Inspections = () => {
                             </DialogDescription>
                         </DialogHeader>
 
-                        {/* Step 1: Select Vehicle */}
+                        {/* Step 1: Select Order */}
                         {step === 1 && (
                             <div className="space-y-4">
                                 <div className="space-y-2">
-                                    <Label>Seleccionar Vehículo Agendado *</Label>
+                                    <Label>Seleccionar Orden Ingresada *</Label>
                                     <Select
-                                        value={selectedVehicle?.id || ''}
+                                        value={selectedOrder?.id || ''}
                                         onValueChange={(value) => {
-                                            const vehicle = vehicles.find(v => v.id === value);
-                                            setSelectedVehicle(vehicle);
+                                            const order = orders.find(o => o.id === value);
+                                            setSelectedOrder(order);
                                         }}
                                     >
                                         <SelectTrigger data-testid="inspection-vehicle-select">
-                                            <SelectValue placeholder="Buscar vehículo por placa..." />
+                                            <SelectValue placeholder="Buscar orden por placa..." />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {vehicles.length === 0 ? (
+                                            {orders.length === 0 ? (
                                                 <div className="p-4 text-center text-muted-foreground">
-                                                    No hay vehículos agendados
+                                                    No hay órdenes ingresadas
                                                 </div>
                                             ) : (
-                                                vehicles.map((vehicle) => (
-                                                    <SelectItem key={vehicle.id} value={vehicle.id}>
+                                                orders.map((order) => (
+                                                    <SelectItem key={order.id} value={order.id}>
                                                         <div className="flex items-center gap-2">
-                                                            <span className="font-mono">{vehicle.plate}</span>
+                                                            <span className="font-mono">{order.plate}</span>
                                                             <span className="text-muted-foreground">
-                                                                - {vehicle.brand} {vehicle.model}
+                                                                - {order.brand} {order.model}
                                                             </span>
                                                         </div>
                                                     </SelectItem>
@@ -173,7 +173,7 @@ export const Inspections = () => {
                                     </Select>
                                 </div>
 
-                                {selectedVehicle && (
+                                {selectedOrder && (
                                     <Card className="bg-muted/50">
                                         <CardContent className="p-4">
                                             <div className="flex items-center gap-3">
@@ -182,15 +182,13 @@ export const Inspections = () => {
                                                 </div>
                                                 <div className="flex-1">
                                                     <div className="flex items-center gap-2">
-                                                        <p className="font-mono font-bold">{selectedVehicle.plate}</p>
-                                                        {selectedVehicle.status && (
-                                                            <VehicleStatusBadge status={selectedVehicle.status} />
-                                                        )}
+                                                        <p className="font-mono font-bold">{selectedOrder.plate}</p>
+                                                        <OrderStatusBadge status={selectedOrder.status} />
                                                     </div>
                                                     <p className="text-sm text-muted-foreground">
-                                                        {selectedVehicle.brand} {selectedVehicle.model} {selectedVehicle.year} - {selectedVehicle.color}
+                                                        {selectedOrder.brand} {selectedOrder.model} {selectedOrder.year} - {selectedOrder.color}
                                                     </p>
-                                                    <p className="text-sm">{selectedVehicle.client_name} • {selectedVehicle.client_phone}</p>
+                                                    <p className="text-sm">{selectedOrder.client_name} • {selectedOrder.client_phone}</p>
                                                 </div>
                                             </div>
                                         </CardContent>
@@ -199,7 +197,7 @@ export const Inspections = () => {
 
                                 <Button
                                     onClick={() => setStep(2)}
-                                    disabled={!selectedVehicle}
+                                    disabled={!selectedOrder}
                                     className="w-full"
                                     data-testid="inspection-next-btn"
                                 >
@@ -211,13 +209,13 @@ export const Inspections = () => {
                         {/* Step 2: Camera / Photos */}
                         {step === 2 && (
                             <div className="space-y-4">
-                                {/* Vehicle Summary */}
+                                {/* Order Summary */}
                                 <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                                     <div className="flex items-center gap-2">
                                         <Car className="w-5 h-5 text-primary" />
-                                        <span className="font-mono">{selectedVehicle?.plate}</span>
+                                        <span className="font-mono">{selectedOrder?.plate}</span>
                                         <span className="text-muted-foreground">
-                                            {selectedVehicle?.brand} {selectedVehicle?.model}
+                                            {selectedOrder?.brand} {selectedOrder?.model}
                                         </span>
                                     </div>
                                 </div>
@@ -278,7 +276,7 @@ export const Inspections = () => {
                                 <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                                     <div className="flex items-center gap-2">
                                         <Car className="w-5 h-5 text-primary" />
-                                        <span className="font-mono">{selectedVehicle?.plate}</span>
+                                        <span className="font-mono">{selectedOrder?.plate}</span>
                                     </div>
                                     <div className="flex items-center gap-3">
                                         {photos.length > 0 && (
@@ -399,12 +397,12 @@ export const Inspections = () => {
                 </CardContent>
             </Card>
 
-            {/* Pending Vehicles */}
+            {/* Pending Orders */}
             <Card className="card-hover">
                 <CardHeader>
                     <CardTitle className="font-heading text-lg flex items-center gap-2">
                         <Car className="w-5 h-5 text-primary" />
-                        Vehículos Pendientes de Revisión
+                        Órdenes Pendientes de Revisión 360°
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -412,31 +410,31 @@ export const Inspections = () => {
                         <div className="flex justify-center py-8">
                             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                         </div>
-                    ) : vehicles.length === 0 ? (
+                    ) : orders.length === 0 ? (
                         <div className="text-center py-8 text-muted-foreground">
                             <ClipboardCheck className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                            <p>No hay vehículos agendados pendientes de revisión</p>
+                            <p>No hay órdenes ingresadas pendientes de revisión</p>
                         </div>
                     ) : (
                         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {vehicles.map((vehicle) => (
+                            {orders.map((order) => (
                                 <div
-                                    key={vehicle.id}
+                                    key={order.id}
                                     className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
                                     onClick={() => {
-                                        setSelectedVehicle(vehicle);
+                                        setSelectedOrder(order);
                                         setDialogOpen(true);
                                     }}
-                                    data-testid={`vehicle-quick-${vehicle.id}`}
+                                    data-testid={`order-quick-${order.id}`}
                                 >
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                                            <Car className="w-5 h-5 text-blue-500" />
+                                        <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                                            <Car className="w-5 h-5 text-purple-500" />
                                         </div>
                                         <div>
-                                            <p className="font-mono font-medium">{vehicle.plate}</p>
+                                            <p className="font-mono font-medium">{order.plate}</p>
                                             <p className="text-xs text-muted-foreground">
-                                                {vehicle.brand} {vehicle.model} • {vehicle.client_name}
+                                                {order.brand} {order.model} • {order.client_name}
                                             </p>
                                         </div>
                                     </div>
