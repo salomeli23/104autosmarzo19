@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 
 class PolarizadosYAAPITester:
-    def __init__(self, base_url="https://techgarage-app.preview.emergentagent.com"):
+    def __init__(self, base_url="https://service-ops-auto.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_base = f"{base_url}/api"
         self.admin_token = None

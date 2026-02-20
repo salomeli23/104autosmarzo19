@@ -2,7 +2,7 @@ import requests
 import json
 
 # Test the specific technician assignment endpoint
-base_url = "https://techgarage-app.preview.emergentagent.com"
+base_url = "https://service-ops-auto.preview.emergentagent.com"
 api_base = f"{base_url}/api"
 
 # Login as admin
