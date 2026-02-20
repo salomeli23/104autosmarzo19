@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { dashboardAPI, serviceOrdersAPI, appointmentsAPI } from '../lib/api';
+import { dashboardAPI, ordersAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { StatusBadge } from '../components/StatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
@@ -26,14 +26,14 @@ export const Dashboard = () => {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [statsRes, ordersRes, appointmentsRes] = await Promise.all([
+                const today = new Date().toISOString().split('T')[0];
+                const [statsRes, ordersRes] = await Promise.all([
                     dashboardAPI.getStats(),
-                    serviceOrdersAPI.getAll({}),
-                    appointmentsAPI.getAll(new Date().toISOString().split('T')[0]),
+                    ordersAPI.getAll({ date: today }),
                 ]);
                 setStats(statsRes.data);
                 setRecentOrders(ordersRes.data.slice(0, 5));
-                setTodayAppointments(appointmentsRes.data);
+                setTodayAppointments(ordersRes.data);
             } catch (error) {
                 console.error('Error fetching dashboard data:', error);
             } finally {
