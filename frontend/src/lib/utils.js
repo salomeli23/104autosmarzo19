@@ -82,6 +82,16 @@ export const CAR_MODELS = {
 
 export const COLORS = ['Blanco', 'Negro', 'Gris', 'Plata', 'Rojo', 'Azul', 'Verde', 'Amarillo', 'Naranja', 'Café', 'Beige', 'Otro'];
 
+// Legacy status labels for backwards compatibility
+export const STATUS_LABELS = {
+    agendado: 'Agendado',
+    en_proceso: 'En Proceso',
+    en_revision: 'En Revisión',
+    terminado: 'Terminado',
+    pending: 'Pendiente',
+    approved: 'Aprobado',
+};
+
 export const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-CO', {
         style: 'currency',
