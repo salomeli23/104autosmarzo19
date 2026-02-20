@@ -212,6 +212,69 @@ export const Appointments = () => {
 
     return (
         <div className="space-y-6" data-testid="appointments-page">
+            {/* QR Dialog - Shown after creating appointment */}
+            <Dialog open={showQRDialog} onOpenChange={setShowQRDialog}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading text-xl flex items-center gap-2">
+                            <CheckCircle className="w-6 h-6 text-green-500" />
+                            ¡Cita Agendada!
+                        </DialogTitle>
+                    </DialogHeader>
+                    {createdOrder && (
+                        <div className="space-y-4">
+                            <div className="p-4 rounded-lg bg-muted/50 space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <User className="w-4 h-4 text-muted-foreground" />
+                                    <span className="font-medium">{createdOrder.client_name}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Car className="w-4 h-4 text-muted-foreground" />
+                                    <span className="font-mono">{createdOrder.plate}</span>
+                                    <span className="text-muted-foreground">
+                                        - {createdOrder.brand} {createdOrder.model}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Clock className="w-4 h-4 text-muted-foreground" />
+                                    <span>{createdOrder.date} • {createdOrder.time_slot}</span>
+                                </div>
+                            </div>
+
+                            <QRDisplay 
+                                qrCode={createdOrder.qr_code}
+                                orderCode={createdOrder.order_code}
+                                clientName={createdOrder.client_name}
+                            />
+
+                            <p className="text-sm text-muted-foreground text-center">
+                                El cliente debe presentar este código QR al momento del ingreso del vehículo
+                            </p>
+
+                            <div className="flex gap-2">
+                                <Button 
+                                    variant="outline" 
+                                    onClick={handleCloseQRDialog}
+                                    className="flex-1"
+                                >
+                                    Cerrar
+                                </Button>
+                                <Button 
+                                    onClick={() => {
+                                        handleCloseQRDialog();
+                                        window.location.href = '/checkin';
+                                    }}
+                                    className="flex-1 brand-glow"
+                                >
+                                    Ir a Check-in
+                                    <ArrowRight className="w-4 h-4 ml-2" />
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
