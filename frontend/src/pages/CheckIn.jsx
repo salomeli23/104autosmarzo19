@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { QRScanner } from '../components/QRScanner';
 import { QRDisplay } from '../components/QRDisplay';
 import { SignaturePad } from '../components/SignaturePad';
-import { CameraCapture } from '../components/CameraCapture';
+import { SinglePhotoCapture } from '../components/SinglePhotoCapture';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { formatCurrency } from '../lib/utils';
@@ -429,7 +429,7 @@ export const CheckIn = () => {
                         </CardHeader>
                         <CardContent>
                             {showCedulaCamera ? (
-                                <CameraCapture 
+                                <SinglePhotoCapture 
                                     onCapture={(photo) => {
                                         setCedulaPhoto(photo);
                                         setShowCedulaCamera(false);
@@ -475,7 +475,7 @@ export const CheckIn = () => {
                         </CardHeader>
                         <CardContent>
                             {showClientCamera ? (
-                                <CameraCapture 
+                                <SinglePhotoCapture 
                                     onCapture={(photo) => {
                                         setClientPhoto(photo);
                                         setShowClientCamera(false);
