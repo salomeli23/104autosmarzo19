@@ -7,9 +7,12 @@ import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Appointments } from './pages/Appointments';
+import { CheckIn } from './pages/CheckIn';
 import { Vehicles } from './pages/Vehicles';
 import { Inspections } from './pages/Inspections';
 import { Assign } from './pages/Assign';
+import { TechnicianView } from './pages/TechnicianView';
+import { Billing } from './pages/Billing';
 import { Quotes } from './pages/Quotes';
 import { ServiceOrders } from './pages/ServiceOrders';
 import { Notifications } from './pages/Notifications';
@@ -84,6 +87,14 @@ function AppRoutes() {
                 } 
             />
             <Route 
+                path="/checkin" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'asesor']}>
+                        <CheckIn />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
                 path="/vehicles" 
                 element={
                     <ProtectedRoute>
@@ -102,8 +113,24 @@ function AppRoutes() {
             <Route 
                 path="/assign" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'asesor']}>
+                    <ProtectedRoute allowedRoles={['admin', 'coordinador']}>
                         <Assign />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/technician" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'tecnico']}>
+                        <TechnicianView />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/billing" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion']}>
+                        <Billing />
                     </ProtectedRoute>
                 } 
             />
