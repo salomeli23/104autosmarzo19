@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { appointmentsAPI } from '../lib/api';
+import { ordersAPI, servicesAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -9,98 +9,67 @@ import { Calendar } from '../components/ui/calendar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
-import { StatusBadge } from '../components/StatusBadge';
+import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
-import { TIME_SLOTS, SERVICE_LABELS } from '../lib/utils';
+import { TIME_SLOTS, CAR_BRANDS, CAR_MODELS, formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-const SERVICES = Object.entries(SERVICE_LABELS).map(([value, label]) => ({ value, label }));
-
-// Lista de marcas y modelos populares en Colombia
-const CAR_BRANDS = [
-    'Chevrolet',
-    'Renault',
-    'Mazda',
-    'Kia',
-    'Nissan',
-    'Toyota',
-    'Hyundai',
-    'Ford',
-    'Volkswagen',
-    'Suzuki',
-    'Honda',
-    'BMW',
-    'Mercedes-Benz',
-    'Audi',
-    'Jeep',
-    'Mitsubishi',
-    'Peugeot',
-    'Citroën',
-    'Fiat',
-    'Otro'
-];
-
-const CAR_MODELS = {
-    'Chevrolet': ['Spark', 'Sail', 'Onix', 'Tracker', 'Captiva', 'Equinox', 'Blazer', 'Tahoe', 'Trailblazer', 'N300', 'N400', 'Otro'],
-    'Renault': ['Kwid', 'Sandero', 'Stepway', 'Logan', 'Duster', 'Koleos', 'Captur', 'Oroch', 'Kangoo', 'Master', 'Otro'],
-    'Mazda': ['Mazda 2', 'Mazda 3', 'Mazda 6', 'CX-3', 'CX-30', 'CX-5', 'CX-9', 'MX-5', 'BT-50', 'Otro'],
-    'Kia': ['Picanto', 'Rio', 'Cerato', 'K5', 'Soul', 'Seltos', 'Sportage', 'Sorento', 'Carnival', 'Stinger', 'Otro'],
-    'Nissan': ['March', 'Versa', 'Sentra', 'Kicks', 'Qashqai', 'X-Trail', 'Pathfinder', 'Frontier', 'NP300', 'Otro'],
-    'Toyota': ['Yaris', 'Corolla', 'Camry', 'Prius', 'C-HR', 'RAV4', 'Fortuner', 'Land Cruiser', 'Hilux', '4Runner', 'Otro'],
-    'Hyundai': ['Grand i10', 'Accent', 'Elantra', 'Sonata', 'Venue', 'Kona', 'Tucson', 'Santa Fe', 'Palisade', 'Creta', 'Otro'],
-    'Ford': ['Fiesta', 'Focus', 'Fusion', 'Mustang', 'EcoSport', 'Escape', 'Explorer', 'Expedition', 'Ranger', 'F-150', 'Otro'],
-    'Volkswagen': ['Gol', 'Polo', 'Virtus', 'Jetta', 'Passat', 'T-Cross', 'Taos', 'Tiguan', 'Touareg', 'Amarok', 'Otro'],
-    'Suzuki': ['Alto', 'Swift', 'Baleno', 'Ciaz', 'S-Presso', 'Vitara', 'Grand Vitara', 'Jimny', 'XL7', 'Otro'],
-    'Honda': ['Brio', 'City', 'Civic', 'Accord', 'HR-V', 'CR-V', 'Pilot', 'Passport', 'Odyssey', 'Otro'],
-    'BMW': ['Serie 1', 'Serie 2', 'Serie 3', 'Serie 4', 'Serie 5', 'Serie 7', 'X1', 'X3', 'X5', 'X7', 'Otro'],
-    'Mercedes-Benz': ['Clase A', 'Clase C', 'Clase E', 'Clase S', 'GLA', 'GLC', 'GLE', 'GLS', 'Sprinter', 'Otro'],
-    'Audi': ['A1', 'A3', 'A4', 'A6', 'A8', 'Q2', 'Q3', 'Q5', 'Q7', 'Q8', 'Otro'],
-    'Jeep': ['Renegade', 'Compass', 'Cherokee', 'Grand Cherokee', 'Wrangler', 'Gladiator', 'Otro'],
-    'Mitsubishi': ['Mirage', 'Lancer', 'ASX', 'Outlander', 'Eclipse Cross', 'Montero', 'L200', 'Otro'],
-    'Peugeot': ['208', '301', '308', '408', '508', '2008', '3008', '5008', 'Partner', 'Otro'],
-    'Citroën': ['C3', 'C4', 'C5 Aircross', 'Berlingo', 'Jumpy', 'Otro'],
-    'Fiat': ['Mobi', 'Argo', 'Cronos', 'Tipo', '500', 'Toro', 'Ducato', 'Otro'],
-    'Otro': ['Especificar en notas']
-};
-
 export const Appointments = () => {
-    const [appointments, setAppointments] = useState([]);
+    const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [dialogOpen, setDialogOpen] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
+    const [serviceCatalog, setServiceCatalog] = useState([]);
     const [formData, setFormData] = useState({
         client_name: '',
         client_phone: '',
         client_email: '',
+        client_cedula: '',
         plate: '',
         brand: '',
         model: '',
-        date: '',
+        year: '',
+        color: '',
         time_slot: '',
         services: [],
+        negotiated_value: '',
         notes: '',
     });
 
-    const fetchAppointments = useCallback(async (date) => {
+    // Fetch service catalog on mount
+    useEffect(() => {
+        const fetchCatalog = async () => {
+            try {
+                const response = await servicesAPI.getCatalog();
+                setServiceCatalog(response.data);
+            } catch (error) {
+                console.error('Error fetching catalog:', error);
+            }
+        };
+        fetchCatalog();
+    }, []);
+
+    const fetchOrders = useCallback(async (date) => {
         try {
             setLoading(true);
             const dateStr = format(date, 'yyyy-MM-dd');
-            const response = await appointmentsAPI.getAll(dateStr);
-            setAppointments(response.data);
+            const response = await ordersAPI.getAll({ date: dateStr });
+            setOrders(response.data);
         } catch (error) {
-            console.error('Error fetching appointments:', error);
+            console.error('Error fetching orders:', error);
+            toast.error('Error al cargar las citas');
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        fetchAppointments(selectedDate);
-    }, [selectedDate, fetchAppointments]);
+        fetchOrders(selectedDate);
+    }, [selectedDate, fetchOrders]);
 
     // Update available models when brand changes
     useEffect(() => {
@@ -110,6 +79,19 @@ export const Appointments = () => {
             setAvailableModels([]);
         }
     }, [formData.brand]);
+
+    // Calculate suggested price when services change
+    useEffect(() => {
+        if (formData.services.length > 0 && serviceCatalog.length > 0) {
+            const total = formData.services.reduce((sum, serviceKey) => {
+                const catalogItem = serviceCatalog.find(c => c.service === serviceKey);
+                return sum + (catalogItem?.suggested_price || 0);
+            }, 0);
+            if (!formData.negotiated_value) {
+                setFormData(prev => ({ ...prev, negotiated_value: total.toString() }));
+            }
+        }
+    }, [formData.services, serviceCatalog]);
 
     const handleDateSelect = (date) => {
         if (date) {
@@ -129,17 +111,33 @@ export const Appointments = () => {
         setFormData(prev => ({ ...prev, time_slot: value }));
     };
 
-    const handleServiceToggle = useCallback((service) => {
+    const handleServiceToggle = useCallback((serviceKey) => {
         setFormData(prev => {
-            const isSelected = prev.services.includes(service);
-            return {
-                ...prev,
-                services: isSelected
-                    ? prev.services.filter(s => s !== service)
-                    : [...prev.services, service]
-            };
+            const isSelected = prev.services.includes(serviceKey);
+            const newServices = isSelected
+                ? prev.services.filter(s => s !== serviceKey)
+                : [...prev.services, serviceKey];
+            return { ...prev, services: newServices };
         });
     }, []);
+
+    const resetForm = () => {
+        setFormData({
+            client_name: '',
+            client_phone: '',
+            client_email: '',
+            client_cedula: '',
+            plate: '',
+            brand: '',
+            model: '',
+            year: '',
+            color: '',
+            time_slot: '',
+            services: [],
+            negotiated_value: '',
+            notes: '',
+        });
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -154,35 +152,52 @@ export const Appointments = () => {
             return;
         }
 
+        if (!formData.negotiated_value || parseFloat(formData.negotiated_value) <= 0) {
+            toast.error('Ingresa el valor negociado');
+            return;
+        }
+
         try {
-            const submitData = {
-                ...formData,
-                date: format(selectedDate, 'yyyy-MM-dd'),
-            };
-            await appointmentsAPI.create(submitData);
-            toast.success('Cita agendada exitosamente');
-            setDialogOpen(false);
-            fetchAppointments(selectedDate);
-            setFormData({
-                client_name: '',
-                client_phone: '',
-                client_email: '',
-                plate: '',
-                brand: '',
-                model: '',
-                date: '',
-                time_slot: '',
-                services: [],
-                notes: '',
+            // Build services array with prices from catalog
+            const servicesData = formData.services.map(serviceKey => {
+                const catalogItem = serviceCatalog.find(c => c.service === serviceKey);
+                return {
+                    service: serviceKey,
+                    price: catalogItem?.suggested_price || 0,
+                    description: catalogItem?.description || ''
+                };
             });
+
+            const submitData = {
+                client_name: formData.client_name,
+                client_phone: formData.client_phone,
+                client_email: formData.client_email || null,
+                client_cedula: formData.client_cedula || null,
+                plate: formData.plate,
+                brand: formData.brand,
+                model: formData.model,
+                year: formData.year ? parseInt(formData.year) : null,
+                color: formData.color || null,
+                date: format(selectedDate, 'yyyy-MM-dd'),
+                time_slot: formData.time_slot,
+                services: servicesData,
+                negotiated_value: parseFloat(formData.negotiated_value),
+                notes: formData.notes || null,
+            };
+
+            const response = await ordersAPI.create(submitData);
+            toast.success(`Cita agendada. Código: ${response.data.order_code}`);
+            setDialogOpen(false);
+            fetchOrders(selectedDate);
+            resetForm();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al agendar cita');
         }
     };
 
-    // Group appointments by time slot
-    const appointmentsBySlot = TIME_SLOTS.reduce((acc, slot) => {
-        acc[slot] = appointments.filter(a => a.time_slot === slot);
+    // Group orders by time slot
+    const ordersBySlot = TIME_SLOTS.reduce((acc, slot) => {
+        acc[slot] = orders.filter(o => o.time_slot === slot);
         return acc;
     }, {});
 
@@ -237,15 +252,26 @@ export const Appointments = () => {
                                         />
                                     </div>
                                 </div>
-                                <div className="space-y-2">
-                                    <Label htmlFor="client_email">Email</Label>
-                                    <Input
-                                        id="client_email"
-                                        type="email"
-                                        value={formData.client_email}
-                                        onChange={(e) => setFormData(prev => ({ ...prev, client_email: e.target.value }))}
-                                        data-testid="appointment-client-email"
-                                    />
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="client_email">Email</Label>
+                                        <Input
+                                            id="client_email"
+                                            type="email"
+                                            value={formData.client_email}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, client_email: e.target.value }))}
+                                            data-testid="appointment-client-email"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="client_cedula">Cédula</Label>
+                                        <Input
+                                            id="client_cedula"
+                                            value={formData.client_cedula}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, client_cedula: e.target.value }))}
+                                            data-testid="appointment-client-cedula"
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
@@ -255,20 +281,35 @@ export const Appointments = () => {
                                     <Car className="w-4 h-4" />
                                     Datos del Vehículo
                                 </h3>
-                                <div className="space-y-2">
-                                    <Label htmlFor="plate">Placa</Label>
-                                    <Input
-                                        id="plate"
-                                        value={formData.plate}
-                                        onChange={(e) => setFormData(prev => ({ ...prev, plate: e.target.value.toUpperCase() }))}
-                                        className="font-mono"
-                                        placeholder="ABC123"
-                                        data-testid="appointment-plate"
-                                    />
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="plate">Placa *</Label>
+                                        <Input
+                                            id="plate"
+                                            value={formData.plate}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, plate: e.target.value.toUpperCase() }))}
+                                            className="font-mono"
+                                            placeholder="ABC123"
+                                            required
+                                            data-testid="appointment-plate"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="year">Año</Label>
+                                        <Input
+                                            id="year"
+                                            type="number"
+                                            min="1990"
+                                            max="2030"
+                                            value={formData.year}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, year: e.target.value }))}
+                                            data-testid="appointment-year"
+                                        />
+                                    </div>
                                 </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div className="space-y-2">
-                                        <Label>Marca</Label>
+                                        <Label>Marca *</Label>
                                         <Select value={formData.brand} onValueChange={handleBrandChange}>
                                             <SelectTrigger data-testid="appointment-brand">
                                                 <SelectValue placeholder="Seleccionar marca" />
@@ -281,7 +322,7 @@ export const Appointments = () => {
                                         </Select>
                                     </div>
                                     <div className="space-y-2">
-                                        <Label>Modelo</Label>
+                                        <Label>Modelo *</Label>
                                         <Select 
                                             value={formData.model} 
                                             onValueChange={handleModelChange}
@@ -297,6 +338,15 @@ export const Appointments = () => {
                                             </SelectContent>
                                         </Select>
                                     </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Color</Label>
+                                    <Input
+                                        value={formData.color}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, color: e.target.value }))}
+                                        placeholder="Ej: Blanco, Negro, Plata..."
+                                        data-testid="appointment-color"
+                                    />
                                 </div>
                             </div>
 
@@ -318,27 +368,53 @@ export const Appointments = () => {
                             {/* Services */}
                             <div className="space-y-2">
                                 <Label>Servicios *</Label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {SERVICES.map((service) => (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {serviceCatalog.map((item) => (
                                         <div
-                                            key={service.value}
-                                            className="flex items-center space-x-2 p-2 rounded-lg bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                                            key={item.service}
+                                            className="flex items-center space-x-2 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
                                         >
                                             <Checkbox
-                                                id={`service-${service.value}`}
-                                                checked={formData.services.includes(service.value)}
-                                                onCheckedChange={() => handleServiceToggle(service.value)}
-                                                data-testid={`service-checkbox-${service.value}`}
+                                                id={`service-${item.service}`}
+                                                checked={formData.services.includes(item.service)}
+                                                onCheckedChange={() => handleServiceToggle(item.service)}
+                                                data-testid={`service-checkbox-${item.service}`}
                                             />
                                             <label 
-                                                htmlFor={`service-${service.value}`} 
+                                                htmlFor={`service-${item.service}`} 
                                                 className="text-sm cursor-pointer flex-1"
                                             >
-                                                {service.label}
+                                                <span className="font-medium">{item.name}</span>
+                                                <span className="text-muted-foreground ml-2 text-xs">
+                                                    {formatCurrency(item.suggested_price)}
+                                                </span>
                                             </label>
                                         </div>
                                     ))}
                                 </div>
+                            </div>
+
+                            {/* Negotiated Value */}
+                            <div className="space-y-2">
+                                <Label htmlFor="negotiated_value" className="flex items-center gap-2">
+                                    <DollarSign className="w-4 h-4" />
+                                    Valor Negociado *
+                                </Label>
+                                <Input
+                                    id="negotiated_value"
+                                    type="number"
+                                    min="0"
+                                    value={formData.negotiated_value}
+                                    onChange={(e) => setFormData(prev => ({ ...prev, negotiated_value: e.target.value }))}
+                                    placeholder="0"
+                                    required
+                                    data-testid="appointment-negotiated-value"
+                                />
+                                {formData.negotiated_value && (
+                                    <p className="text-sm text-muted-foreground">
+                                        {formatCurrency(parseFloat(formData.negotiated_value) || 0)}
+                                    </p>
+                                )}
                             </div>
 
                             {/* Notes */}
@@ -399,7 +475,7 @@ export const Appointments = () => {
                         ) : (
                             <div className="space-y-3">
                                 {TIME_SLOTS.map((slot) => {
-                                    const slotAppointments = appointmentsBySlot[slot] || [];
+                                    const slotOrders = ordersBySlot[slot] || [];
                                     return (
                                         <div 
                                             key={slot}
@@ -410,30 +486,37 @@ export const Appointments = () => {
                                                 <p className="font-mono text-sm font-medium">{slot}</p>
                                             </div>
                                             <div className="flex-1">
-                                                {slotAppointments.length === 0 ? (
+                                                {slotOrders.length === 0 ? (
                                                     <p className="text-sm text-muted-foreground">Disponible</p>
                                                 ) : (
                                                     <div className="space-y-2">
-                                                        {slotAppointments.map((appointment) => (
+                                                        {slotOrders.map((order) => (
                                                             <div 
-                                                                key={appointment.id}
+                                                                key={order.id}
                                                                 className="flex items-center justify-between p-2 rounded bg-card border"
+                                                                data-testid={`order-card-${order.order_code}`}
                                                             >
-                                                                <div>
-                                                                    <p className="font-medium">{appointment.client_name}</p>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <p className="font-medium truncate">{order.client_name}</p>
+                                                                        <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                                                                            <QrCode className="w-3 h-3" />
+                                                                            {order.order_code}
+                                                                        </span>
+                                                                    </div>
                                                                     <p className="text-sm text-muted-foreground">
-                                                                        {appointment.plate && <span className="font-mono">{appointment.plate}</span>}
-                                                                        {appointment.brand && ` - ${appointment.brand}`}
-                                                                        {appointment.model && ` ${appointment.model}`}
+                                                                        <span className="font-mono">{order.plate}</span>
+                                                                        {order.brand && ` - ${order.brand}`}
+                                                                        {order.model && ` ${order.model}`}
                                                                     </p>
                                                                 </div>
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="flex gap-1">
-                                                                        {appointment.services.slice(0, 2).map((s) => (
-                                                                            <ServiceBadge key={s} service={s} />
+                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                    <div className="hidden sm:flex gap-1">
+                                                                        {order.services?.slice(0, 2).map((s, idx) => (
+                                                                            <ServiceBadge key={idx} service={s.service || s} />
                                                                         ))}
                                                                     </div>
-                                                                    <StatusBadge status={appointment.status} />
+                                                                    <OrderStatusBadge status={order.status} />
                                                                 </div>
                                                             </div>
                                                         ))}
@@ -451,3 +534,5 @@ export const Appointments = () => {
         </div>
     );
 };
+
+export default Appointments;
