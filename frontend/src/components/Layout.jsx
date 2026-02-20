@@ -30,18 +30,23 @@ import {
     User,
     ChevronRight,
     UserPlus,
+    QrCode,
+    CreditCard,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets.emergentagent.com/job_techgarage-app/artifacts/8kw8x7h6_Captura%20de%20Pantalla%202026-01-30%20a%20la%28s%29%2011.36.02%20a.%C2%A0m..png";
 
 const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'tecnico'] },
+    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion'] },
     { path: '/appointments', label: 'Agendamiento', icon: Calendar, roles: ['admin', 'asesor'] },
-    { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'asesor', 'tecnico'] },
-    { path: '/inspections', label: 'Revisión 360°', icon: ClipboardCheck, roles: ['admin', 'asesor', 'tecnico'] },
-    { path: '/assign', label: 'Asignar', icon: UserPlus, roles: ['admin', 'asesor'] },
+    { path: '/checkin', label: 'Check-in / Ingreso', icon: QrCode, roles: ['admin', 'asesor'] },
+    { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'asesor', 'coordinador'] },
+    { path: '/inspections', label: 'Revisión 360°', icon: ClipboardCheck, roles: ['admin', 'asesor'] },
+    { path: '/assign', label: 'Asignar Técnico', icon: UserPlus, roles: ['admin', 'coordinador'] },
+    { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
+    { path: '/billing', label: 'Facturación', icon: CreditCard, roles: ['admin', 'facturacion'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin', 'asesor'] },
-    { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'asesor', 'tecnico'] },
+    { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'asesor', 'coordinador', 'facturacion'] },
     { path: '/settings', label: 'Configuración', icon: Settings, roles: ['admin'] },
 ];
 
