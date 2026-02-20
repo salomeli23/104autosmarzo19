@@ -324,8 +324,8 @@ export const ServiceOrders = () => {
 
                                                 {/* Services */}
                                                 <div className="flex flex-wrap gap-1">
-                                                    {order.services.map((s) => (
-                                                        <ServiceBadge key={s} service={s} />
+                                                    {order.services.map((s, idx) => (
+                                                        <ServiceBadge key={idx} service={typeof s === 'string' ? s : s.service} />
                                                     ))}
                                                 </div>
 
