@@ -5,21 +5,15 @@ const API_BASE = `${BACKEND_URL}/api`;
 
 const api = axios.create({
     baseURL: API_BASE,
-    headers: {
-        'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
 });
 
-// Add auth token to requests
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem('token');
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-    }
+    if (token) config.headers.Authorization = `Bearer ${token}`;
     return config;
 });
 
-// Handle auth errors
 api.interceptors.response.use(
     (response) => response,
     (error) => {
@@ -32,74 +26,66 @@ api.interceptors.response.use(
     }
 );
 
-// Auth endpoints
+// Auth
 export const authAPI = {
     login: (data) => api.post('/auth/login', data),
     register: (data) => api.post('/auth/register', data),
     me: () => api.get('/auth/me'),
 };
 
-// Users endpoints
+// Users
 export const usersAPI = {
-    getAll: () => api.get('/users'),
+    getAll: (role) => api.get('/users', { params: role ? { role } : {} }),
     getTechnicians: () => api.get('/users/technicians'),
-    updateRole: (userId, role) => api.put(`/users/${userId}/role`, null, { params: { role } }),
 };
 
-// Vehicles endpoints
-export const vehiclesAPI = {
-    create: (data) => api.post('/vehicles', data),
-    getAll: (status) => api.get('/vehicles', { params: status ? { status } : {} }),
-    getById: (id) => api.get(`/vehicles/${id}`),
-    getByPlate: (plate) => api.get(`/vehicles/plate/${plate}`),
-    updateStatus: (id, status) => api.put(`/vehicles/${id}/status`, { status }),
-    assignTechnician: (vehicleId, technicianId) => 
-        api.put(`/vehicles/${vehicleId}/assign-technician`, { technician_id: technicianId }),
+// Orders (nuevo flujo completo)
+export const ordersAPI = {
+    // Step 1: Create appointment
+    create: (data) => api.post('/orders', data),
+    getAll: (params) => api.get('/orders', { params }),
+    getById: (id) => api.get(`/orders/${id}`),
+    getByCode: (code) => api.get(`/orders/code/${code}`),
+    
+    // Step 2: Ingreso
+    checkin: (orderCode) => api.post('/orders/checkin', { order_code: orderCode }),
+    approveIngreso: (data) => api.post('/orders/ingreso-approval', data),
+    
+    // Step 3: Inspection
+    saveInspection: (data) => api.post('/orders/inspection', data),
+    
+    // Step 4: Assignment (Coordinator)
+    assignTechnician: (data) => api.post('/orders/assign', data),
+    
+    // Step 5: Service (Technician)
+    startService: (orderId) => api.post(`/orders/${orderId}/start-service`),
+    completeService: (data) => api.post('/orders/complete-service', data),
+    
+    // Step 6: Payment (Facturacion)
+    processPayment: (data) => api.post('/orders/payment', data),
+    
+    // Step 7: Delivery
+    confirmDelivery: (data) => api.post('/orders/delivery', data),
+    
+    // Desistimiento
+    desistimiento: (orderId) => api.post(`/orders/${orderId}/desistimiento`),
 };
 
-// Appointments endpoints
-export const appointmentsAPI = {
-    create: (data) => api.post('/appointments', data),
-    getAll: (date) => api.get('/appointments', { params: date ? { date } : {} }),
-    getById: (id) => api.get(`/appointments/${id}`),
-    updateStatus: (id, status) => api.put(`/appointments/${id}/status`, { status }),
+// Alerts
+export const alertsAPI = {
+    getAll: () => api.get('/alerts'),
+    markRead: (id) => api.put(`/alerts/${id}/read`),
+    getUnreadCount: () => api.get('/alerts/unread-count'),
 };
 
-// Inspections endpoints
-export const inspectionsAPI = {
-    create: (data) => api.post('/inspections', data),
-    getByVehicle: (vehicleId) => api.get(`/inspections/vehicle/${vehicleId}`),
-};
-
-// Quotes endpoints
-export const quotesAPI = {
-    create: (data) => api.post('/quotes', data),
-    getAll: () => api.get('/quotes'),
-    getById: (id) => api.get(`/quotes/${id}`),
-    approve: (id, signatureUrl, cedulaPhotoUrl) => 
-        api.put(`/quotes/${id}/approve`, null, { params: { signature_url: signatureUrl, cedula_photo_url: cedulaPhotoUrl } }),
-};
-
-// Service Orders endpoints
-export const serviceOrdersAPI = {
-    create: (data) => api.post('/service-orders', data),
-    getAll: (params) => api.get('/service-orders', { params }),
-    getById: (id) => api.get(`/service-orders/${id}`),
-    updateStatus: (id, status) => api.put(`/service-orders/${id}/status`, { status }),
-    assignTechnician: (orderId, technicianId) => 
-        api.put(`/service-orders/${orderId}/assign`, { technician_id: technicianId }),
-};
-
-// Notifications endpoints
-export const notificationsAPI = {
-    getAll: () => api.get('/notifications'),
-    markRead: (id) => api.put(`/notifications/${id}/read`),
-    getUnreadCount: () => api.get('/notifications/unread-count'),
-};
-
-// Dashboard endpoints
+// Dashboard
 export const dashboardAPI = {
     getStats: () => api.get('/dashboard/stats'),
+};
+
+// Services catalog
+export const servicesAPI = {
+    getCatalog: () => api.get('/services/catalog'),
 };
 
 export default api;
