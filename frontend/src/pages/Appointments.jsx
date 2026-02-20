@@ -11,9 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Checkbox } from '../components/ui/checkbox';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
+import { QRDisplay } from '../components/QRDisplay';
 import { TIME_SLOTS, CAR_BRANDS, CAR_MODELS, formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -24,6 +25,8 @@ export const Appointments = () => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
     const [serviceCatalog, setServiceCatalog] = useState([]);
+    const [createdOrder, setCreatedOrder] = useState(null); // Nueva cita creada con QR
+    const [showQRDialog, setShowQRDialog] = useState(false); // Mostrar diálogo de QR
     const [formData, setFormData] = useState({
         client_name: '',
         client_phone: '',
