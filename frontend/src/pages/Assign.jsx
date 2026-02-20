@@ -1,34 +1,36 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { vehiclesAPI, usersAPI } from '../lib/api';
+import { ordersAPI, usersAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { Label } from '../components/ui/label';
-import { VehicleStatusBadge } from '../components/VehicleStatusBadge';
+import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { toast } from 'sonner';
-import { Car, UserPlus, Wrench, User, Phone, ArrowRight, Play } from 'lucide-react';
+import { Input } from '../components/ui/input';
+import { Car, UserPlus, Wrench, User, Phone, Clock } from 'lucide-react';
 
 export const Assign = () => {
-    const [vehicles, setVehicles] = useState([]);
+    const [orders, setOrders] = useState([]);
     const [technicians, setTechnicians] = useState([]);
     const [loading, setLoading] = useState(true);
     const [assignDialogOpen, setAssignDialogOpen] = useState(false);
-    const [selectedVehicle, setSelectedVehicle] = useState(null);
+    const [selectedOrder, setSelectedOrder] = useState(null);
     const [selectedTechnician, setSelectedTechnician] = useState('');
+    const [serviceTime, setServiceTime] = useState('60');
 
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const [vehiclesRes, techniciansRes] = await Promise.all([
-                vehiclesAPI.getAll(),
+            const [ordersRes, techniciansRes] = await Promise.all([
+                ordersAPI.getAll(),
                 usersAPI.getTechnicians(),
             ]);
-            // Filter vehicles that need assignment (ingresado or agendado)
-            const pendingVehicles = vehiclesRes.data.filter(v => 
-                v.status && ['agendado', 'ingresado'].includes(v.status)
+            // Filter orders that need assignment (en_revision status)
+            const pendingOrders = ordersRes.data.filter(o => 
+                o.status === 'en_revision'
             );
-            setVehicles(pendingVehicles);
+            setOrders(pendingOrders);
             setTechnicians(techniciansRes.data);
         } catch (error) {
             console.error('Error fetching data:', error);
@@ -42,42 +44,32 @@ export const Assign = () => {
     }, [fetchData]);
 
     const handleAssignTechnician = async () => {
-        if (!selectedVehicle || !selectedTechnician) {
+        if (!selectedOrder || !selectedTechnician) {
             toast.error('Selecciona un técnico');
             return;
         }
         try {
-            await vehiclesAPI.assignTechnician(selectedVehicle.id, selectedTechnician);
+            await ordersAPI.assignTechnician({
+                order_id: selectedOrder.id,
+                technician_id: selectedTechnician,
+                service_time_minutes: parseInt(serviceTime) || 60
+            });
             toast.success('Técnico asignado correctamente');
             setAssignDialogOpen(false);
-            setSelectedVehicle(null);
+            setSelectedOrder(null);
             setSelectedTechnician('');
+            setServiceTime('60');
             fetchData();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al asignar técnico');
         }
     };
 
-    const handleStartProcess = async (vehicleId) => {
-        try {
-            await vehiclesAPI.updateStatus(vehicleId, 'en_proceso');
-            toast.success('Vehículo en proceso');
-            fetchData();
-        } catch (error) {
-            toast.error('Error al actualizar estado');
-        }
-    };
-
-    const openAssignDialog = (vehicle) => {
-        setSelectedVehicle(vehicle);
+    const openAssignDialog = (order) => {
+        setSelectedOrder(order);
         setSelectedTechnician('');
+        setServiceTime('60');
         setAssignDialogOpen(true);
-    };
-
-    // Group vehicles by status
-    const vehiclesByStatus = {
-        agendado: vehicles.filter(v => v.status === 'agendado'),
-        ingresado: vehicles.filter(v => v.status === 'ingresado'),
     };
 
     return (
