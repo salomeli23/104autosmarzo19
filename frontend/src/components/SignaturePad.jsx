@@ -2,10 +2,16 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Eraser, Check } from 'lucide-react';
 
-export const SignaturePad = ({ onSignatureChange, width = 400, height = 200 }) => {
+export const SignaturePad = ({ onSave, onSignatureChange, width = 400, height = 200 }) => {
     const canvasRef = useRef(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [hasSignature, setHasSignature] = useState(false);
+    
+    // Support both prop names
+    const handleSignatureChange = (data) => {
+        if (onSave) onSave(data);
+        if (onSignatureChange) onSignatureChange(data);
+    };
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -62,7 +68,7 @@ export const SignaturePad = ({ onSignatureChange, width = 400, height = 200 }) =
         if (hasSignature) {
             const canvas = canvasRef.current;
             const dataUrl = canvas.toDataURL('image/png');
-            onSignatureChange(dataUrl);
+            handleSignatureChange(dataUrl);
         }
     };
 
@@ -72,7 +78,7 @@ export const SignaturePad = ({ onSignatureChange, width = 400, height = 200 }) =
         ctx.fillStyle = 'white';
         ctx.fillRect(0, 0, width, height);
         setHasSignature(false);
-        onSignatureChange(null);
+        handleSignatureChange(null);
     };
 
     return (
