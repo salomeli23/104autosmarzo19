@@ -760,6 +760,44 @@ async def get_services_catalog():
 async def root():
     return {"message": "PolarizadosYA! API v2.0"}
 
+# ==================== ORDER HISTORY ====================
+@api_router.get("/orders/{order_id}/history")
+async def get_order_history(order_id: str, current_user: dict = Depends(get_current_user)):
+    """Get complete history of an order for traceability"""
+    history = await db.order_history.find({"order_id": order_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    return history
+
+# ==================== SEED DATA ====================
+@api_router.post("/seed/users")
+async def seed_test_users():
+    """Create test users for each role (only works if users don't exist)"""
+    test_users = [
+        {"email": "admin@polarizadosya.com", "name": "Admin PolarizadosYA", "role": "admin", "password": "admin123"},
+        {"email": "asesor@polarizadosya.com", "name": "Carlos Asesor", "role": "asesor", "password": "asesor123"},
+        {"email": "coordinador@polarizadosya.com", "name": "Maria Coordinadora", "role": "coordinador", "password": "coord123"},
+        {"email": "tecnico@polarizadosya.com", "name": "Juan Técnico", "role": "tecnico", "password": "tecnico123"},
+        {"email": "tecnico2@polarizadosya.com", "name": "Pedro Técnico", "role": "tecnico", "password": "tecnico123"},
+        {"email": "facturacion@polarizadosya.com", "name": "Ana Facturación", "role": "facturacion", "password": "factura123"},
+    ]
+    
+    created = []
+    for user_data in test_users:
+        existing = await db.users.find_one({"email": user_data["email"]})
+        if not existing:
+            user_doc = {
+                "id": str(uuid.uuid4()),
+                "email": user_data["email"],
+                "password": hash_password(user_data["password"]),
+                "name": user_data["name"],
+                "role": user_data["role"],
+                "phone": None,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            await db.users.insert_one(user_doc)
+            created.append({"email": user_data["email"], "role": user_data["role"], "password": user_data["password"]})
+    
+    return {"message": f"Created {len(created)} users", "users": created}
+
 # Include router and configure CORS
 app.include_router(api_router)
 
