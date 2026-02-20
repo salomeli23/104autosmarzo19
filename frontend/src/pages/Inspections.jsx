@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { inspectionsAPI, vehiclesAPI } from '../lib/api';
+import { ordersAPI, inspectionsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
 import { CameraCapture } from '../components/CameraCapture';
-import { VehicleStatusBadge } from '../components/VehicleStatusBadge';
+import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { INSPECTION_AREAS } from '../lib/utils';
 import { toast } from 'sonner';
 import { Plus, ClipboardCheck, Car, AlertTriangle, Check, Camera, Image } from 'lucide-react';
@@ -22,10 +22,10 @@ const CONDITIONS = [
 ];
 
 export const Inspections = () => {
-    const [vehicles, setVehicles] = useState([]);
+    const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
-    const [selectedVehicle, setSelectedVehicle] = useState(null);
+    const [selectedOrder, setSelectedOrder] = useState(null);
     const [step, setStep] = useState(1);
     const [photos, setPhotos] = useState([]);
     const [inspectionItems, setInspectionItems] = useState(
@@ -39,25 +39,21 @@ export const Inspections = () => {
     );
     const [generalNotes, setGeneralNotes] = useState('');
 
-    const fetchVehicles = useCallback(async () => {
+    const fetchOrders = useCallback(async () => {
         try {
-            // Only get vehicles with status agendado (ready to be inspected)
-            const response = await vehiclesAPI.getAll();
-            // Filter vehicles that can be inspected (agendado status or no status)
-            const inspectableVehicles = response.data.filter(v => 
-                v.status === 'agendado' || !v.status
-            );
-            setVehicles(inspectableVehicles);
+            // Only get orders with status ingresado (ready to be inspected)
+            const response = await ordersAPI.getAll({ status: 'ingresado' });
+            setOrders(response.data);
         } catch (error) {
-            console.error('Error fetching vehicles:', error);
+            console.error('Error fetching orders:', error);
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        fetchVehicles();
-    }, [fetchVehicles]);
+        fetchOrders();
+    }, [fetchOrders]);
 
     const handleItemChange = (index, field, value) => {
         setInspectionItems(prev => {
@@ -68,14 +64,14 @@ export const Inspections = () => {
     };
 
     const handleSubmit = async () => {
-        if (!selectedVehicle) {
-            toast.error('Selecciona un vehículo');
+        if (!selectedOrder) {
+            toast.error('Selecciona una orden');
             return;
         }
 
         try {
             await inspectionsAPI.create({
-                vehicle_id: selectedVehicle.id,
+                vehicle_id: selectedOrder.id,
                 items: inspectionItems.map(item => ({
                     area: item.area,
                     condition: item.condition,
@@ -85,17 +81,17 @@ export const Inspections = () => {
                 general_notes: generalNotes,
                 photos: photos,
             });
-            toast.success('Revisión 360° completada - Vehículo ingresado');
+            toast.success('Revisión 360° completada');
             setDialogOpen(false);
             resetForm();
-            fetchVehicles();
+            fetchOrders();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al guardar la revisión');
         }
     };
 
     const resetForm = () => {
-        setSelectedVehicle(null);
+        setSelectedOrder(null);
         setStep(1);
         setPhotos([]);
         setInspectionItems(
