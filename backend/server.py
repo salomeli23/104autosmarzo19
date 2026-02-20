@@ -603,6 +603,14 @@ async def assign_technician(data: AssignTechnician, current_user: dict = Depends
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
     
+    # Log history
+    await log_order_history(
+        data.order_id, "TECNICO_ASIGNADO",
+        OrderStatus.EN_REVISION.value, OrderStatus.ASIGNADO.value,
+        current_user["id"], current_user["name"],
+        {"technician_name": technician["name"], "service_time_minutes": data.service_time_minutes}
+    )
+    
     # Alert technician
     alert_doc = {
         "id": str(uuid.uuid4()),
