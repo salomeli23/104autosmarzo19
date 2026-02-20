@@ -111,4 +111,19 @@ export const notificationsAPI = {
     markRead: (id) => api.put(`/alerts/${id}/read`),
 };
 
+export const inspectionsAPI = {
+    create: (data) => api.post('/orders/inspection', {
+        order_id: data.vehicle_id,
+        photos: data.photos || [],
+        video_url: data.video_url || null,
+        notes: data.general_notes || ''
+    }),
+};
+
+export const quotesAPI = {
+    getAll: () => api.get('/orders'),
+    create: (data) => api.post('/orders', data),
+    approve: (id) => api.post(`/orders/${id}/start-service`),
+};
+
 export default api;

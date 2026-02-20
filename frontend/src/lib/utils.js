@@ -100,6 +100,29 @@ export const VEHICLE_STATUS_LABELS = {
     finalizado: 'Finalizado',
 };
 
+export const INSPECTION_AREAS = [
+    { id: 'capot', name: 'Capot' },
+    { id: 'parabrisas', name: 'Parabrisas' },
+    { id: 'techo', name: 'Techo' },
+    { id: 'baul', name: 'Baúl/Maletero' },
+    { id: 'puerta_frontal_izq', name: 'Puerta Frontal Izquierda' },
+    { id: 'puerta_frontal_der', name: 'Puerta Frontal Derecha' },
+    { id: 'puerta_trasera_izq', name: 'Puerta Trasera Izquierda' },
+    { id: 'puerta_trasera_der', name: 'Puerta Trasera Derecha' },
+    { id: 'espejo_izq', name: 'Espejo Izquierdo' },
+    { id: 'espejo_der', name: 'Espejo Derecho' },
+    { id: 'llanta_frontal_izq', name: 'Llanta Frontal Izquierda' },
+    { id: 'llanta_frontal_der', name: 'Llanta Frontal Derecha' },
+    { id: 'llanta_trasera_izq', name: 'Llanta Trasera Izquierda' },
+    { id: 'llanta_trasera_der', name: 'Llanta Trasera Derecha' },
+    { id: 'paragolpes_frontal', name: 'Paragolpes Frontal' },
+    { id: 'paragolpes_trasero', name: 'Paragolpes Trasero' },
+    { id: 'guardafango_izq', name: 'Guardafango Izquierdo' },
+    { id: 'guardafango_der', name: 'Guardafango Derecho' },
+    { id: 'interior_general', name: 'Interior General' },
+    { id: 'tablero', name: 'Tablero' },
+];
+
 export const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-CO', {
         style: 'currency',
