@@ -644,6 +644,14 @@ async def start_service(order_id: str, current_user: dict = Depends(require_role
     
     await db.orders.update_one({"id": order_id}, {"$set": update_data})
     
+    # Log history
+    await log_order_history(
+        order_id, "SERVICIO_INICIADO",
+        OrderStatus.ASIGNADO.value, OrderStatus.EN_PROCESO.value,
+        current_user["id"], current_user["name"],
+        {}
+    )
+    
     return {"message": "Servicio iniciado"}
 
 # Step 5b: Complete service (Technician)
@@ -664,6 +672,14 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
     }
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
+    
+    # Log history
+    await log_order_history(
+        data.order_id, "SERVICIO_COMPLETADO",
+        OrderStatus.EN_PROCESO.value, OrderStatus.SERVICIO_COMPLETADO.value,
+        current_user["id"], current_user["name"],
+        {"technician_notes": data.notes}
+    )
     
     # Alert facturacion
     await create_alert(
