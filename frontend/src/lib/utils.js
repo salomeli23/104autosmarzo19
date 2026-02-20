@@ -21,7 +21,7 @@ export const ORDER_STATUS_LABELS = {
     servicio_completado: 'Servicio Completado',
     terminado_falta_pago: 'Falta Pago',
     terminado_pagado: 'Pagado',
-    entregado: 'Entregado',
+    entregado: 'Facturado y Entregado',
     desistimiento: 'Desistido',
 };
 
