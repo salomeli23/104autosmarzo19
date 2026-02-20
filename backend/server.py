@@ -501,6 +501,12 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
     if order["status"] != OrderStatus.AGENDADO.value:
         raise HTTPException(status_code=400, detail="La orden debe estar en estado AGENDADO")
     
+    # Validate required fields
+    if not data.signature_url:
+        raise HTTPException(status_code=400, detail="La firma digital es requerida")
+    if not data.cedula_number:
+        raise HTTPException(status_code=400, detail="El número de cédula es requerido")
+    
     update_data = {
         "services": [s.model_dump() for s in data.services],
         "final_value": data.final_value,
@@ -514,6 +520,14 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
     }
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
+    
+    # Log history
+    await log_order_history(
+        data.order_id, "INGRESO_APROBADO", 
+        OrderStatus.AGENDADO.value, OrderStatus.INGRESADO.value,
+        current_user["id"], current_user["name"],
+        {"final_value": data.final_value, "services_count": len(data.services)}
+    )
     
     # Alert coordinators
     await create_alert(
