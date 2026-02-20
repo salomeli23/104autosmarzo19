@@ -768,12 +768,21 @@ async def process_desistimiento(order_id: str, current_user: dict = Depends(requ
     if order["status"] in [OrderStatus.ENTREGADO.value, OrderStatus.DESISTIMIENTO.value]:
         raise HTTPException(status_code=400, detail="No se puede procesar desistimiento en este estado")
     
+    old_status = order["status"]
     update_data = {
         "status": OrderStatus.DESISTIMIENTO.value,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
     await db.orders.update_one({"id": order_id}, {"$set": update_data})
+    
+    # Log history
+    await log_order_history(
+        order_id, "DESISTIMIENTO",
+        old_status, OrderStatus.DESISTIMIENTO.value,
+        current_user["id"], current_user["name"],
+        {"reason": "Cliente desistió del servicio"}
+    )
     
     # Alert all relevant roles
     await create_alert("facturacion", AlertType.DESISTIMIENTO, "Desistimiento de servicio", f"Cliente {order['client_name']} desistió del servicio", order_id)
