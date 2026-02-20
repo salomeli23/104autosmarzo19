@@ -284,7 +284,7 @@ class IngresoApproval(BaseModel):
     final_value: float
     signature_url: str
     cedula_number: str
-    cedula_photo_url: str
+    cedula_photo_url: Optional[str] = None
     client_photo_url: Optional[str] = None
 
 class InspectionData(BaseModel):
