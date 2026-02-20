@@ -55,28 +55,28 @@ export const Dashboard = () => {
     const statCards = [
         {
             title: 'Citas Hoy',
-            value: stats?.today_appointments || 0,
+            value: stats?.citas_hoy || 0,
             icon: Calendar,
             color: 'text-blue-500',
             bg: 'bg-blue-500/10',
         },
         {
             title: 'En Proceso',
-            value: stats?.orders_by_status?.en_proceso || 0,
+            value: stats?.en_proceso || 0,
             icon: Clock,
             color: 'text-yellow-500',
             bg: 'bg-yellow-500/10',
         },
         {
-            title: 'Completados',
-            value: stats?.orders_by_status?.terminado || 0,
+            title: 'Completados Hoy',
+            value: stats?.entregados_hoy || 0,
             icon: CheckCircle2,
             color: 'text-green-500',
             bg: 'bg-green-500/10',
         },
         {
-            title: 'Total Activos',
-            value: stats?.total_active_orders || 0,
+            title: 'Agendados',
+            value: stats?.agendados || 0,
             icon: TrendingUp,
             color: 'text-primary',
             bg: 'bg-primary/10',
@@ -153,8 +153,8 @@ export const Dashboard = () => {
                                         <div className="text-right">
                                             <p className="font-medium">{appointment.time_slot}</p>
                                             <div className="flex gap-1 mt-1">
-                                                {appointment.services.slice(0, 2).map((service) => (
-                                                    <ServiceBadge key={service} service={service} />
+                                                {(appointment.services || []).slice(0, 2).map((s, idx) => (
+                                                    <ServiceBadge key={idx} service={s.service || s} />
                                                 ))}
                                             </div>
                                         </div>
@@ -193,10 +193,10 @@ export const Dashboard = () => {
                                             </div>
                                             <div>
                                                 <p className="font-medium font-mono text-sm">
-                                                    #{order.id.slice(0, 8).toUpperCase()}
+                                                    #{order.order_code || order.id.slice(0, 8).toUpperCase()}
                                                 </p>
                                                 <p className="text-sm text-muted-foreground">
-                                                    {order.vehicle?.plate || 'Sin placa'} - {order.vehicle?.brand}
+                                                    {order.plate || 'Sin placa'} - {order.brand}
                                                 </p>
                                             </div>
                                         </div>
@@ -220,10 +220,10 @@ export const Dashboard = () => {
                 <CardContent>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         {[
-                            { status: 'agendado', label: 'Agendado', count: stats?.orders_by_status?.agendado || 0 },
-                            { status: 'en_proceso', label: 'En Proceso', count: stats?.orders_by_status?.en_proceso || 0 },
-                            { status: 'en_revision', label: 'En Revisión', count: stats?.orders_by_status?.en_revision || 0 },
-                            { status: 'terminado', label: 'Terminado', count: stats?.orders_by_status?.terminado || 0 },
+                            { status: 'agendado', label: 'Agendado', count: stats?.agendados || 0 },
+                            { status: 'en_proceso', label: 'En Proceso', count: stats?.en_proceso || 0 },
+                            { status: 'en_revision', label: 'En Revisión', count: stats?.en_revision || 0 },
+                            { status: 'terminado_pagado', label: 'Terminado', count: stats?.terminado_pagado || 0 },
                         ].map((item) => (
                             <div 
                                 key={item.status}
