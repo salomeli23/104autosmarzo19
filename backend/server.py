@@ -715,6 +715,14 @@ async def process_payment(data: PaymentApproval, current_user: dict = Depends(re
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
     
+    # Log history
+    await log_order_history(
+        data.order_id, "PAGO_PROCESADO",
+        OrderStatus.SERVICIO_COMPLETADO.value, new_status,
+        current_user["id"], current_user["name"],
+        {"payment_method": data.payment_method, "discount_amount": data.discount_amount}
+    )
+    
     return {"message": "Pago procesado exitosamente"}
 
 # Step 7: Delivery
@@ -727,6 +735,10 @@ async def confirm_delivery(data: DeliveryConfirmation, current_user: dict = Depe
     if order["status"] not in [OrderStatus.TERMINADO_PAGADO.value, OrderStatus.TERMINADO_FALTA_PAGO.value]:
         raise HTTPException(status_code=400, detail="La orden debe estar en estado de facturación")
     
+    # Validate delivery photo
+    if not data.delivery_photo_url:
+        raise HTTPException(status_code=400, detail="La foto de entrega es obligatoria")
+    
     update_data = {
         "status": OrderStatus.ENTREGADO.value,
         "delivery_photo_url": data.delivery_photo_url,
@@ -735,6 +747,14 @@ async def confirm_delivery(data: DeliveryConfirmation, current_user: dict = Depe
     }
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
+    
+    # Log history
+    await log_order_history(
+        data.order_id, "VEHICULO_ENTREGADO",
+        order["status"], OrderStatus.ENTREGADO.value,
+        current_user["id"], current_user["name"],
+        {}
+    )
     
     return {"message": "Entrega confirmada exitosamente"}
 
