@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ordersAPI, servicesAPI } from '../lib/api';
+import { ordersAPI, servicesAPI, slotsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -12,9 +12,9 @@ import { Checkbox } from '../components/ui/checkbox';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
-import { TIME_SLOTS, CAR_BRANDS, CAR_MODELS, formatCurrency } from '../lib/utils';
+import { CAR_BRANDS, CAR_MODELS, formatCurrency, isDayAvailable } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -25,8 +25,10 @@ export const Appointments = () => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
     const [serviceCatalog, setServiceCatalog] = useState([]);
-    const [createdOrder, setCreatedOrder] = useState(null); // Nueva cita creada con QR
-    const [showQRDialog, setShowQRDialog] = useState(false); // Mostrar diálogo de QR
+    const [createdOrder, setCreatedOrder] = useState(null);
+    const [showQRDialog, setShowQRDialog] = useState(false);
+    const [slotsAvailability, setSlotsAvailability] = useState(null);
+    const [loadingSlots, setLoadingSlots] = useState(false);
     const [formData, setFormData] = useState({
         client_name: '',
         client_phone: '',
@@ -56,6 +58,21 @@ export const Appointments = () => {
         fetchCatalog();
     }, []);
 
+    // Fetch slot availability when date changes
+    const fetchSlotsAvailability = useCallback(async (date) => {
+        try {
+            setLoadingSlots(true);
+            const dateStr = format(date, 'yyyy-MM-dd');
+            const response = await slotsAPI.getAvailability(dateStr);
+            setSlotsAvailability(response.data);
+        } catch (error) {
+            console.error('Error fetching slots:', error);
+            setSlotsAvailability(null);
+        } finally {
+            setLoadingSlots(false);
+        }
+    }, []);
+
     const fetchOrders = useCallback(async (date) => {
         try {
             setLoading(true);
@@ -72,7 +89,8 @@ export const Appointments = () => {
 
     useEffect(() => {
         fetchOrders(selectedDate);
-    }, [selectedDate, fetchOrders]);
+        fetchSlotsAvailability(selectedDate);
+    }, [selectedDate, fetchOrders, fetchSlotsAvailability]);
 
     // Update available models when brand changes
     useEffect(() => {
@@ -98,7 +116,13 @@ export const Appointments = () => {
 
     const handleDateSelect = (date) => {
         if (date) {
+            // Check if Sunday
+            if (date.getDay() === 0) {
+                toast.error('Los domingos no hay servicio');
+                return;
+            }
             setSelectedDate(date);
+            setFormData(prev => ({ ...prev, time_slot: '' })); // Reset time slot
         }
     };
 
@@ -155,6 +179,13 @@ export const Appointments = () => {
             return;
         }
 
+        // Validate slot has availability
+        const selectedSlot = slotsAvailability?.slots?.find(s => s.id === formData.time_slot);
+        if (selectedSlot && selectedSlot.remaining <= 0) {
+            toast.error('Esta franja ya no tiene cupos disponibles');
+            return;
+        }
+
         if (!formData.negotiated_value || parseFloat(formData.negotiated_value) <= 0) {
             toast.error('Ingresa el valor negociado');
             return;
@@ -191,8 +222,9 @@ export const Appointments = () => {
             const response = await ordersAPI.create(submitData);
             setCreatedOrder(response.data);
             setDialogOpen(false);
-            setShowQRDialog(true); // Mostrar el diálogo con QR
+            setShowQRDialog(true);
             fetchOrders(selectedDate);
+            fetchSlotsAvailability(selectedDate); // Refresh availability
             resetForm();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al agendar cita');
@@ -204,11 +236,25 @@ export const Appointments = () => {
         setCreatedOrder(null);
     };
 
+    // Disable Sundays in calendar
+    const disabledDays = (date) => {
+        return date.getDay() === 0;
+    };
+
+    // Get slot display info
+    const getSlotDisplayName = (slotId) => {
+        const slot = slotsAvailability?.slots?.find(s => s.id === slotId);
+        if (slot) {
+            return `${slot.name} (${slot.start} - ${slot.end})`;
+        }
+        return slotId;
+    };
+
     // Group orders by time slot
-    const ordersBySlot = TIME_SLOTS.reduce((acc, slot) => {
-        acc[slot] = orders.filter(o => o.time_slot === slot);
+    const ordersBySlot = slotsAvailability?.slots?.reduce((acc, slot) => {
+        acc[slot.id] = orders.filter(o => o.time_slot === slot.id);
         return acc;
-    }, {});
+    }, {}) || {};
 
     return (
         <div className="space-y-6" data-testid="appointments-page">
@@ -237,7 +283,7 @@ export const Appointments = () => {
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <Clock className="w-4 h-4 text-muted-foreground" />
-                                    <span>{createdOrder.date} • {createdOrder.time_slot}</span>
+                                    <span>{createdOrder.date} • {getSlotDisplayName(createdOrder.time_slot)}</span>
                                 </div>
                             </div>
 
@@ -422,19 +468,77 @@ export const Appointments = () => {
                                 </div>
                             </div>
 
-                            {/* Time Slot */}
+                            {/* Time Slot with Availability */}
                             <div className="space-y-2">
-                                <Label>Franja Horaria *</Label>
-                                <Select value={formData.time_slot} onValueChange={handleTimeSlotChange}>
-                                    <SelectTrigger data-testid="appointment-time-slot">
-                                        <SelectValue placeholder="Selecciona un horario" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {TIME_SLOTS.map((slot) => (
-                                            <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                                <Label className="flex items-center gap-2">
+                                    <Clock className="w-4 h-4" />
+                                    Franja Horaria *
+                                </Label>
+                                {!slotsAvailability?.is_open ? (
+                                    <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 flex items-center gap-2">
+                                        <AlertCircle className="w-5 h-5" />
+                                        <span>El día seleccionado no tiene servicio</span>
+                                    </div>
+                                ) : loadingSlots ? (
+                                    <div className="flex justify-center py-4">
+                                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {slotsAvailability?.slots?.map((slot) => (
+                                            <div
+                                                key={slot.id}
+                                                className={`p-3 rounded-lg border transition-all cursor-pointer ${
+                                                    formData.time_slot === slot.id
+                                                        ? 'border-primary bg-primary/10'
+                                                        : slot.available
+                                                        ? 'border-border hover:border-primary/50 bg-card'
+                                                        : 'border-border bg-muted/50 opacity-60 cursor-not-allowed'
+                                                }`}
+                                                onClick={() => slot.available && handleTimeSlotChange(slot.id)}
+                                                data-testid={`slot-${slot.id}`}
+                                            >
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                                                            formData.time_slot === slot.id
+                                                                ? 'border-primary bg-primary'
+                                                                : 'border-muted-foreground'
+                                                        }`}>
+                                                            {formData.time_slot === slot.id && (
+                                                                <div className="w-2 h-2 rounded-full bg-white" />
+                                                            )}
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-medium">{slot.name}</p>
+                                                            <p className="text-sm text-muted-foreground">
+                                                                {slot.start} - {slot.end}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <Users className="w-4 h-4 text-muted-foreground" />
+                                                        <span className={`text-sm font-medium ${
+                                                            slot.remaining === 0
+                                                                ? 'text-red-500'
+                                                                : slot.remaining <= 3
+                                                                ? 'text-yellow-500'
+                                                                : 'text-green-500'
+                                                        }`}>
+                                                            {slot.remaining} / {slot.capacity}
+                                                        </span>
+                                                        {slot.remaining === 0 && (
+                                                            <span className="text-xs text-red-500 font-medium ml-1">LLENO</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
                                         ))}
-                                    </SelectContent>
-                                </Select>
+                                        <p className="text-xs text-muted-foreground mt-2">
+                                            * Horario de registro hasta las {slotsAvailability?.last_registration}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Services */}
@@ -501,7 +605,12 @@ export const Appointments = () => {
                                 />
                             </div>
 
-                            <Button type="submit" className="w-full brand-glow" data-testid="submit-appointment-btn">
+                            <Button 
+                                type="submit" 
+                                className="w-full brand-glow" 
+                                data-testid="submit-appointment-btn"
+                                disabled={!slotsAvailability?.is_open}
+                            >
                                 Agendar Cita
                             </Button>
                         </form>
@@ -526,8 +635,18 @@ export const Appointments = () => {
                             onSelect={handleDateSelect}
                             locale={es}
                             className="rounded-md border"
+                            disabled={disabledDays}
                             data-testid="appointment-calendar"
                         />
+                    </CardContent>
+                    {/* Operating hours info */}
+                    <CardContent className="pt-0">
+                        <div className="p-3 rounded-lg bg-muted/50 text-sm space-y-1">
+                            <p className="font-medium">Horarios de operación:</p>
+                            <p className="text-muted-foreground">Lun-Vie: 8:30 AM - 6:00 PM</p>
+                            <p className="text-muted-foreground">Sábados: 7:30 AM - 6:00 PM</p>
+                            <p className="text-red-400 text-xs mt-1">Domingos: Cerrado</p>
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -540,32 +659,60 @@ export const Appointments = () => {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                        {loading ? (
+                        {loading || loadingSlots ? (
                             <div className="flex justify-center py-8">
                                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                             </div>
+                        ) : !slotsAvailability?.is_open ? (
+                            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                                <AlertCircle className="w-16 h-16 mb-4 text-red-400" />
+                                <p className="text-lg font-medium">Día no disponible</p>
+                                <p className="text-sm">{slotsAvailability?.message || 'Selecciona otro día'}</p>
+                            </div>
                         ) : (
-                            <div className="space-y-3">
-                                {TIME_SLOTS.map((slot) => {
-                                    const slotOrders = ordersBySlot[slot] || [];
+                            <div className="space-y-4">
+                                {slotsAvailability?.slots?.map((slot) => {
+                                    const slotOrders = ordersBySlot[slot.id] || [];
                                     return (
                                         <div 
-                                            key={slot}
-                                            className="flex gap-4 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
-                                            data-testid={`time-slot-${slot.replace(/[:\s-]/g, '')}`}
+                                            key={slot.id}
+                                            className="rounded-lg border bg-card overflow-hidden"
+                                            data-testid={`time-slot-${slot.id}`}
                                         >
-                                            <div className="w-24 shrink-0">
-                                                <p className="font-mono text-sm font-medium">{slot}</p>
+                                            {/* Slot Header */}
+                                            <div className="flex items-center justify-between p-3 bg-muted/30 border-b">
+                                                <div>
+                                                    <p className="font-medium">{slot.name}</p>
+                                                    <p className="text-sm text-muted-foreground font-mono">
+                                                        {slot.start} - {slot.end}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1 ${
+                                                        slot.remaining === 0
+                                                            ? 'bg-red-500/10 text-red-500'
+                                                            : slot.remaining <= 3
+                                                            ? 'bg-yellow-500/10 text-yellow-500'
+                                                            : 'bg-green-500/10 text-green-500'
+                                                    }`}>
+                                                        <Users className="w-3 h-3" />
+                                                        {slot.remaining} disponibles
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <div className="flex-1">
+                                            
+                                            {/* Slot Orders */}
+                                            <div className="p-3">
                                                 {slotOrders.length === 0 ? (
-                                                    <p className="text-sm text-muted-foreground">Disponible</p>
+                                                    <p className="text-sm text-muted-foreground text-center py-2">
+                                                        Sin citas agendadas
+                                                    </p>
                                                 ) : (
                                                     <div className="space-y-2">
                                                         {slotOrders.map((order) => (
                                                             <div 
                                                                 key={order.id}
-                                                                className="flex items-center justify-between p-2 rounded bg-card border"
+                                                                className="flex items-center justify-between p-2 rounded bg-muted/30 hover:bg-muted/50 transition-colors"
                                                                 data-testid={`order-card-${order.order_code}`}
                                                             >
                                                                 <div className="flex-1 min-w-0">

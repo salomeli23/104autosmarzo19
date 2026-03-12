@@ -88,6 +88,11 @@ export const servicesAPI = {
     getCatalog: () => api.get('/services/catalog'),
 };
 
+// Time slots availability
+export const slotsAPI = {
+    getAvailability: (date) => api.get('/slots/availability', { params: { date } }),
+};
+
 // Legacy API aliases for backwards compatibility
 export const appointmentsAPI = {
     getAll: (date) => api.get('/orders', { params: { date } }),

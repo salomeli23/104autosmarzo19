@@ -482,14 +482,91 @@ async def get_order_by_code(order_code: str, current_user: dict = Depends(get_cu
     return OrderResponse(**order)
 
 # Step 2: Ingreso - Check-in and approval
+def get_colombia_time():
+    """Get current time in Colombia (UTC-5)"""
+    utc_now = datetime.now(timezone.utc)
+    colombia_offset = timedelta(hours=-5)
+    colombia_tz = timezone(colombia_offset)
+    return utc_now.astimezone(colombia_tz)
+
+def get_slot_start_time(slot_id: str, date_str: str):
+    """Get the start time of a time slot based on day and slot ID"""
+    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+    day_of_week = date_obj.weekday()  # 0=Monday, 6=Sunday
+    
+    if day_of_week == 6:  # Domingo - cerrado
+        return None
+    
+    config = TIME_SLOTS_CONFIG["saturday"] if day_of_week == 5 else TIME_SLOTS_CONFIG["weekday"]
+    
+    for slot in config["slots"]:
+        if slot["id"] == slot_id:
+            hour, minute = map(int, slot["start"].split(":"))
+            return datetime(date_obj.year, date_obj.month, date_obj.day, hour, minute, 
+                          tzinfo=timezone(timedelta(hours=-5)))
+    return None
+
+def validate_checkin_time(order_date: str, time_slot: str):
+    """
+    Validate if check-in can be performed based on current Colombia time.
+    Returns (can_checkin: bool, message: str, time_remaining: str or None)
+    """
+    now_colombia = get_colombia_time()
+    today_str = now_colombia.strftime("%Y-%m-%d")
+    
+    # Check if the appointment date is today
+    if order_date != today_str:
+        order_date_obj = datetime.strptime(order_date, "%Y-%m-%d")
+        if order_date_obj.date() > now_colombia.date():
+            return False, f"La cita es para el {order_date}. Debe esperar hasta ese día.", None
+        else:
+            # Past date - allow checkin (could be late arrival)
+            return True, None, None
+    
+    # Get slot start time
+    slot_start = get_slot_start_time(time_slot, order_date)
+    if not slot_start:
+        return False, "Franja horaria inválida", None
+    
+    # Check if current time is before slot start
+    if now_colombia < slot_start:
+        time_diff = slot_start - now_colombia
+        hours, remainder = divmod(int(time_diff.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        if hours > 0:
+            time_remaining = f"{hours}h {minutes}m"
+        else:
+            time_remaining = f"{minutes} minutos"
+        
+        slot_start_str = slot_start.strftime("%H:%M")
+        return False, f"Debe esperar hasta las {slot_start_str} para hacer check-in", time_remaining
+    
+    return True, None, None
+
 @api_router.post("/orders/checkin")
 async def checkin_order(data: CheckInRequest, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR]))):
-    """Check-in with QR code or order code"""
+    """Check-in with QR code or order code - validates time slot"""
     order = await db.orders.find_one({"order_code": data.order_code.upper()}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     if order["status"] != OrderStatus.AGENDADO.value:
         raise HTTPException(status_code=400, detail=f"La orden no está en estado agendado. Estado actual: {order['status']}")
+    
+    # Validate check-in time based on Colombia time
+    can_checkin, message, time_remaining = validate_checkin_time(order["date"], order["time_slot"])
+    if not can_checkin:
+        raise HTTPException(
+            status_code=400, 
+            detail={
+                "type": "time_validation",
+                "message": message,
+                "time_remaining": time_remaining,
+                "slot_time": order["time_slot"],
+                "appointment_date": order["date"]
+            }
+        )
+    
     return OrderResponse(**order)
 
 @api_router.post("/orders/ingreso-approval")
@@ -839,9 +916,110 @@ async def get_services_catalog():
     ]
     return catalog
 
+# ==================== TIME SLOTS & AVAILABILITY ====================
+# Configuración de franjas horarias
+TIME_SLOTS_CONFIG = {
+    "weekday": {  # Lunes a Viernes
+        "operating_hours": {"start": "08:30", "end": "18:00"},
+        "last_registration": "16:00",
+        "slots": [
+            {"id": "franja_1", "name": "Franja 1", "start": "08:30", "end": "11:30", "capacity": 20},
+            {"id": "franja_2", "name": "Franja 2", "start": "11:30", "end": "14:30", "capacity": 10},
+            {"id": "franja_3", "name": "Franja 3", "start": "14:30", "end": "16:00", "capacity": 10},
+        ]
+    },
+    "saturday": {  # Sábados
+        "operating_hours": {"start": "07:30", "end": "18:00"},
+        "last_registration": "15:30",
+        "slots": [
+            {"id": "franja_1", "name": "Franja 1", "start": "07:30", "end": "11:00", "capacity": 20},
+            {"id": "franja_2", "name": "Franja 2", "start": "11:00", "end": "14:00", "capacity": 12},
+            {"id": "franja_3", "name": "Franja 3", "start": "14:00", "end": "15:30", "capacity": 8},
+        ]
+    },
+    "sunday": None  # Cerrado
+}
+
+def get_day_config(date_str: str):
+    """Get time slots configuration based on day of week"""
+    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+    day_of_week = date_obj.weekday()  # 0=Monday, 6=Sunday
+    
+    if day_of_week == 6:  # Domingo
+        return None
+    elif day_of_week == 5:  # Sábado
+        return TIME_SLOTS_CONFIG["saturday"]
+    else:  # Lunes a Viernes
+        return TIME_SLOTS_CONFIG["weekday"]
+
+@api_router.get("/slots/availability")
+async def get_slot_availability(date: str):
+    """Get available time slots with remaining capacity for a specific date"""
+    # Validate date format
+    try:
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+    
+    # Get day configuration
+    day_config = get_day_config(date)
+    
+    # If Sunday, return closed message
+    if day_config is None:
+        return {
+            "date": date,
+            "is_open": False,
+            "message": "Domingos cerrado",
+            "slots": []
+        }
+    
+    # Get booked counts for each slot on this date
+    slots_with_availability = []
+    
+    for slot in day_config["slots"]:
+        # Count orders for this slot on this date
+        booked_count = await db.orders.count_documents({
+            "date": date,
+            "time_slot": slot["id"],
+            "status": {"$nin": ["desistimiento"]}  # Exclude withdrawn orders
+        })
+        
+        remaining = slot["capacity"] - booked_count
+        
+        slots_with_availability.append({
+            "id": slot["id"],
+            "name": slot["name"],
+            "start": slot["start"],
+            "end": slot["end"],
+            "capacity": slot["capacity"],
+            "booked": booked_count,
+            "remaining": max(0, remaining),
+            "available": remaining > 0
+        })
+    
+    return {
+        "date": date,
+        "is_open": True,
+        "operating_hours": day_config["operating_hours"],
+        "last_registration": day_config["last_registration"],
+        "slots": slots_with_availability
+    }
+
 @api_router.get("/")
 async def root():
     return {"message": "PolarizadosYA! API v2.0"}
+
+@api_router.get("/time/colombia")
+async def get_current_colombia_time():
+    """Get current time in Colombia timezone"""
+    colombia_time = get_colombia_time()
+    return {
+        "datetime": colombia_time.isoformat(),
+        "date": colombia_time.strftime("%Y-%m-%d"),
+        "time": colombia_time.strftime("%H:%M:%S"),
+        "formatted": colombia_time.strftime("%d/%m/%Y %H:%M"),
+        "timezone": "America/Bogota (UTC-5)"
+    }
 
 # ==================== ORDER HISTORY ====================
 @api_router.get("/orders/{order_id}/history")

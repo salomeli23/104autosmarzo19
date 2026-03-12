@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { ordersAPI, servicesAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -16,8 +16,10 @@ import { formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
 import { 
     QrCode, Search, Car, User, Phone, FileCheck, 
-    Pen, Camera, CheckCircle, Plus, DollarSign, ArrowRight
+    Pen, Camera, CheckCircle, Plus, DollarSign, ArrowRight,
+    Clock, AlertTriangle, Timer
 } from 'lucide-react';
+import api from '../lib/api';
 
 export const CheckIn = () => {
     const [step, setStep] = useState(1);
@@ -25,6 +27,8 @@ export const CheckIn = () => {
     const [order, setOrder] = useState(null);
     const [loading, setLoading] = useState(false);
     const [serviceCatalog, setServiceCatalog] = useState([]);
+    const [colombiaTime, setColombiaTime] = useState(null);
+    const [waitingInfo, setWaitingInfo] = useState(null); // Info when must wait
     
     // Form data for ingreso
     const [services, setServices] = useState([]);
@@ -35,6 +39,21 @@ export const CheckIn = () => {
     const [clientPhoto, setClientPhoto] = useState(null);
     const [showCedulaCamera, setShowCedulaCamera] = useState(false);
     const [showClientCamera, setShowClientCamera] = useState(false);
+
+    // Fetch Colombia time
+    useEffect(() => {
+        const fetchTime = async () => {
+            try {
+                const res = await api.get('/time/colombia');
+                setColombiaTime(res.data);
+            } catch (error) {
+                console.error('Error fetching time:', error);
+            }
+        };
+        fetchTime();
+        const interval = setInterval(fetchTime, 30000); // Update every 30 seconds
+        return () => clearInterval(interval);
+    }, []);
 
     // Handle QR scan result
     const handleQRScan = async (scannedCode) => {
@@ -50,6 +69,7 @@ export const CheckIn = () => {
         }
 
         setLoading(true);
+        setWaitingInfo(null);
         try {
             const [orderRes, catalogRes] = await Promise.all([
                 ordersAPI.checkin(code.trim().toUpperCase()),
@@ -68,8 +88,21 @@ export const CheckIn = () => {
             setStep(2);
             toast.success('Orden encontrada');
         } catch (error) {
-            const message = error.response?.data?.detail || 'Orden no encontrada';
-            toast.error(message);
+            const errorData = error.response?.data?.detail;
+            
+            // Check if it's a time validation error
+            if (errorData && typeof errorData === 'object' && errorData.type === 'time_validation') {
+                setWaitingInfo({
+                    message: errorData.message,
+                    timeRemaining: errorData.time_remaining,
+                    slotTime: errorData.slot_time,
+                    appointmentDate: errorData.appointment_date
+                });
+                toast.error(errorData.message);
+            } else {
+                const message = typeof errorData === 'string' ? errorData : 'Orden no encontrada';
+                toast.error(message);
+            }
         } finally {
             setLoading(false);
         }
@@ -154,6 +187,7 @@ export const CheckIn = () => {
         setCedulaNumber('');
         setCedulaPhoto(null);
         setClientPhoto(null);
+        setWaitingInfo(null);
     };
 
     return (
@@ -186,6 +220,57 @@ export const CheckIn = () => {
             {/* Step 1: Scan QR or Enter Code */}
             {step === 1 && (
                 <div className="grid lg:grid-cols-2 gap-6">
+                    {/* Waiting Card - When client arrives early */}
+                    {waitingInfo && (
+                        <Card className="lg:col-span-2 border-yellow-500/50 bg-yellow-500/10">
+                            <CardContent className="pt-6">
+                                <div className="flex flex-col items-center text-center space-y-4">
+                                    <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                                        <Timer className="w-8 h-8 text-yellow-500 animate-pulse" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-heading text-xl text-yellow-500 flex items-center justify-center gap-2">
+                                            <AlertTriangle className="w-5 h-5" />
+                                            Debe Esperar
+                                        </h3>
+                                        <p className="text-lg mt-2">{waitingInfo.message}</p>
+                                        {waitingInfo.timeRemaining && (
+                                            <div className="mt-4 p-4 rounded-lg bg-card border">
+                                                <p className="text-sm text-muted-foreground">Tiempo restante:</p>
+                                                <p className="text-3xl font-mono font-bold text-primary mt-1">
+                                                    {waitingInfo.timeRemaining}
+                                                </p>
+                                            </div>
+                                        )}
+                                        <p className="text-sm text-muted-foreground mt-4">
+                                            Fecha de cita: {waitingInfo.appointmentDate}
+                                        </p>
+                                    </div>
+                                    <Button 
+                                        variant="outline" 
+                                        onClick={() => setWaitingInfo(null)}
+                                        className="mt-4"
+                                    >
+                                        Buscar otra orden
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {/* Colombia Time Display */}
+                    {colombiaTime && !waitingInfo && (
+                        <div className="lg:col-span-2 flex justify-center">
+                            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-muted/50 text-sm">
+                                <Clock className="w-4 h-4 text-primary" />
+                                <span className="text-muted-foreground">Hora Colombia:</span>
+                                <span className="font-mono font-medium">{colombiaTime.formatted}</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {!waitingInfo && (
+                        <>
                     <Tabs defaultValue="scan" className="w-full">
                         <TabsList className="grid w-full grid-cols-2">
                             <TabsTrigger value="scan">
@@ -273,6 +358,8 @@ export const CheckIn = () => {
                             </div>
                         </CardContent>
                     </Card>
+                        </>
+                    )}
                 </div>
             )}
 

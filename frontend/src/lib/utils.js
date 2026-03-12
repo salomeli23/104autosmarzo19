@@ -46,9 +46,57 @@ export const ROLE_LABELS = {
     facturacion: 'Facturación',
 };
 
+// Sistema de franjas horarias con cupos
+// Lunes-Viernes: 8:30 AM - 6:00 PM (registro hasta 4:00 PM)
+// Sábados: 7:30 AM - 6:00 PM (registro hasta 3:30 PM)
+// Domingos: Cerrado
+
+export const TIME_SLOTS_CONFIG = {
+    weekday: { // Lunes a Viernes
+        operatingHours: { start: '08:30', end: '18:00' },
+        lastRegistration: '16:00',
+        slots: [
+            { id: 'franja_1', name: 'Franja 1', start: '08:30', end: '11:30', capacity: 20 },
+            { id: 'franja_2', name: 'Franja 2', start: '11:30', end: '14:30', capacity: 10 },
+            { id: 'franja_3', name: 'Franja 3', start: '14:30', end: '16:00', capacity: 10 },
+        ]
+    },
+    saturday: { // Sábados
+        operatingHours: { start: '07:30', end: '18:00' },
+        lastRegistration: '15:30',
+        slots: [
+            { id: 'franja_1', name: 'Franja 1', start: '07:30', end: '11:00', capacity: 20 },
+            { id: 'franja_2', name: 'Franja 2', start: '11:00', end: '14:00', capacity: 12 },
+            { id: 'franja_3', name: 'Franja 3', start: '14:00', end: '15:30', capacity: 8 },
+        ]
+    },
+    sunday: null // Cerrado
+};
+
+// Helper para obtener las franjas según el día
+export const getTimeSlotsForDate = (date) => {
+    const dayOfWeek = date.getDay(); // 0 = Domingo, 6 = Sábado
+    if (dayOfWeek === 0) return null; // Domingo cerrado
+    if (dayOfWeek === 6) return TIME_SLOTS_CONFIG.saturday;
+    return TIME_SLOTS_CONFIG.weekday;
+};
+
+// Helper para verificar si un día está disponible
+export const isDayAvailable = (date) => {
+    const dayOfWeek = date.getDay();
+    return dayOfWeek !== 0; // Disponible si no es domingo
+};
+
+// Helper para formatear el rango de horas
+export const formatTimeSlot = (slot) => {
+    return `${slot.start} - ${slot.end}`;
+};
+
+// Legacy TIME_SLOTS para compatibilidad (se usará el nuevo sistema)
 export const TIME_SLOTS = [
-    '08:00 - 09:00', '09:00 - 10:00', '10:00 - 11:00', '11:00 - 12:00',
-    '12:00 - 13:00', '14:00 - 15:00', '15:00 - 16:00', '16:00 - 17:00', '17:00 - 18:00',
+    'Franja 1 (08:30 - 11:30)',
+    'Franja 2 (11:30 - 14:30)',
+    'Franja 3 (14:30 - 16:00)',
 ];
 
 export const CAR_BRANDS = [
