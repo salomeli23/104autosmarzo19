@@ -9,12 +9,13 @@ import { Calendar } from '../components/ui/calendar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
-import { CAR_BRANDS, CAR_MODELS, formatCurrency, isDayAvailable } from '../lib/utils';
+import { CAR_BRANDS, CAR_MODELS, formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, ChevronDown, Package } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -24,11 +25,16 @@ export const Appointments = () => {
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [dialogOpen, setDialogOpen] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
-    const [serviceCatalog, setServiceCatalog] = useState([]);
+    const [serviceCatalog, setServiceCatalog] = useState({});
     const [createdOrder, setCreatedOrder] = useState(null);
     const [showQRDialog, setShowQRDialog] = useState(false);
     const [slotsAvailability, setSlotsAvailability] = useState(null);
     const [loadingSlots, setLoadingSlots] = useState(false);
+    
+    // Services with individual prices
+    const [selectedServices, setSelectedServices] = useState([]);
+    // { serviceId: string, serviceName: string, category: string, price: number }
+    
     const [formData, setFormData] = useState({
         client_name: '',
         client_phone: '',
@@ -40,8 +46,6 @@ export const Appointments = () => {
         year: '',
         color: '',
         time_slot: '',
-        services: [],
-        negotiated_value: '',
         notes: '',
     });
 
@@ -101,28 +105,19 @@ export const Appointments = () => {
         }
     }, [formData.brand]);
 
-    // Calculate suggested price when services change
-    useEffect(() => {
-        if (formData.services.length > 0 && serviceCatalog.length > 0) {
-            const total = formData.services.reduce((sum, serviceKey) => {
-                const catalogItem = serviceCatalog.find(c => c.service === serviceKey);
-                return sum + (catalogItem?.suggested_price || 0);
-            }, 0);
-            if (!formData.negotiated_value) {
-                setFormData(prev => ({ ...prev, negotiated_value: total.toString() }));
-            }
-        }
-    }, [formData.services, serviceCatalog]);
+    // Calculate total from selected services
+    const calculateTotal = () => {
+        return selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
+    };
 
     const handleDateSelect = (date) => {
         if (date) {
-            // Check if Sunday
             if (date.getDay() === 0) {
                 toast.error('Los domingos no hay servicio');
                 return;
             }
             setSelectedDate(date);
-            setFormData(prev => ({ ...prev, time_slot: '' })); // Reset time slot
+            setFormData(prev => ({ ...prev, time_slot: '' }));
         }
     };
 
@@ -138,15 +133,24 @@ export const Appointments = () => {
         setFormData(prev => ({ ...prev, time_slot: value }));
     };
 
-    const handleServiceToggle = useCallback((serviceKey) => {
-        setFormData(prev => {
-            const isSelected = prev.services.includes(serviceKey);
-            const newServices = isSelected
-                ? prev.services.filter(s => s !== serviceKey)
-                : [...prev.services, serviceKey];
-            return { ...prev, services: newServices };
+    // Toggle service selection
+    const handleServiceToggle = (serviceId, serviceName, categoryName) => {
+        setSelectedServices(prev => {
+            const exists = prev.find(s => s.serviceId === serviceId);
+            if (exists) {
+                return prev.filter(s => s.serviceId !== serviceId);
+            } else {
+                return [...prev, { serviceId, serviceName, category: categoryName, price: 0 }];
+            }
         });
-    }, []);
+    };
+
+    // Update service price
+    const handleServicePriceChange = (serviceId, price) => {
+        setSelectedServices(prev => 
+            prev.map(s => s.serviceId === serviceId ? { ...s, price: parseFloat(price) || 0 } : s)
+        );
+    };
 
     const resetForm = () => {
         setFormData({
@@ -160,16 +164,15 @@ export const Appointments = () => {
             year: '',
             color: '',
             time_slot: '',
-            services: [],
-            negotiated_value: '',
             notes: '',
         });
+        setSelectedServices([]);
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         
-        if (formData.services.length === 0) {
+        if (selectedServices.length === 0) {
             toast.error('Selecciona al menos un servicio');
             return;
         }
@@ -179,28 +182,24 @@ export const Appointments = () => {
             return;
         }
 
-        // Validate slot has availability
         const selectedSlot = slotsAvailability?.slots?.find(s => s.id === formData.time_slot);
         if (selectedSlot && selectedSlot.remaining <= 0) {
             toast.error('Esta franja ya no tiene cupos disponibles');
             return;
         }
 
-        if (!formData.negotiated_value || parseFloat(formData.negotiated_value) <= 0) {
-            toast.error('Ingresa el valor negociado');
+        const total = calculateTotal();
+        if (total <= 0) {
+            toast.error('Ingresa el valor de al menos un servicio');
             return;
         }
 
         try {
-            // Build services array with prices from catalog
-            const servicesData = formData.services.map(serviceKey => {
-                const catalogItem = serviceCatalog.find(c => c.service === serviceKey);
-                return {
-                    service: serviceKey,
-                    price: catalogItem?.suggested_price || 0,
-                    description: catalogItem?.description || ''
-                };
-            });
+            const servicesData = selectedServices.map(svc => ({
+                service: svc.serviceId,
+                price: svc.price,
+                description: `${svc.category} - ${svc.serviceName}`
+            }));
 
             const submitData = {
                 client_name: formData.client_name,
@@ -215,7 +214,7 @@ export const Appointments = () => {
                 date: format(selectedDate, 'yyyy-MM-dd'),
                 time_slot: formData.time_slot,
                 services: servicesData,
-                negotiated_value: parseFloat(formData.negotiated_value),
+                negotiated_value: total,
                 notes: formData.notes || null,
             };
 
@@ -224,7 +223,7 @@ export const Appointments = () => {
             setDialogOpen(false);
             setShowQRDialog(true);
             fetchOrders(selectedDate);
-            fetchSlotsAvailability(selectedDate); // Refresh availability
+            fetchSlotsAvailability(selectedDate);
             resetForm();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al agendar cita');
@@ -236,12 +235,10 @@ export const Appointments = () => {
         setCreatedOrder(null);
     };
 
-    // Disable Sundays in calendar
     const disabledDays = (date) => {
         return date.getDay() === 0;
     };
 
-    // Get slot display info
     const getSlotDisplayName = (slotId) => {
         const slot = slotsAvailability?.slots?.find(s => s.id === slotId);
         if (slot) {
@@ -250,7 +247,6 @@ export const Appointments = () => {
         return slotId;
     };
 
-    // Group orders by time slot
     const ordersBySlot = slotsAvailability?.slots?.reduce((acc, slot) => {
         acc[slot.id] = orders.filter(o => o.time_slot === slot.id);
         return acc;
@@ -258,7 +254,7 @@ export const Appointments = () => {
 
     return (
         <div className="space-y-6" data-testid="appointments-page">
-            {/* QR Dialog - Shown after creating appointment */}
+            {/* QR Dialog */}
             <Dialog open={showQRDialog} onOpenChange={setShowQRDialog}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
@@ -294,15 +290,11 @@ export const Appointments = () => {
                             />
 
                             <p className="text-sm text-muted-foreground text-center">
-                                El cliente debe presentar este código QR al momento del ingreso del vehículo
+                                El cliente debe presentar este código QR al momento del ingreso
                             </p>
 
                             <div className="flex gap-2">
-                                <Button 
-                                    variant="outline" 
-                                    onClick={handleCloseQRDialog}
-                                    className="flex-1"
-                                >
+                                <Button variant="outline" onClick={handleCloseQRDialog} className="flex-1">
                                     Cerrar
                                 </Button>
                                 <Button 
@@ -325,9 +317,7 @@ export const Appointments = () => {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                     <h1 className="font-heading text-3xl md:text-4xl">Agendamiento</h1>
-                    <p className="text-muted-foreground">
-                        Gestiona las citas del taller
-                    </p>
+                    <p className="text-muted-foreground">Gestiona las citas del taller</p>
                 </div>
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                     <DialogTrigger asChild>
@@ -336,12 +326,12 @@ export const Appointments = () => {
                             Nueva Cita
                         </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                         <DialogHeader>
                             <DialogTitle className="font-heading text-xl">Agendar Nueva Cita</DialogTitle>
-                            <DialogDescription>Complete los datos del cliente y vehículo para agendar una cita</DialogDescription>
+                            <DialogDescription>Complete los datos del cliente, vehículo y servicios</DialogDescription>
                         </DialogHeader>
-                        <form onSubmit={handleSubmit} className="space-y-4">
+                        <form onSubmit={handleSubmit} className="space-y-6">
                             {/* Client Info */}
                             <div className="space-y-4">
                                 <h3 className="font-heading text-lg flex items-center gap-2">
@@ -468,128 +458,190 @@ export const Appointments = () => {
                                 </div>
                             </div>
 
-                            {/* Time Slot with Availability */}
-                            <div className="space-y-2">
-                                <Label className="flex items-center gap-2">
-                                    <Clock className="w-4 h-4" />
-                                    Franja Horaria *
-                                </Label>
-                                {!slotsAvailability?.is_open ? (
-                                    <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 flex items-center gap-2">
-                                        <AlertCircle className="w-5 h-5" />
-                                        <span>El día seleccionado no tiene servicio</span>
-                                    </div>
-                                ) : loadingSlots ? (
-                                    <div className="flex justify-center py-4">
-                                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-                                    </div>
-                                ) : (
+                            {/* Date & Time Slot */}
+                            <div className="space-y-4">
+                                <h3 className="font-heading text-lg flex items-center gap-2">
+                                    <CalendarIcon className="w-4 h-4" />
+                                    Fecha y Franja Horaria
+                                </h3>
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                                     <div className="space-y-2">
-                                        {slotsAvailability?.slots?.map((slot) => (
-                                            <div
-                                                key={slot.id}
-                                                className={`p-3 rounded-lg border transition-all cursor-pointer ${
-                                                    formData.time_slot === slot.id
-                                                        ? 'border-primary bg-primary/10'
-                                                        : slot.available
-                                                        ? 'border-border hover:border-primary/50 bg-card'
-                                                        : 'border-border bg-muted/50 opacity-60 cursor-not-allowed'
-                                                }`}
-                                                onClick={() => slot.available && handleTimeSlotChange(slot.id)}
-                                                data-testid={`slot-${slot.id}`}
-                                            >
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                                                            formData.time_slot === slot.id
-                                                                ? 'border-primary bg-primary'
-                                                                : 'border-muted-foreground'
-                                                        }`}>
-                                                            {formData.time_slot === slot.id && (
-                                                                <div className="w-2 h-2 rounded-full bg-white" />
-                                                            )}
-                                                        </div>
-                                                        <div>
-                                                            <p className="font-medium">{slot.name}</p>
-                                                            <p className="text-sm text-muted-foreground">
-                                                                {slot.start} - {slot.end}
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <Users className="w-4 h-4 text-muted-foreground" />
-                                                        <span className={`text-sm font-medium ${
-                                                            slot.remaining === 0
-                                                                ? 'text-red-500'
-                                                                : slot.remaining <= 3
-                                                                ? 'text-yellow-500'
-                                                                : 'text-green-500'
-                                                        }`}>
-                                                            {slot.remaining} / {slot.capacity}
-                                                        </span>
-                                                        {slot.remaining === 0 && (
-                                                            <span className="text-xs text-red-500 font-medium ml-1">LLENO</span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        <p className="text-xs text-muted-foreground mt-2">
-                                            * Horario de registro hasta las {slotsAvailability?.last_registration}
+                                        <Label>Fecha de la Cita *</Label>
+                                        <div className="flex justify-center border rounded-lg p-2">
+                                            <Calendar
+                                                mode="single"
+                                                selected={selectedDate}
+                                                onSelect={handleDateSelect}
+                                                locale={es}
+                                                disabled={disabledDays}
+                                                className="rounded-md"
+                                            />
+                                        </div>
+                                        <p className="text-xs text-muted-foreground text-center">
+                                            Fecha seleccionada: {format(selectedDate, "EEEE, d 'de' MMMM yyyy", { locale: es })}
                                         </p>
                                     </div>
-                                )}
-                            </div>
-
-                            {/* Services */}
-                            <div className="space-y-2">
-                                <Label>Servicios *</Label>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    {serviceCatalog.map((item) => (
-                                        <div
-                                            key={item.service}
-                                            className="flex items-center space-x-2 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                                        >
-                                            <Checkbox
-                                                id={`service-${item.service}`}
-                                                checked={formData.services.includes(item.service)}
-                                                onCheckedChange={() => handleServiceToggle(item.service)}
-                                                data-testid={`service-checkbox-${item.service}`}
-                                            />
-                                            <label 
-                                                htmlFor={`service-${item.service}`} 
-                                                className="text-sm cursor-pointer flex-1"
-                                            >
-                                                <span className="font-medium">{item.name}</span>
-                                                <span className="text-muted-foreground ml-2 text-xs">
-                                                    {formatCurrency(item.suggested_price)}
-                                                </span>
-                                            </label>
-                                        </div>
-                                    ))}
+                                    <div className="space-y-2">
+                                        <Label className="flex items-center gap-2">
+                                            <Clock className="w-4 h-4" />
+                                            Franja Horaria *
+                                        </Label>
+                                        {!slotsAvailability?.is_open ? (
+                                            <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 flex items-center gap-2">
+                                                <AlertCircle className="w-5 h-5" />
+                                                <span>El día seleccionado no tiene servicio</span>
+                                            </div>
+                                        ) : loadingSlots ? (
+                                            <div className="flex justify-center py-4">
+                                                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {slotsAvailability?.slots?.map((slot) => (
+                                                    <div
+                                                        key={slot.id}
+                                                        className={`p-3 rounded-lg border transition-all cursor-pointer ${
+                                                            formData.time_slot === slot.id
+                                                                ? 'border-primary bg-primary/10'
+                                                                : slot.available
+                                                                ? 'border-border hover:border-primary/50 bg-card'
+                                                                : 'border-border bg-muted/50 opacity-60 cursor-not-allowed'
+                                                        }`}
+                                                        onClick={() => slot.available && handleTimeSlotChange(slot.id)}
+                                                        data-testid={`slot-${slot.id}`}
+                                                    >
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                                                                    formData.time_slot === slot.id
+                                                                        ? 'border-primary bg-primary'
+                                                                        : 'border-muted-foreground'
+                                                                }`}>
+                                                                    {formData.time_slot === slot.id && (
+                                                                        <div className="w-2 h-2 rounded-full bg-white" />
+                                                                    )}
+                                                                </div>
+                                                                <div>
+                                                                    <p className="font-medium">{slot.name}</p>
+                                                                    <p className="text-sm text-muted-foreground">
+                                                                        {slot.start} - {slot.end}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <Users className="w-4 h-4 text-muted-foreground" />
+                                                                <span className={`text-sm font-medium ${
+                                                                    slot.remaining === 0
+                                                                        ? 'text-red-500'
+                                                                        : slot.remaining <= 3
+                                                                        ? 'text-yellow-500'
+                                                                        : 'text-green-500'
+                                                                }`}>
+                                                                    {slot.remaining} / {slot.capacity}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                <p className="text-xs text-muted-foreground">
+                                                    * Registro hasta las {slotsAvailability?.last_registration}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
-                            {/* Negotiated Value */}
-                            <div className="space-y-2">
-                                <Label htmlFor="negotiated_value" className="flex items-center gap-2">
-                                    <DollarSign className="w-4 h-4" />
-                                    Valor Negociado *
-                                </Label>
-                                <Input
-                                    id="negotiated_value"
-                                    type="number"
-                                    min="0"
-                                    value={formData.negotiated_value}
-                                    onChange={(e) => setFormData(prev => ({ ...prev, negotiated_value: e.target.value }))}
-                                    placeholder="0"
-                                    required
-                                    data-testid="appointment-negotiated-value"
-                                />
-                                {formData.negotiated_value && (
-                                    <p className="text-sm text-muted-foreground">
-                                        {formatCurrency(parseFloat(formData.negotiated_value) || 0)}
-                                    </p>
+                            {/* Services by Category */}
+                            <div className="space-y-4">
+                                <h3 className="font-heading text-lg flex items-center gap-2">
+                                    <Package className="w-4 h-4" />
+                                    Servicios *
+                                </h3>
+                                <Accordion type="multiple" className="w-full">
+                                    {Object.entries(serviceCatalog).map(([categoryId, category]) => (
+                                        <AccordionItem key={categoryId} value={categoryId}>
+                                            <AccordionTrigger className="hover:no-underline">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium">{category.name}</span>
+                                                    {selectedServices.filter(s => 
+                                                        category.services.some(cs => cs.id === s.serviceId)
+                                                    ).length > 0 && (
+                                                        <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full">
+                                                            {selectedServices.filter(s => 
+                                                                category.services.some(cs => cs.id === s.serviceId)
+                                                            ).length}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </AccordionTrigger>
+                                            <AccordionContent>
+                                                <div className="space-y-2 pt-2">
+                                                    {category.services.map((service) => {
+                                                        const isSelected = selectedServices.some(s => s.serviceId === service.id);
+                                                        const selectedService = selectedServices.find(s => s.serviceId === service.id);
+                                                        return (
+                                                            <div
+                                                                key={service.id}
+                                                                className={`p-3 rounded-lg border transition-colors ${
+                                                                    isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                                                                }`}
+                                                            >
+                                                                <div className="flex items-center gap-3">
+                                                                    <Checkbox
+                                                                        id={`svc-${service.id}`}
+                                                                        checked={isSelected}
+                                                                        onCheckedChange={() => handleServiceToggle(service.id, service.name, category.name)}
+                                                                        data-testid={`service-${service.id}`}
+                                                                    />
+                                                                    <label 
+                                                                        htmlFor={`svc-${service.id}`} 
+                                                                        className="flex-1 cursor-pointer"
+                                                                    >
+                                                                        {service.name}
+                                                                    </label>
+                                                                    {isSelected && (
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className="text-sm text-muted-foreground">$</span>
+                                                                            <Input
+                                                                                type="number"
+                                                                                min="0"
+                                                                                value={selectedService?.price || ''}
+                                                                                onChange={(e) => handleServicePriceChange(service.id, e.target.value)}
+                                                                                placeholder="Valor"
+                                                                                className="w-32 h-8 text-right"
+                                                                                onClick={(e) => e.stopPropagation()}
+                                                                                data-testid={`price-${service.id}`}
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </AccordionContent>
+                                        </AccordionItem>
+                                    ))}
+                                </Accordion>
+
+                                {/* Selected Services Summary */}
+                                {selectedServices.length > 0 && (
+                                    <div className="p-4 rounded-lg bg-primary/10 border border-primary/30 space-y-3">
+                                        <p className="font-medium">Servicios seleccionados:</p>
+                                        <div className="space-y-1">
+                                            {selectedServices.map((svc) => (
+                                                <div key={svc.serviceId} className="flex justify-between text-sm">
+                                                    <span>{svc.serviceName}</span>
+                                                    <span className="font-mono">{formatCurrency(svc.price)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="flex justify-between font-bold pt-2 border-t border-primary/30">
+                                            <span>Total:</span>
+                                            <span className="text-primary">{formatCurrency(calculateTotal())}</span>
+                                        </div>
+                                    </div>
                                 )}
                             </div>
 
@@ -609,9 +661,10 @@ export const Appointments = () => {
                                 type="submit" 
                                 className="w-full brand-glow" 
                                 data-testid="submit-appointment-btn"
-                                disabled={!slotsAvailability?.is_open}
+                                disabled={!slotsAvailability?.is_open || selectedServices.length === 0}
                             >
-                                Agendar Cita
+                                <DollarSign className="w-4 h-4 mr-2" />
+                                Agendar Cita - {formatCurrency(calculateTotal())}
                             </Button>
                         </form>
                     </DialogContent>
@@ -639,7 +692,6 @@ export const Appointments = () => {
                             data-testid="appointment-calendar"
                         />
                     </CardContent>
-                    {/* Operating hours info */}
                     <CardContent className="pt-0">
                         <div className="p-3 rounded-lg bg-muted/50 text-sm space-y-1">
                             <p className="font-medium">Horarios de operación:</p>
@@ -679,7 +731,6 @@ export const Appointments = () => {
                                             className="rounded-lg border bg-card overflow-hidden"
                                             data-testid={`time-slot-${slot.id}`}
                                         >
-                                            {/* Slot Header */}
                                             <div className="flex items-center justify-between p-3 bg-muted/30 border-b">
                                                 <div>
                                                     <p className="font-medium">{slot.name}</p>
@@ -687,21 +738,17 @@ export const Appointments = () => {
                                                         {slot.start} - {slot.end}
                                                     </p>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                    <div className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1 ${
-                                                        slot.remaining === 0
-                                                            ? 'bg-red-500/10 text-red-500'
-                                                            : slot.remaining <= 3
-                                                            ? 'bg-yellow-500/10 text-yellow-500'
-                                                            : 'bg-green-500/10 text-green-500'
-                                                    }`}>
-                                                        <Users className="w-3 h-3" />
-                                                        {slot.remaining} disponibles
-                                                    </div>
+                                                <div className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1 ${
+                                                    slot.remaining === 0
+                                                        ? 'bg-red-500/10 text-red-500'
+                                                        : slot.remaining <= 3
+                                                        ? 'bg-yellow-500/10 text-yellow-500'
+                                                        : 'bg-green-500/10 text-green-500'
+                                                }`}>
+                                                    <Users className="w-3 h-3" />
+                                                    {slot.remaining} disponibles
                                                 </div>
                                             </div>
-                                            
-                                            {/* Slot Orders */}
                                             <div className="p-3">
                                                 {slotOrders.length === 0 ? (
                                                     <p className="text-sm text-muted-foreground text-center py-2">

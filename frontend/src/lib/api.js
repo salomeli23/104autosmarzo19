@@ -86,6 +86,7 @@ export const dashboardAPI = {
 // Services catalog
 export const servicesAPI = {
     getCatalog: () => api.get('/services/catalog'),
+    getCatalogFlat: () => api.get('/services/catalog/flat'),
 };
 
 // Time slots availability

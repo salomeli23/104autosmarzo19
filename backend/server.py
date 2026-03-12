@@ -905,16 +905,104 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
     return stats
 
 # ==================== SERVICES CATALOG ====================
+# Catálogo completo de servicios organizados por categorías
+SERVICES_CATALOG = {
+    "polarizado_ultrasecure": {
+        "name": "Polarizado/Ultrasecure",
+        "services": [
+            {"id": "nanooptik", "name": "Nanooptik"},
+            {"id": "black_ceramic_autobahn", "name": "Black Ceramic Autobahn"},
+            {"id": "ultraoptik_aswf", "name": "Ultraoptik ASWF"},
+            {"id": "ceramic_i3_autobahn", "name": "Ceramic i3 Autobahn"},
+            {"id": "ceramic_i3_plus_autobahn", "name": "Ceramic i3+ Autobahn"},
+            {"id": "huperoptik", "name": "Huperoptik"},
+            {"id": "mixto", "name": "Mixto"},
+            {"id": "micras_300", "name": "300 Micras"},
+            {"id": "micras_500", "name": "500 Micras"},
+            {"id": "micras_700", "name": "700 Micras"},
+            {"id": "micras_1000", "name": "1000 Micras"},
+            {"id": "micras_1700", "name": "1.700 Micras"},
+        ]
+    },
+    "ppf": {
+        "name": "PPF",
+        "services": [
+            {"id": "ppf_matte", "name": "Matte"},
+            {"id": "ppf_brillante", "name": "Brillante"},
+            {"id": "ppf_negro_mate", "name": "Negro Mate"},
+            {"id": "ppf_vinilo", "name": "Vinilo"},
+            {"id": "ppf_graph", "name": "Graph"},
+        ]
+    },
+    "accesorios": {
+        "name": "Accesorios",
+        "services": [
+            {"id": "seguros_luna", "name": "Seguros de Luna"},
+            {"id": "seguros_guaya", "name": "Seguros de Guaya"},
+            {"id": "tuercas_i", "name": "Tuercas I (5 medidas)"},
+            {"id": "pernos_i", "name": "Pernos I"},
+            {"id": "tuercas_mg", "name": "Tuercas MG (5 medidas)"},
+            {"id": "pernos_mg", "name": "Pernos MG"},
+            {"id": "plumillas", "name": "Plumillas"},
+            {"id": "glass_cleaner", "name": "Glass Cleaner"},
+            {"id": "opulum", "name": "Opulum"},
+            {"id": "hidrofilms", "name": "Hidrofilms"},
+            {"id": "cadena_kryptonite", "name": "Cadena Kryptonite"},
+            {"id": "camara_4k", "name": "Cámara de seguridad 4K"},
+            {"id": "camara_hd", "name": "Cámara de seguridad HD"},
+            {"id": "tiros_arrastre", "name": "Tiros de arrastre"},
+            {"id": "cadena_defender", "name": "Cadena Defender"},
+            {"id": "seguros_llanta", "name": "Seguros de llanta"},
+            {"id": "tapetes_termoformado", "name": "Tapetes Termoformado Lengueta"},
+            {"id": "tapetes_defender", "name": "Tapetes Defender Universal"},
+        ]
+    },
+    "detailing": {
+        "name": "Detailing",
+        "services": [
+            {"id": "polichado_profesional", "name": "Polichado Profesional"},
+            {"id": "ceramico_3_anos", "name": "Cerámico 3 años"},
+            {"id": "ceramico_5_anos", "name": "Cerámico 5 años"},
+            {"id": "lavado", "name": "Lavado"},
+            {"id": "mantenimiento_ceramico", "name": "Mantenimiento Cerámico"},
+            {"id": "lavado_chasis", "name": "Lavado Chasis"},
+            {"id": "ceramico_cojineria", "name": "Cerámico Cojinería"},
+            {"id": "ceramico_plasticos", "name": "Cerámico Plásticos"},
+            {"id": "correccion_pintura", "name": "Corrección de Pintura"},
+            {"id": "lavado_interior", "name": "Lavado Interior"},
+            {"id": "lavado_cojineria", "name": "Lavado Cojinería"},
+            {"id": "ceramico_vidrios", "name": "Cerámico de Vidrios"},
+        ]
+    },
+    "latoneria_pintura": {
+        "name": "Latonería y Pintura",
+        "services": [
+            {"id": "correccion_farolas", "name": "Corrección de Farolas"},
+            {"id": "pdr", "name": "PDR"},
+            {"id": "latoneria", "name": "Latonería"},
+        ]
+    }
+}
+
 @api_router.get("/services/catalog")
 async def get_services_catalog():
-    """Get available services with suggested prices"""
-    catalog = [
-        {"service": "polarizado", "name": "Polarizado", "suggested_price": 350000, "description": "Polarizado de vidrios"},
-        {"service": "nanoceramica", "name": "Nanocerámica", "suggested_price": 800000, "description": "Recubrimiento nanocerámico"},
-        {"service": "autobahn_black", "name": "Autobahn Black CE", "suggested_price": 1200000, "description": "Película Autobahn Black CE premium"},
-        {"service": "ultrasecure", "name": "Ultrasecure", "suggested_price": 500000, "description": "Película de seguridad Ultrasecure"},
-    ]
-    return catalog
+    """Get available services organized by category - prices are open/manual"""
+    return SERVICES_CATALOG
+
+@api_router.get("/services/catalog/flat")
+async def get_services_catalog_flat():
+    """Get flat list of all services for compatibility"""
+    services = []
+    for category_id, category in SERVICES_CATALOG.items():
+        for service in category["services"]:
+            services.append({
+                "service": service["id"],
+                "name": service["name"],
+                "category": category["name"],
+                "category_id": category_id,
+                "suggested_price": 0  # Precio abierto
+            })
+    return services
 
 # ==================== TIME SLOTS & AVAILABILITY ====================
 # Configuración de franjas horarias

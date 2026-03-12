@@ -73,7 +73,7 @@ export const CheckIn = () => {
         try {
             const [orderRes, catalogRes] = await Promise.all([
                 ordersAPI.checkin(code.trim().toUpperCase()),
-                servicesAPI.getCatalog()
+                servicesAPI.getCatalogFlat()
             ]);
             
             setOrder(orderRes.data);
