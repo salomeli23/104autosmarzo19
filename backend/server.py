@@ -244,8 +244,7 @@ class OrderResponse(BaseModel):
     notes: Optional[str] = None
     # Ingreso data
     signature_url: Optional[str] = None
-    cedula_photo_url: Optional[str] = None
-    client_photo_url: Optional[str] = None
+    risk_agreement_accepted: bool = False
     ingreso_at: Optional[str] = None
     # Revision 360 data
     inspection_photos: List[str] = []
@@ -284,8 +283,7 @@ class IngresoApproval(BaseModel):
     final_value: float
     signature_url: str
     cedula_number: str
-    cedula_photo_url: Optional[str] = None
-    client_photo_url: Optional[str] = None
+    risk_agreement_accepted: bool = False
 
 class InspectionData(BaseModel):
     order_id: str
@@ -422,8 +420,7 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "notes": order.notes,
         # Empty fields for later steps
         "signature_url": None,
-        "cedula_photo_url": None,
-        "client_photo_url": None,
+        "risk_agreement_accepted": False,
         "ingreso_at": None,
         "inspection_photos": [],
         "inspection_video_url": None,
@@ -583,14 +580,15 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         raise HTTPException(status_code=400, detail="La firma digital es requerida")
     if not data.cedula_number:
         raise HTTPException(status_code=400, detail="El número de cédula es requerido")
+    if not data.risk_agreement_accepted:
+        raise HTTPException(status_code=400, detail="El acuerdo de riesgo debe ser aceptado")
     
     update_data = {
         "services": [s.model_dump() for s in data.services],
         "final_value": data.final_value,
         "signature_url": data.signature_url,
         "client_cedula": data.cedula_number,
-        "cedula_photo_url": data.cedula_photo_url,
-        "client_photo_url": data.client_photo_url,
+        "risk_agreement_accepted": data.risk_agreement_accepted,
         "status": OrderStatus.INGRESADO.value,
         "ingreso_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
