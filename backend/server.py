@@ -202,7 +202,7 @@ class TokenResponse(BaseModel):
 
 # Order/Cita Models
 class ServiceItem(BaseModel):
-    service: ServiceType
+    service: str  # Ahora acepta cualquier servicio del catálogo
     price: float
     description: Optional[str] = None
 
