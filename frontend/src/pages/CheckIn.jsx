@@ -109,6 +109,7 @@ export const CheckIn = () => {
                 setWaitingInfo({
                     message: errorData.message,
                     timeRemaining: errorData.time_remaining,
+                    scheduledTime: errorData.scheduled_time,
                     slotTime: errorData.slot_time,
                     appointmentDate: errorData.appointment_date
                 });
@@ -491,23 +492,38 @@ export const CheckIn = () => {
                         <Card className="lg:col-span-2 border-yellow-500/50 bg-yellow-500/10">
                             <CardContent className="pt-6">
                                 <div className="flex flex-col items-center text-center space-y-4">
-                                    <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center">
-                                        <Timer className="w-8 h-8 text-yellow-500 animate-pulse" />
+                                    <div className="w-20 h-20 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                                        <Timer className="w-10 h-10 text-yellow-500 animate-pulse" />
                                     </div>
                                     <div>
-                                        <h3 className="font-heading text-xl text-yellow-500 flex items-center justify-center gap-2">
-                                            <AlertTriangle className="w-5 h-5" />
+                                        <h3 className="font-heading text-2xl text-yellow-500 flex items-center justify-center gap-2">
+                                            <AlertTriangle className="w-6 h-6" />
                                             Debe Esperar
                                         </h3>
-                                        <p className="text-lg mt-2">{waitingInfo.message}</p>
+                                        
+                                        {/* Hora de la cita */}
+                                        {waitingInfo.scheduledTime && (
+                                            <div className="mt-4 p-4 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/40">
+                                                <p className="text-sm text-muted-foreground">Su cita es a las:</p>
+                                                <p className="text-4xl font-mono font-bold text-cyan-400 mt-1">
+                                                    {waitingInfo.scheduledTime}
+                                                </p>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Tiempo restante */}
                                         {waitingInfo.timeRemaining && (
                                             <div className="mt-4 p-4 rounded-lg bg-card border">
-                                                <p className="text-sm text-muted-foreground">Tiempo restante:</p>
+                                                <p className="text-sm text-muted-foreground">Tiempo restante para check-in:</p>
                                                 <p className="text-3xl font-mono font-bold text-primary mt-1">
                                                     {waitingInfo.timeRemaining}
                                                 </p>
                                             </div>
                                         )}
+                                        
+                                        <p className="text-sm text-muted-foreground mt-4">
+                                            Fecha: {waitingInfo.appointmentDate}
+                                        </p>
                                     </div>
                                     <Button variant="outline" onClick={() => setWaitingInfo(null)}>
                                         Buscar otra orden

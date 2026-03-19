@@ -283,6 +283,19 @@ export const Appointments = () => {
                                 </div>
                             </div>
 
+                            {/* Hora específica de la cita */}
+                            {createdOrder.scheduled_time && (
+                                <div className="p-4 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/40 text-center">
+                                    <p className="text-sm text-muted-foreground">Hora de su cita:</p>
+                                    <p className="text-3xl font-mono font-bold text-cyan-400">
+                                        {createdOrder.scheduled_time}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        El check-in estará disponible a partir de esta hora
+                                    </p>
+                                </div>
+                            )}
+
                             <QRDisplay 
                                 qrCode={createdOrder.qr_code}
                                 orderCode={createdOrder.order_code}
@@ -764,6 +777,12 @@ export const Appointments = () => {
                                                             >
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="flex items-center gap-2">
+                                                                        {/* Hora específica */}
+                                                                        {order.scheduled_time && (
+                                                                            <span className="text-sm font-mono font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded">
+                                                                                {order.scheduled_time}
+                                                                            </span>
+                                                                        )}
                                                                         <p className="font-medium truncate">{order.client_name}</p>
                                                                         <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
                                                                             <QrCode className="w-3 h-3" />

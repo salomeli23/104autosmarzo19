@@ -237,6 +237,7 @@ class OrderResponse(BaseModel):
     color: Optional[str] = None
     date: str
     time_slot: str
+    scheduled_time: Optional[str] = None  # Hora específica de la cita (HH:MM)
     services: List[dict]
     negotiated_value: float
     final_value: Optional[float] = None
@@ -398,6 +399,9 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     order_code = generate_order_code()
     qr_code = generate_qr_code(order_code)
     
+    # Calculate specific scheduled time based on queue position
+    scheduled_time = await calculate_scheduled_time(order.date, order.time_slot)
+    
     order_doc = {
         "id": order_id,
         "order_code": order_code,
@@ -413,6 +417,7 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "color": order.color,
         "date": order.date,
         "time_slot": order.time_slot,
+        "scheduled_time": scheduled_time,  # Hora específica de la cita
         "services": [s.model_dump() for s in order.services],
         "negotiated_value": order.negotiated_value,
         "final_value": None,
@@ -503,10 +508,60 @@ def get_slot_start_time(slot_id: str, date_str: str):
                           tzinfo=timezone(timedelta(hours=-5)))
     return None
 
-def validate_checkin_time(order_date: str, time_slot: str):
+def get_slot_info(slot_id: str, date_str: str):
+    """Get slot configuration (start, end, capacity) based on day and slot ID"""
+    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+    day_of_week = date_obj.weekday()
+    
+    if day_of_week == 6:
+        return None
+    
+    config = TIME_SLOTS_CONFIG["saturday"] if day_of_week == 5 else TIME_SLOTS_CONFIG["weekday"]
+    
+    for slot in config["slots"]:
+        if slot["id"] == slot_id:
+            return slot
+    return None
+
+async def calculate_scheduled_time(date_str: str, slot_id: str):
+    """Calculate specific scheduled time based on position in the slot queue"""
+    slot_info = get_slot_info(slot_id, date_str)
+    if not slot_info:
+        return None
+    
+    # Count existing orders in this slot
+    existing_count = await db.orders.count_documents({
+        "date": date_str,
+        "time_slot": slot_id,
+        "status": {"$nin": ["desistimiento"]}
+    })
+    
+    # Parse slot times
+    start_hour, start_min = map(int, slot_info["start"].split(":"))
+    end_hour, end_min = map(int, slot_info["end"].split(":"))
+    
+    # Calculate total minutes in slot
+    start_total_min = start_hour * 60 + start_min
+    end_total_min = end_hour * 60 + end_min
+    slot_duration_min = end_total_min - start_total_min
+    
+    # Calculate interval per vehicle
+    capacity = slot_info["capacity"]
+    interval_min = slot_duration_min / capacity
+    
+    # Calculate this vehicle's scheduled time
+    position = existing_count  # 0-indexed position
+    scheduled_min = start_total_min + (position * interval_min)
+    
+    scheduled_hour = int(scheduled_min // 60)
+    scheduled_minute = int(scheduled_min % 60)
+    
+    return f"{scheduled_hour:02d}:{scheduled_minute:02d}"
+
+def validate_checkin_time(order_date: str, scheduled_time: str):
     """
-    Validate if check-in can be performed based on current Colombia time.
-    Returns (can_checkin: bool, message: str, time_remaining: str or None)
+    Validate if check-in can be performed based on scheduled time.
+    Returns (can_checkin: bool, message: str, time_remaining: str or None, scheduled_time: str)
     """
     now_colombia = get_colombia_time()
     today_str = now_colombia.strftime("%Y-%m-%d")
@@ -515,20 +570,23 @@ def validate_checkin_time(order_date: str, time_slot: str):
     if order_date != today_str:
         order_date_obj = datetime.strptime(order_date, "%Y-%m-%d")
         if order_date_obj.date() > now_colombia.date():
-            return False, f"La cita es para el {order_date}. Debe esperar hasta ese día.", None
+            return False, f"La cita es para el {order_date}. Debe esperar hasta ese día.", None, scheduled_time
         else:
-            # Past date - allow checkin (could be late arrival)
-            return True, None, None
+            # Past date - allow checkin
+            return True, None, None, scheduled_time
     
-    # Get slot start time
-    slot_start = get_slot_start_time(time_slot, order_date)
-    if not slot_start:
-        return False, "Franja horaria inválida", None
+    if not scheduled_time:
+        return True, None, None, scheduled_time
     
-    # Check if current time is before slot start
-    if now_colombia < slot_start:
-        time_diff = slot_start - now_colombia
-        hours, remainder = divmod(int(time_diff.total_seconds()), 3600)
+    # Parse scheduled time
+    sched_hour, sched_min = map(int, scheduled_time.split(":"))
+    scheduled_datetime = now_colombia.replace(hour=sched_hour, minute=sched_min, second=0, microsecond=0)
+    
+    # Check if current time is before scheduled time
+    if now_colombia < scheduled_datetime:
+        time_diff = scheduled_datetime - now_colombia
+        total_seconds = int(time_diff.total_seconds())
+        hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         
         if hours > 0:
@@ -536,22 +594,22 @@ def validate_checkin_time(order_date: str, time_slot: str):
         else:
             time_remaining = f"{minutes} minutos"
         
-        slot_start_str = slot_start.strftime("%H:%M")
-        return False, f"Debe esperar hasta las {slot_start_str} para hacer check-in", time_remaining
+        return False, f"Su cita es a las {scheduled_time}. Debe esperar.", time_remaining, scheduled_time
     
-    return True, None, None
+    return True, None, None, scheduled_time
 
 @api_router.post("/orders/checkin")
 async def checkin_order(data: CheckInRequest, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR]))):
-    """Check-in with QR code or order code - validates time slot"""
+    """Check-in with QR code or order code - validates scheduled time"""
     order = await db.orders.find_one({"order_code": data.order_code.upper()}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     if order["status"] != OrderStatus.AGENDADO.value:
         raise HTTPException(status_code=400, detail=f"La orden no está en estado agendado. Estado actual: {order['status']}")
     
-    # Validate check-in time based on Colombia time
-    can_checkin, message, time_remaining = validate_checkin_time(order["date"], order["time_slot"])
+    # Validate check-in time based on scheduled time
+    scheduled_time = order.get("scheduled_time")
+    can_checkin, message, time_remaining, sched_time = validate_checkin_time(order["date"], scheduled_time)
     if not can_checkin:
         raise HTTPException(
             status_code=400, 
@@ -559,6 +617,7 @@ async def checkin_order(data: CheckInRequest, current_user: dict = Depends(requi
                 "type": "time_validation",
                 "message": message,
                 "time_remaining": time_remaining,
+                "scheduled_time": sched_time,
                 "slot_time": order["time_slot"],
                 "appointment_date": order["date"]
             }
