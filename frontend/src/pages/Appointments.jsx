@@ -15,7 +15,7 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
 import { CAR_BRANDS, CAR_MODELS, formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, ChevronDown, Package } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, ChevronDown, Package, Trash2, PlusCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -33,7 +33,11 @@ export const Appointments = () => {
     
     // Services with individual prices
     const [selectedServices, setSelectedServices] = useState([]);
-    // { serviceId: string, serviceName: string, category: string, price: number }
+    // { serviceId: string, serviceName: string, category: string, price: number, isCustom?: boolean }
+    
+    // Custom service input
+    const [customServiceName, setCustomServiceName] = useState('');
+    const [customServicePrice, setCustomServicePrice] = useState('');
     
     const [formData, setFormData] = useState({
         client_name: '',
@@ -152,6 +156,35 @@ export const Appointments = () => {
         );
     };
 
+    // Add custom service
+    const handleAddCustomService = () => {
+        if (!customServiceName.trim()) {
+            toast.error('Ingresa el nombre del servicio o producto');
+            return;
+        }
+        if (!customServicePrice || parseFloat(customServicePrice) <= 0) {
+            toast.error('Ingresa el valor del servicio o producto');
+            return;
+        }
+        
+        const customId = `custom_${Date.now()}`;
+        setSelectedServices(prev => [...prev, {
+            serviceId: customId,
+            serviceName: customServiceName.trim(),
+            category: 'Personalizado',
+            price: parseFloat(customServicePrice),
+            isCustom: true
+        }]);
+        setCustomServiceName('');
+        setCustomServicePrice('');
+        toast.success('Servicio agregado');
+    };
+
+    // Remove service
+    const handleRemoveService = (serviceId) => {
+        setSelectedServices(prev => prev.filter(s => s.serviceId !== serviceId));
+    };
+
     const resetForm = () => {
         setFormData({
             client_name: '',
@@ -167,6 +200,8 @@ export const Appointments = () => {
             notes: '',
         });
         setSelectedServices([]);
+        setCustomServiceName('');
+        setCustomServicePrice('');
     };
 
     const handleSubmit = async (e) => {
@@ -638,15 +673,71 @@ export const Appointments = () => {
                                     ))}
                                 </Accordion>
 
+                                {/* Custom Service Input */}
+                                <div className="p-4 rounded-lg border border-dashed border-muted-foreground/50 space-y-3">
+                                    <Label className="flex items-center gap-2 text-muted-foreground">
+                                        <PlusCircle className="w-4 h-4" />
+                                        Agregar Servicio/Producto Personalizado
+                                    </Label>
+                                    <div className="flex gap-2">
+                                        <Input
+                                            value={customServiceName}
+                                            onChange={(e) => setCustomServiceName(e.target.value)}
+                                            placeholder="Nombre del servicio o producto"
+                                            className="flex-1"
+                                            data-testid="custom-service-name"
+                                        />
+                                        <div className="flex items-center gap-1">
+                                            <span className="text-sm text-muted-foreground">$</span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                value={customServicePrice}
+                                                onChange={(e) => setCustomServicePrice(e.target.value)}
+                                                placeholder="Valor"
+                                                className="w-28"
+                                                data-testid="custom-service-price"
+                                            />
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon"
+                                            onClick={handleAddCustomService}
+                                            data-testid="add-custom-service-btn"
+                                        >
+                                            <Plus className="w-4 h-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+
                                 {/* Selected Services Summary */}
                                 {selectedServices.length > 0 && (
                                     <div className="p-4 rounded-lg bg-primary/10 border border-primary/30 space-y-3">
                                         <p className="font-medium">Servicios seleccionados:</p>
-                                        <div className="space-y-1">
+                                        <div className="space-y-2">
                                             {selectedServices.map((svc) => (
-                                                <div key={svc.serviceId} className="flex justify-between text-sm">
-                                                    <span>{svc.serviceName}</span>
-                                                    <span className="font-mono">{formatCurrency(svc.price)}</span>
+                                                <div key={svc.serviceId} className="flex items-center justify-between text-sm">
+                                                    <div className="flex items-center gap-2">
+                                                        {svc.isCustom && (
+                                                            <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded">
+                                                                Personalizado
+                                                            </span>
+                                                        )}
+                                                        <span>{svc.serviceName}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-mono">{formatCurrency(svc.price)}</span>
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-6 w-6 text-red-500 hover:text-red-600"
+                                                            onClick={() => handleRemoveService(svc.serviceId)}
+                                                        >
+                                                            <Trash2 className="w-3 h-3" />
+                                                        </Button>
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>

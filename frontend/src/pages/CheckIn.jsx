@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import { 
     QrCode, Search, Car, User, Phone, FileCheck, 
     Pen, CheckCircle, Plus, DollarSign, ArrowRight,
-    Clock, AlertTriangle, Timer, Shield, Package, Trash2
+    Clock, AlertTriangle, Timer, Shield, Package, Trash2, PlusCircle
 } from 'lucide-react';
 import api from '../lib/api';
 
@@ -34,7 +34,11 @@ export const CheckIn = () => {
     
     // Services with prices (upsell support)
     const [selectedServices, setSelectedServices] = useState([]);
-    // { serviceId: string, serviceName: string, category: string, price: number }
+    // { serviceId: string, serviceName: string, category: string, price: number, isCustom?: boolean }
+    
+    // Custom service input
+    const [customServiceName, setCustomServiceName] = useState('');
+    const [customServicePrice, setCustomServicePrice] = useState('');
     
     const [signature, setSignature] = useState(null);
     const [cedulaNumber, setCedulaNumber] = useState('');
@@ -142,6 +146,30 @@ export const CheckIn = () => {
         );
     };
 
+    // Add custom service
+    const handleAddCustomService = () => {
+        if (!customServiceName.trim()) {
+            toast.error('Ingresa el nombre del servicio o producto');
+            return;
+        }
+        if (!customServicePrice || parseFloat(customServicePrice) <= 0) {
+            toast.error('Ingresa el valor del servicio o producto');
+            return;
+        }
+        
+        const customId = `custom_${Date.now()}`;
+        setSelectedServices(prev => [...prev, {
+            serviceId: customId,
+            serviceName: customServiceName.trim(),
+            category: 'Personalizado',
+            price: parseFloat(customServicePrice),
+            isCustom: true
+        }]);
+        setCustomServiceName('');
+        setCustomServicePrice('');
+        toast.success('Servicio agregado');
+    };
+
     // Remove service
     const handleRemoveService = (serviceId) => {
         setSelectedServices(prev => prev.filter(s => s.serviceId !== serviceId));
@@ -152,12 +180,34 @@ export const CheckIn = () => {
         return selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
     };
 
-    // Check if all risk checks are complete
-    const allRiskChecksComplete = Object.values(riskChecks).every(v => v);
+    // Check if any selected service is polarizado/ultrasecure
+    const hasPolarizadoService = () => {
+        const polarizadoServices = [
+            'nanooptik', 'black_ceramic_autobahn', 'ultraoptik_aswf', 
+            'ceramic_i3_autobahn', 'ceramic_i3_plus_autobahn', 'huperoptik',
+            'mixto', 'micras_300', 'micras_500', 'micras_700', 'micras_1000', 'micras_1700'
+        ];
+        return selectedServices.some(s => polarizadoServices.includes(s.serviceId) || 
+            s.category === 'Polarizado/Ultrasecure');
+    };
+
+    // Get relevant risk checks based on services
+    const getRelevantRiskChecks = () => {
+        if (hasPolarizadoService()) {
+            return ['retiroPolarizado', 'vidriosBlinados', 'instalacionEncima'];
+        }
+        return ['autorizaciones', 'datosPersonales'];
+    };
+
+    // Check if all relevant risk checks are complete
+    const allRiskChecksComplete = () => {
+        const relevantChecks = getRelevantRiskChecks();
+        return relevantChecks.every(check => riskChecks[check]);
+    };
 
     // Handle risk agreement acceptance
     const handleAcceptRiskAgreement = () => {
-        if (!allRiskChecksComplete) {
+        if (!allRiskChecksComplete()) {
             toast.error('Debe aceptar todos los puntos del acuerdo');
             return;
         }
@@ -228,6 +278,8 @@ export const CheckIn = () => {
         setCedulaNumber('');
         setWaitingInfo(null);
         setRiskAgreementAccepted(false);
+        setCustomServiceName('');
+        setCustomServicePrice('');
         setRiskChecks({
             retiroPolarizado: false,
             vidriosBlinados: false,
@@ -249,7 +301,10 @@ export const CheckIn = () => {
                             Acuerdo de Riesgo de Servicio
                         </DialogTitle>
                         <DialogDescription>
-                            El cliente debe leer y aceptar cada punto antes de continuar
+                            {hasPolarizadoService() 
+                                ? 'Acuerdo específico para servicios de Polarizado/Ultrasecure'
+                                : 'Acuerdo general de servicio'
+                            }
                         </DialogDescription>
                     </DialogHeader>
                     <ScrollArea className="h-[55vh] pr-4">
@@ -260,150 +315,126 @@ export const CheckIn = () => {
                                 <p className="text-sm text-muted-foreground">Términos y Condiciones del Servicio</p>
                             </div>
 
-                            {/* Sección 1: Retiro de Polarizado */}
-                            <div className={`p-4 rounded-lg border transition-all ${riskChecks.retiroPolarizado ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
-                                <div className="flex items-start gap-3">
-                                    <Checkbox
-                                        id="check-retiro"
-                                        checked={riskChecks.retiroPolarizado}
-                                        onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, retiroPolarizado: checked}))}
-                                        className="mt-1"
-                                    />
-                                    <div className="flex-1">
-                                        <label htmlFor="check-retiro" className="font-medium cursor-pointer text-cyan-400">
-                                            Nota para Retiro de Polarizado en Vidrio Trasero
-                                        </label>
-                                        <p className="text-sm text-muted-foreground mt-1">
-                                            Cliente autoriza el retiro del polarizado del vidrio trasero, entendiendo y aceptando que este 
-                                            procedimiento puede implicar riesgos técnicos, como el deterioro o daño parcial del sistema 
-                                            acompañante de dicho vidrio. <span className="text-yellow-500 font-medium">ACEPTO</span>
-                                        </p>
+                            {/* Notas para Polarizado/Ultrasecure */}
+                            {hasPolarizadoService() && (
+                                <>
+                                    {/* Sección 1: Retiro de Polarizado */}
+                                    <div className={`p-4 rounded-lg border transition-all ${riskChecks.retiroPolarizado ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
+                                        <div className="flex items-start gap-3">
+                                            <Checkbox
+                                                id="check-retiro"
+                                                checked={riskChecks.retiroPolarizado}
+                                                onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, retiroPolarizado: checked}))}
+                                                className="mt-1"
+                                            />
+                                            <div className="flex-1">
+                                                <label htmlFor="check-retiro" className="font-medium cursor-pointer text-cyan-400">
+                                                    Nota para Retiro de Polarizado en Vidrio Trasero
+                                                </label>
+                                                <p className="text-sm text-muted-foreground mt-1">
+                                                    Cliente autoriza el retiro del polarizado del vidrio trasero, entendiendo y aceptando que este 
+                                                    procedimiento puede implicar riesgos técnicos, como el deterioro o daño parcial del sistema 
+                                                    acompañante de dicho vidrio. <span className="text-yellow-500 font-medium">ACEPTO</span>
+                                                </p>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
 
-                            {/* Sección 2: Vidrios Blindados */}
-                            <div className={`p-4 rounded-lg border transition-all ${riskChecks.vidriosBlinados ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
-                                <div className="flex items-start gap-3">
-                                    <Checkbox
-                                        id="check-blindados"
-                                        checked={riskChecks.vidriosBlinados}
-                                        onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, vidriosBlinados: checked}))}
-                                        className="mt-1"
-                                    />
-                                    <div className="flex-1">
-                                        <label htmlFor="check-blindados" className="font-medium cursor-pointer text-cyan-400">
-                                            Nota para Retiro en Vidrios Blindados
-                                        </label>
-                                        <p className="text-sm text-muted-foreground mt-1">
-                                            Cliente autoriza el retiro del polarizado aplicado sobre vidrios blindados, reconociendo que, 
-                                            debido a la naturaleza del policarbonato, existe la posibilidad de que queden marcas, 
-                                            mapeos o alteraciones visuales en la superficie del blindaje. <span className="text-yellow-500 font-medium">ACEPTO</span>
-                                        </p>
+                                    {/* Sección 2: Vidrios Blindados */}
+                                    <div className={`p-4 rounded-lg border transition-all ${riskChecks.vidriosBlinados ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
+                                        <div className="flex items-start gap-3">
+                                            <Checkbox
+                                                id="check-blindados"
+                                                checked={riskChecks.vidriosBlinados}
+                                                onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, vidriosBlinados: checked}))}
+                                                className="mt-1"
+                                            />
+                                            <div className="flex-1">
+                                                <label htmlFor="check-blindados" className="font-medium cursor-pointer text-cyan-400">
+                                                    Nota para Retiro en Vidrios Blindados
+                                                </label>
+                                                <p className="text-sm text-muted-foreground mt-1">
+                                                    Cliente autoriza el retiro del polarizado aplicado sobre vidrios blindados, reconociendo que, 
+                                                    debido a la naturaleza del policarbonato, existe la posibilidad de que queden marcas, 
+                                                    mapeos o alteraciones visuales en la superficie del blindaje. <span className="text-yellow-500 font-medium">ACEPTO</span>
+                                                </p>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
 
-                            {/* Sección 3: Instalación Encima */}
-                            <div className={`p-4 rounded-lg border transition-all ${riskChecks.instalacionEncima ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
-                                <div className="flex items-start gap-3">
-                                    <Checkbox
-                                        id="check-encima"
-                                        checked={riskChecks.instalacionEncima}
-                                        onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, instalacionEncima: checked}))}
-                                        className="mt-1"
-                                    />
-                                    <div className="flex-1">
-                                        <label htmlFor="check-encima" className="font-medium cursor-pointer text-cyan-400">
-                                            Nota para Instalación Encima de Material Actual
-                                        </label>
-                                        <p className="text-sm text-muted-foreground mt-1">
-                                            Cliente autoriza la instalación del panorámico trasero sobre el material previamente instalado, 
-                                            reconociendo que las impurezas, destellos e imperfecciones existentes en dicho material podrían 
-                                            volverse más evidentes tras la instalación. <span className="text-yellow-500 font-medium">ACEPTO</span>
-                                        </p>
+                                    {/* Sección 3: Instalación Encima */}
+                                    <div className={`p-4 rounded-lg border transition-all ${riskChecks.instalacionEncima ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
+                                        <div className="flex items-start gap-3">
+                                            <Checkbox
+                                                id="check-encima"
+                                                checked={riskChecks.instalacionEncima}
+                                                onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, instalacionEncima: checked}))}
+                                                className="mt-1"
+                                            />
+                                            <div className="flex-1">
+                                                <label htmlFor="check-encima" className="font-medium cursor-pointer text-cyan-400">
+                                                    Nota para Instalación Encima de Material Actual
+                                                </label>
+                                                <p className="text-sm text-muted-foreground mt-1">
+                                                    Cliente autoriza la instalación del panorámico trasero sobre el material previamente instalado, 
+                                                    reconociendo que las impurezas, destellos e imperfecciones existentes en dicho material podrían 
+                                                    volverse más evidentes tras la instalación. <span className="text-yellow-500 font-medium">ACEPTO</span>
+                                                </p>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
+                                </>
+                            )}
 
-                            {/* Sección 4: Autorizaciones */}
-                            <div className={`p-4 rounded-lg border transition-all ${riskChecks.autorizaciones ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
-                                <div className="flex items-start gap-3">
-                                    <Checkbox
-                                        id="check-autorizaciones"
-                                        checked={riskChecks.autorizaciones}
-                                        onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, autorizaciones: checked}))}
-                                        className="mt-1"
-                                    />
-                                    <div className="flex-1">
-                                        <label htmlFor="check-autorizaciones" className="font-medium cursor-pointer text-cyan-400">
-                                            Autorizaciones
-                                        </label>
-                                        <p className="text-sm text-muted-foreground mt-1">
-                                            Autorizo a POLARIZADOSYA para que instale los productos acordados en esta orden de pedido, 
-                                            así mismo los autorizo para que una vez terminada la instalación, pueda probar el vehículo 
-                                            dentro del circuito que se tenga fijado, si bien la instalación lo amerita. Autorizo a POLARIZADOSYA 
-                                            a retener el vehículo durante el tiempo en que no haya sido cancelado este pedido.
-                                        </p>
-                                        <p className="text-sm text-muted-foreground mt-2">
-                                            <span className="text-yellow-500">RESPONSABILIDAD DE POLARIZADOSYA:</span> No responde por la pérdida 
-                                            de objetos o bienes de cualquier índole, si estos no han sido reportados por el cliente y relacionados 
-                                            en el presente pedido.
-                                        </p>
+                            {/* Notas generales para otros servicios */}
+                            {!hasPolarizadoService() && (
+                                <>
+                                    {/* Sección: Autorizaciones */}
+                                    <div className={`p-4 rounded-lg border transition-all ${riskChecks.autorizaciones ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
+                                        <div className="flex items-start gap-3">
+                                            <Checkbox
+                                                id="check-autorizaciones"
+                                                checked={riskChecks.autorizaciones}
+                                                onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, autorizaciones: checked}))}
+                                                className="mt-1"
+                                            />
+                                            <div className="flex-1">
+                                                <label htmlFor="check-autorizaciones" className="font-medium cursor-pointer text-cyan-400">
+                                                    Autorizaciones Generales
+                                                </label>
+                                                <p className="text-sm text-muted-foreground mt-1">
+                                                    Autorizo a POLARIZADOSYA para que instale los productos acordados en esta orden de pedido, 
+                                                    así mismo los autorizo para que una vez terminada la instalación, pueda probar el vehículo 
+                                                    dentro del circuito que se tenga fijado. POLARIZADOSYA no responde por la pérdida 
+                                                    de objetos o bienes si estos no han sido reportados.
+                                                </p>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
 
-                            {/* Sección 5: Porcentajes */}
-                            <div className={`p-4 rounded-lg border transition-all ${riskChecks.porcentajes ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
-                                <div className="flex items-start gap-3">
-                                    <Checkbox
-                                        id="check-porcentajes"
-                                        checked={riskChecks.porcentajes}
-                                        onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, porcentajes: checked}))}
-                                        className="mt-1"
-                                    />
-                                    <div className="flex-1">
-                                        <label htmlFor="check-porcentajes" className="font-medium cursor-pointer text-cyan-400">
-                                            Instalación de Porcentajes
-                                        </label>
-                                        <p className="text-sm text-muted-foreground mt-1">
-                                            <span className="text-white font-medium">Cliente autoriza instalación de porcentajes que están por 
-                                            fuera de lo permitido, de acuerdo a la Resolución No. 3777 del año 2003. Aprobado por el cliente.</span>
-                                        </p>
-                                        <p className="text-sm text-muted-foreground mt-2">
-                                            RESPONSABILIDAD DE POLARIZADOSYA: No responde por la pérdida de objetos o bienes de cualquier índole, 
-                                            si estos no han sido reportados por el cliente y relacionados en el presente pedido.
-                                        </p>
+                                    {/* Sección: Datos Personales */}
+                                    <div className={`p-4 rounded-lg border transition-all ${riskChecks.datosPersonales ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
+                                        <div className="flex items-start gap-3">
+                                            <Checkbox
+                                                id="check-datos"
+                                                checked={riskChecks.datosPersonales}
+                                                onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, datosPersonales: checked}))}
+                                                className="mt-1"
+                                            />
+                                            <div className="flex-1">
+                                                <label htmlFor="check-datos" className="font-medium cursor-pointer text-cyan-400">
+                                                    Tratamiento de Datos Personales
+                                                </label>
+                                                <p className="text-sm text-muted-foreground mt-1">
+                                                    El uso de la información suministrada a POLARIZADOS YA está limitada a fines privados 
+                                                    y amparados por la Ley 1581 de 2012 (protección de datos) y Ley 1480 de 2011 
+                                                    (protección al consumidor).
+                                                </p>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
-
-                            {/* Sección 6: Datos Personales */}
-                            <div className={`p-4 rounded-lg border transition-all ${riskChecks.datosPersonales ? 'border-green-500/50 bg-green-500/5' : 'border-border'}`}>
-                                <div className="flex items-start gap-3">
-                                    <Checkbox
-                                        id="check-datos"
-                                        checked={riskChecks.datosPersonales}
-                                        onCheckedChange={(checked) => setRiskChecks(prev => ({...prev, datosPersonales: checked}))}
-                                        className="mt-1"
-                                    />
-                                    <div className="flex-1">
-                                        <label htmlFor="check-datos" className="font-medium cursor-pointer text-cyan-400">
-                                            Tratamiento de Datos Personales
-                                        </label>
-                                        <p className="text-sm text-muted-foreground mt-1">
-                                            El uso de la información suministrada a POLARIZADOS YA, está limitada únicamente a fines privados 
-                                            y amparados por la ley, que hacen parte de las bases de datos de clientes 
-                                            (<span className="text-yellow-500">Ley 1581 de 2012</span> protección de datos de carácter personal).
-                                        </p>
-                                        <p className="text-sm text-muted-foreground mt-2">
-                                            La información aquí contenida está acorde con lo establecido en la 
-                                            <span className="text-yellow-500"> Ley 1480 de 2011</span> protección al consumidor.
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
+                                </>
+                            )}
 
                             {/* Footer del documento */}
                             <div className="p-4 bg-muted/30 rounded-lg border text-center text-sm text-muted-foreground italic">
@@ -416,13 +447,13 @@ export const CheckIn = () => {
                     <div className="pt-4 border-t">
                         <div className="flex items-center justify-between mb-4">
                             <span className="text-sm text-muted-foreground">
-                                Puntos aceptados: {Object.values(riskChecks).filter(v => v).length} de 6
+                                Puntos aceptados: {getRelevantRiskChecks().filter(check => riskChecks[check]).length} de {getRelevantRiskChecks().length}
                             </span>
                             <div className="flex gap-1">
-                                {Object.values(riskChecks).map((checked, i) => (
+                                {getRelevantRiskChecks().map((check, i) => (
                                     <div 
                                         key={i} 
-                                        className={`w-3 h-3 rounded-full transition-colors ${checked ? 'bg-green-500' : 'bg-muted'}`}
+                                        className={`w-3 h-3 rounded-full transition-colors ${riskChecks[check] ? 'bg-green-500' : 'bg-muted'}`}
                                     />
                                 ))}
                             </div>
@@ -438,7 +469,7 @@ export const CheckIn = () => {
                             <Button 
                                 onClick={handleAcceptRiskAgreement}
                                 className="flex-1 brand-glow"
-                                disabled={!allRiskChecksComplete}
+                                disabled={!allRiskChecksComplete()}
                                 data-testid="accept-risk-btn"
                             >
                                 <CheckCircle className="w-4 h-4 mr-2" />
@@ -695,7 +726,14 @@ export const CheckIn = () => {
                                         {selectedServices.map((svc) => (
                                             <div key={svc.serviceId} className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30">
                                                 <div className="flex-1">
-                                                    <p className="font-medium text-sm">{svc.serviceName}</p>
+                                                    <div className="flex items-center gap-2">
+                                                        {svc.isCustom && (
+                                                            <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded">
+                                                                Personalizado
+                                                            </span>
+                                                        )}
+                                                        <p className="font-medium text-sm">{svc.serviceName}</p>
+                                                    </div>
                                                     <p className="text-xs text-muted-foreground">{svc.category}</p>
                                                 </div>
                                                 <div className="flex items-center gap-2">
@@ -761,6 +799,44 @@ export const CheckIn = () => {
                                         </AccordionItem>
                                     ))}
                                 </Accordion>
+                            </div>
+
+                            {/* Custom Service Input */}
+                            <div className="p-4 rounded-lg border border-dashed border-muted-foreground/50 space-y-3">
+                                <Label className="flex items-center gap-2 text-muted-foreground">
+                                    <PlusCircle className="w-4 h-4" />
+                                    Agregar Servicio/Producto Personalizado
+                                </Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        value={customServiceName}
+                                        onChange={(e) => setCustomServiceName(e.target.value)}
+                                        placeholder="Nombre del servicio o producto"
+                                        className="flex-1"
+                                        data-testid="custom-service-name"
+                                    />
+                                    <div className="flex items-center gap-1">
+                                        <span className="text-sm text-muted-foreground">$</span>
+                                        <Input
+                                            type="number"
+                                            min="0"
+                                            value={customServicePrice}
+                                            onChange={(e) => setCustomServicePrice(e.target.value)}
+                                            placeholder="Valor"
+                                            className="w-28"
+                                            data-testid="custom-service-price"
+                                        />
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon"
+                                        onClick={handleAddCustomService}
+                                        data-testid="add-custom-service-btn"
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                    </Button>
+                                </div>
                             </div>
 
                             {/* Total */}
