@@ -78,6 +78,12 @@ export const alertsAPI = {
     getUnreadCount: () => api.get('/alerts/unread-count'),
 };
 
+// Notifications
+export const notificationsAPI = {
+    send: (data) => api.post('/notifications/send', data),
+    getWhatsAppUrl: (orderId) => api.get(`/notifications/whatsapp-url/${orderId}`),
+};
+
 // Dashboard
 export const dashboardAPI = {
     getStats: () => api.get('/dashboard/stats'),
@@ -111,7 +117,8 @@ export const serviceOrdersAPI = {
     getAll: () => api.get('/orders'),
 };
 
-export const notificationsAPI = {
+// Legacy notifications alias - uses alertsAPI
+export const legacyNotificationsAPI = {
     getUnreadCount: () => api.get('/alerts/unread-count'),
     getAll: () => api.get('/alerts'),
     markRead: (id) => api.put(`/alerts/${id}/read`),

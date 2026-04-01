@@ -18,6 +18,8 @@ import string
 import qrcode
 import base64
 from io import BytesIO
+import asyncio
+import resend
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -31,6 +33,12 @@ db = client[os.environ['DB_NAME']]
 JWT_SECRET = os.environ.get('JWT_SECRET', 'polarizadosya-secret-key-2024')
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
+
+# Resend Configuration
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 # Create the main app
 app = FastAPI(title="PolarizadosYA! API")
@@ -322,6 +330,13 @@ class AlertResponse(BaseModel):
     read: bool
     created_at: str
 
+class NotificationRequest(BaseModel):
+    order_id: str
+    send_whatsapp: bool = False
+    send_email: bool = False
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+
 # ==================== AUTH ENDPOINTS ====================
 @api_router.post("/auth/register", response_model=TokenResponse)
 async def register(user_data: UserCreate):
@@ -483,6 +498,194 @@ async def get_order_by_code(order_code: str, current_user: dict = Depends(get_cu
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     return OrderResponse(**order)
+
+# ==================== NOTIFICATION ENDPOINTS ====================
+def generate_appointment_email_html(order: dict) -> str:
+    """Generate HTML email for appointment confirmation"""
+    services_list = ""
+    for svc in order.get("services", []):
+        svc_name = svc.get("description", svc.get("service", "Servicio"))
+        svc_price = svc.get("price", 0)
+        parts = svc.get("parts", [])
+        parts_text = f" ({', '.join(parts)})" if parts else ""
+        services_list += f"<li>{svc_name}{parts_text} - ${svc_price:,.0f}</li>"
+    
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            body {{ font-family: Arial, sans-serif; background-color: #1a1a2e; color: #ffffff; margin: 0; padding: 20px; }}
+            .container {{ max-width: 600px; margin: 0 auto; background-color: #16213e; border-radius: 10px; padding: 30px; }}
+            .header {{ text-align: center; border-bottom: 2px solid #0f3460; padding-bottom: 20px; margin-bottom: 20px; }}
+            .logo {{ color: #00d9ff; font-size: 28px; font-weight: bold; }}
+            .code-box {{ background: linear-gradient(135deg, #0f3460, #1a1a2e); border: 2px solid #00d9ff; border-radius: 10px; padding: 20px; text-align: center; margin: 20px 0; }}
+            .order-code {{ font-size: 32px; font-family: monospace; color: #00d9ff; letter-spacing: 3px; }}
+            .scheduled-time {{ font-size: 24px; color: #00d9ff; margin-top: 10px; }}
+            .info-section {{ background-color: #0f3460; border-radius: 8px; padding: 15px; margin: 15px 0; }}
+            .info-label {{ color: #888; font-size: 12px; text-transform: uppercase; }}
+            .info-value {{ color: #fff; font-size: 16px; margin-top: 5px; }}
+            .services-list {{ list-style: none; padding: 0; }}
+            .services-list li {{ padding: 8px 0; border-bottom: 1px solid #0f3460; }}
+            .total {{ font-size: 20px; color: #00d9ff; text-align: right; margin-top: 15px; }}
+            .footer {{ text-align: center; margin-top: 30px; color: #666; font-size: 12px; }}
+            .qr-note {{ background-color: #0f3460; padding: 15px; border-radius: 8px; text-align: center; margin-top: 20px; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div class="logo">PolarizadosYA!</div>
+                <p>Confirmación de Cita</p>
+            </div>
+            
+            <div class="code-box">
+                <div class="info-label">Código de su cita</div>
+                <div class="order-code">{order.get('order_code', 'N/A')}</div>
+                {f'<div class="scheduled-time">Hora: {order.get("scheduled_time", "")}</div>' if order.get('scheduled_time') else ''}
+            </div>
+            
+            <div class="info-section">
+                <div class="info-label">Cliente</div>
+                <div class="info-value">{order.get('client_name', 'N/A')}</div>
+            </div>
+            
+            <div class="info-section">
+                <div class="info-label">Vehículo</div>
+                <div class="info-value">{order.get('plate', 'N/A')} - {order.get('brand', '')} {order.get('model', '')}</div>
+            </div>
+            
+            <div class="info-section">
+                <div class="info-label">Fecha y Hora</div>
+                <div class="info-value">{order.get('date', 'N/A')} {order.get('scheduled_time', '')}</div>
+            </div>
+            
+            <div class="info-section">
+                <div class="info-label">Servicios</div>
+                <ul class="services-list">
+                    {services_list}
+                </ul>
+                <div class="total">Total: ${order.get('negotiated_value', 0):,.0f}</div>
+            </div>
+            
+            <div class="qr-note">
+                <p>Presente este código o el QR al momento de ingresar</p>
+                <p><strong>El check-in estará disponible a partir de las {order.get('scheduled_time', 'hora indicada')}</strong></p>
+            </div>
+            
+            <div class="footer">
+                <p>PolarizadosYA! - Servicio de Calidad</p>
+                <p>Este es un correo automático, por favor no responda</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+def generate_whatsapp_message(order: dict) -> str:
+    """Generate WhatsApp message text for appointment"""
+    services_text = ""
+    for svc in order.get("services", []):
+        svc_name = svc.get("description", svc.get("service", "Servicio"))
+        parts = svc.get("parts", [])
+        parts_text = f" ({', '.join(parts)})" if parts else ""
+        services_text += f"• {svc_name}{parts_text}\n"
+    
+    message = f"""🚗 *PolarizadosYA! - Confirmación de Cita*
+
+📋 *Código de Cita:* {order.get('order_code', 'N/A')}
+
+👤 *Cliente:* {order.get('client_name', 'N/A')}
+🚙 *Vehículo:* {order.get('plate', 'N/A')} - {order.get('brand', '')} {order.get('model', '')}
+
+📅 *Fecha:* {order.get('date', 'N/A')}
+⏰ *Hora:* {order.get('scheduled_time', 'Por confirmar')}
+
+🔧 *Servicios:*
+{services_text}
+💰 *Total:* ${order.get('negotiated_value', 0):,.0f}
+
+📱 Presente este código al momento de ingresar.
+✅ El check-in estará disponible a partir de las {order.get('scheduled_time', 'hora indicada')}
+
+_PolarizadosYA! - Servicio de Calidad_"""
+    
+    return message
+
+@api_router.post("/notifications/send")
+async def send_notification(data: NotificationRequest, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR]))):
+    """Send appointment notification via WhatsApp and/or Email"""
+    order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    
+    results = {"whatsapp": None, "email": None}
+    
+    # Generate WhatsApp link
+    if data.send_whatsapp:
+        phone = data.phone or order.get("client_phone", "")
+        if phone:
+            # Clean phone number (remove spaces, dashes, etc.)
+            clean_phone = ''.join(filter(str.isdigit, phone))
+            # Add Colombia country code if not present
+            if not clean_phone.startswith('57') and len(clean_phone) == 10:
+                clean_phone = '57' + clean_phone
+            
+            message = generate_whatsapp_message(order)
+            # URL encode the message
+            import urllib.parse
+            encoded_message = urllib.parse.quote(message)
+            whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_message}"
+            results["whatsapp"] = {"success": True, "url": whatsapp_url}
+        else:
+            results["whatsapp"] = {"success": False, "error": "Número de teléfono no proporcionado"}
+    
+    # Send Email
+    if data.send_email:
+        email = data.email or order.get("client_email")
+        if email and RESEND_API_KEY:
+            try:
+                html_content = generate_appointment_email_html(order)
+                params = {
+                    "from": SENDER_EMAIL,
+                    "to": [email],
+                    "subject": f"PolarizadosYA! - Confirmación de Cita #{order.get('order_code', '')}",
+                    "html": html_content
+                }
+                email_result = await asyncio.to_thread(resend.Emails.send, params)
+                results["email"] = {"success": True, "email_id": email_result.get("id"), "sent_to": email}
+            except Exception as e:
+                logger.error(f"Failed to send email: {str(e)}")
+                results["email"] = {"success": False, "error": str(e)}
+        elif not email:
+            results["email"] = {"success": False, "error": "Email no proporcionado"}
+        elif not RESEND_API_KEY:
+            results["email"] = {"success": False, "error": "Servicio de email no configurado"}
+    
+    return {"message": "Notificación procesada", "results": results}
+
+@api_router.get("/notifications/whatsapp-url/{order_id}")
+async def get_whatsapp_url(order_id: str, current_user: dict = Depends(get_current_user)):
+    """Get WhatsApp URL for an order"""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    
+    phone = order.get("client_phone", "")
+    if not phone:
+        raise HTTPException(status_code=400, detail="El cliente no tiene número de teléfono")
+    
+    clean_phone = ''.join(filter(str.isdigit, phone))
+    if not clean_phone.startswith('57') and len(clean_phone) == 10:
+        clean_phone = '57' + clean_phone
+    
+    message = generate_whatsapp_message(order)
+    import urllib.parse
+    encoded_message = urllib.parse.quote(message)
+    whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_message}"
+    
+    return {"url": whatsapp_url}
 
 # Step 2: Ingreso - Check-in and approval
 def get_colombia_time():

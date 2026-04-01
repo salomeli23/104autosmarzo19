@@ -8,10 +8,12 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 
 ## Última Sesión (2025-12-19)
 - **CORREGIDO:** Error de sintaxis crítico en `Appointments.jsx`
-- **NUEVO:** Selección de partes del vehículo para servicios de polarizado (Nanooptik, Black Ceramic Autobahn, etc.)
-  - Partes disponibles: Panorámico, Vidrio Copiloto, Vidrio Piloto, Vidrio Trasero, Vidrio Trasero Copiloto, Trasero, Luneta, Sunroof, Custodias
-  - Funciona tanto en Agendamiento como en Check-in (upsell)
-- **VERIFICADO:** Todas las vistas de roles funcionan correctamente
+- **NUEVO:** Selección de partes del vehículo para servicios de polarizado
+  - Partes: Panorámico, Vidrio Copiloto, Vidrio Piloto, Vidrio Trasero, Vidrio Trasero Copiloto, Trasero, Luneta, Sunroof, Custodias
+- **NUEVO:** Notificaciones al cliente al agendar cita
+  - **WhatsApp:** Usa enlace wa.me con mensaje predefinido (no requiere API key)
+  - **Email:** Integración con Resend (requiere API key en .env)
+  - Botones de envío en el diálogo de confirmación de cita
 
 ## Stack Tecnológico
 - **Frontend:** React, Tailwind CSS, Shadcn/UI

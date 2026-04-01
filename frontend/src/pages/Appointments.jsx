@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ordersAPI, servicesAPI, slotsAPI } from '../lib/api';
+import { ordersAPI, servicesAPI, slotsAPI, notificationsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -14,7 +14,7 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
 import { CAR_BRANDS, CAR_MODELS, formatCurrency, isHoliday, COLOMBIA_HOLIDAYS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle, MessageCircle, Mail, Send } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -422,9 +422,63 @@ export const Appointments = () => {
                                 clientName={createdOrder.client_name}
                             />
 
-                            <p className="text-sm text-muted-foreground text-center">
-                                El cliente debe presentar este código QR al momento del ingreso
-                            </p>
+                            {/* Notification Buttons */}
+                            <div className="p-4 rounded-lg border border-dashed border-muted-foreground/50 space-y-3">
+                                <p className="text-sm font-medium flex items-center gap-2">
+                                    <Send className="w-4 h-4" />
+                                    Enviar confirmación al cliente:
+                                </p>
+                                <div className="flex gap-2">
+                                    <Button
+                                        variant="outline"
+                                        className="flex-1 bg-green-500/10 border-green-500/30 hover:bg-green-500/20 text-green-500"
+                                        onClick={async () => {
+                                            try {
+                                                const res = await notificationsAPI.getWhatsAppUrl(createdOrder.id);
+                                                window.open(res.data.url, '_blank');
+                                                toast.success('Abriendo WhatsApp...');
+                                            } catch (error) {
+                                                toast.error('Error al generar enlace de WhatsApp');
+                                            }
+                                        }}
+                                        data-testid="send-whatsapp-btn"
+                                    >
+                                        <MessageCircle className="w-4 h-4 mr-2" />
+                                        WhatsApp
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        className="flex-1 bg-blue-500/10 border-blue-500/30 hover:bg-blue-500/20 text-blue-500"
+                                        onClick={async () => {
+                                            if (!createdOrder.client_email) {
+                                                toast.error('El cliente no tiene correo electrónico registrado');
+                                                return;
+                                            }
+                                            try {
+                                                const res = await notificationsAPI.send({
+                                                    order_id: createdOrder.id,
+                                                    send_email: true,
+                                                    email: createdOrder.client_email
+                                                });
+                                                if (res.data.results?.email?.success) {
+                                                    toast.success(`Correo enviado a ${createdOrder.client_email}`);
+                                                } else {
+                                                    toast.error(res.data.results?.email?.error || 'Error al enviar correo');
+                                                }
+                                            } catch (error) {
+                                                toast.error('Error al enviar correo electrónico');
+                                            }
+                                        }}
+                                        data-testid="send-email-btn"
+                                    >
+                                        <Mail className="w-4 h-4 mr-2" />
+                                        Email
+                                    </Button>
+                                </div>
+                                <p className="text-xs text-muted-foreground text-center">
+                                    {createdOrder.client_email ? `Email: ${createdOrder.client_email}` : 'Sin email registrado'}
+                                </p>
+                            </div>
 
                             <div className="flex gap-2">
                                 <Button variant="outline" onClick={handleCloseQRDialog} className="flex-1">
