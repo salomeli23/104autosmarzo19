@@ -205,6 +205,7 @@ class ServiceItem(BaseModel):
     service: str  # Ahora acepta cualquier servicio del catálogo
     price: float
     description: Optional[str] = None
+    parts: Optional[List[str]] = None  # Partes del vehículo para polarizado (panoramico, luneta, etc.)
 
 class OrderCreate(BaseModel):
     client_name: str

@@ -171,6 +171,30 @@ export const Appointments = () => {
         setFormData(prev => ({ ...prev, time_slot: value }));
     };
 
+    // Servicios que requieren selección de vidrios/partes
+    const SERVICES_WITH_PARTS = [
+        'nanooptik', 'black_ceramic_autobahn', 'ultraoptik_aswf', 
+        'ceramic_i3_autobahn', 'ceramic_i3_plus_autobahn', 'huperoptik'
+    ];
+    
+    // Partes del vehículo disponibles para polarizado
+    const VEHICLE_PARTS = [
+        { id: 'panoramico', name: 'Panorámico' },
+        { id: 'vidrio_copiloto', name: 'Vidrio Copiloto' },
+        { id: 'vidrio_piloto', name: 'Vidrio Piloto' },
+        { id: 'vidrio_trasero', name: 'Vidrio Trasero' },
+        { id: 'vidrio_trasero_copiloto', name: 'Vidrio Trasero Copiloto' },
+        { id: 'trasero', name: 'Trasero' },
+        { id: 'luneta', name: 'Luneta' },
+        { id: 'sunroof', name: 'Sunroof' },
+        { id: 'custodias', name: 'Custodias' },
+    ];
+
+    // Check if service requires parts selection
+    const serviceRequiresParts = (serviceId) => {
+        return SERVICES_WITH_PARTS.includes(serviceId);
+    };
+
     // Toggle service selection
     const handleServiceToggle = (serviceId, serviceName, categoryName) => {
         setSelectedServices(prev => {
@@ -178,7 +202,13 @@ export const Appointments = () => {
             if (exists) {
                 return prev.filter(s => s.serviceId !== serviceId);
             } else {
-                return [...prev, { serviceId, serviceName, category: categoryName, price: 0 }];
+                return [...prev, { 
+                    serviceId, 
+                    serviceName, 
+                    category: categoryName, 
+                    price: 0,
+                    parts: serviceRequiresParts(serviceId) ? [] : undefined
+                }];
             }
         });
     };
@@ -187,6 +217,25 @@ export const Appointments = () => {
     const handleServicePriceChange = (serviceId, price) => {
         setSelectedServices(prev => 
             prev.map(s => s.serviceId === serviceId ? { ...s, price: parseFloat(price) || 0 } : s)
+        );
+    };
+
+    // Toggle vehicle part for a service
+    const handlePartToggle = (serviceId, partId) => {
+        setSelectedServices(prev => 
+            prev.map(s => {
+                if (s.serviceId === serviceId) {
+                    const currentParts = s.parts || [];
+                    const partExists = currentParts.includes(partId);
+                    return {
+                        ...s,
+                        parts: partExists 
+                            ? currentParts.filter(p => p !== partId)
+                            : [...currentParts, partId]
+                    };
+                }
+                return s;
+            })
         );
     };
 
@@ -267,7 +316,8 @@ export const Appointments = () => {
             const servicesData = selectedServices.map(svc => ({
                 service: svc.serviceId,
                 price: svc.price,
-                description: `${svc.category} - ${svc.serviceName}`
+                description: `${svc.category} - ${svc.serviceName}`,
+                parts: svc.parts || []  // Include selected vehicle parts
             }));
 
             const submitData = {
@@ -677,6 +727,7 @@ export const Appointments = () => {
                                                     {category.services.map((service) => {
                                                         const isSelected = selectedServices.some(s => s.serviceId === service.id);
                                                         const selectedService = selectedServices.find(s => s.serviceId === service.id);
+                                                        const showParts = isSelected && serviceRequiresParts(service.id);
                                                         return (
                                                             <div
                                                                 key={service.id}
@@ -713,6 +764,47 @@ export const Appointments = () => {
                                                                         </div>
                                                                     )}
                                                                 </div>
+                                                                {/* Vehicle parts selection for polarizado services */}
+                                                                {showParts && (
+                                                                    <div className="mt-3 pt-3 border-t border-border/50">
+                                                                        <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                                                                            <Car className="w-3 h-3" />
+                                                                            Selecciona las partes del vehículo:
+                                                                        </p>
+                                                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                                                            {VEHICLE_PARTS.map((part) => {
+                                                                                const isPartSelected = selectedService?.parts?.includes(part.id);
+                                                                                return (
+                                                                                    <div
+                                                                                        key={part.id}
+                                                                                        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+                                                                                            isPartSelected 
+                                                                                                ? 'bg-cyan-500/20 border border-cyan-500/40' 
+                                                                                                : 'bg-muted/30 hover:bg-muted/50 border border-transparent'
+                                                                                        }`}
+                                                                                        onClick={() => handlePartToggle(service.id, part.id)}
+                                                                                    >
+                                                                                        <Checkbox
+                                                                                            id={`part-${service.id}-${part.id}`}
+                                                                                            checked={isPartSelected}
+                                                                                            onCheckedChange={() => handlePartToggle(service.id, part.id)}
+                                                                                            className="pointer-events-none"
+                                                                                            data-testid={`part-${service.id}-${part.id}`}
+                                                                                        />
+                                                                                        <label className="text-xs cursor-pointer select-none">
+                                                                                            {part.name}
+                                                                                        </label>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                        {selectedService?.parts?.length > 0 && (
+                                                                            <p className="text-xs text-cyan-400 mt-2">
+                                                                                {selectedService.parts.length} parte(s) seleccionada(s)
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         );
                                                     })}
@@ -764,29 +856,47 @@ export const Appointments = () => {
                                 {selectedServices.length > 0 && (
                                     <div className="p-4 rounded-lg bg-primary/10 border border-primary/30 space-y-3">
                                         <p className="font-medium">Servicios seleccionados:</p>
-                                        <div className="space-y-2">
+                                        <div className="space-y-3">
                                             {selectedServices.map((svc) => (
-                                                <div key={svc.serviceId} className="flex items-center justify-between text-sm">
-                                                    <div className="flex items-center gap-2">
-                                                        {svc.isCustom && (
-                                                            <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded">
-                                                                Personalizado
-                                                            </span>
-                                                        )}
-                                                        <span>{svc.serviceName}</span>
+                                                <div key={svc.serviceId} className="text-sm">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            {svc.isCustom && (
+                                                                <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded">
+                                                                    Personalizado
+                                                                </span>
+                                                            )}
+                                                            <span className="font-medium">{svc.serviceName}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-mono">{formatCurrency(svc.price)}</span>
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="h-6 w-6 text-red-500 hover:text-red-600"
+                                                                onClick={() => handleRemoveService(svc.serviceId)}
+                                                            >
+                                                                <Trash2 className="w-3 h-3" />
+                                                            </Button>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="font-mono">{formatCurrency(svc.price)}</span>
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            className="h-6 w-6 text-red-500 hover:text-red-600"
-                                                            onClick={() => handleRemoveService(svc.serviceId)}
-                                                        >
-                                                            <Trash2 className="w-3 h-3" />
-                                                        </Button>
-                                                    </div>
+                                                    {/* Show selected parts for polarizado services */}
+                                                    {svc.parts && svc.parts.length > 0 && (
+                                                        <div className="mt-1 ml-4 flex flex-wrap gap-1">
+                                                            {svc.parts.map(partId => {
+                                                                const part = VEHICLE_PARTS.find(p => p.id === partId);
+                                                                return (
+                                                                    <span 
+                                                                        key={partId}
+                                                                        className="text-xs bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded"
+                                                                    >
+                                                                        {part?.name || partId}
+                                                                    </span>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
