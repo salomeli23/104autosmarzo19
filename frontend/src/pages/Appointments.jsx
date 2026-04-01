@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ordersAPI, servicesAPI, slotsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -7,15 +7,14 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Calendar } from '../components/ui/calendar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '../components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
-import { CAR_BRANDS, CAR_MODELS, formatCurrency } from '../lib/utils';
+import { CAR_BRANDS, CAR_MODELS, formatCurrency, isHoliday, COLOMBIA_HOLIDAYS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, ChevronDown, Package, Trash2, PlusCircle } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -24,7 +23,6 @@ export const Appointments = () => {
     const [loading, setLoading] = useState(true);
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [dialogOpen, setDialogOpen] = useState(false);
-    const [availableModels, setAvailableModels] = useState([]);
     const [serviceCatalog, setServiceCatalog] = useState({});
     const [createdOrder, setCreatedOrder] = useState(null);
     const [showQRDialog, setShowQRDialog] = useState(false);
@@ -33,11 +31,18 @@ export const Appointments = () => {
     
     // Services with individual prices
     const [selectedServices, setSelectedServices] = useState([]);
-    // { serviceId: string, serviceName: string, category: string, price: number, isCustom?: boolean }
     
     // Custom service input
     const [customServiceName, setCustomServiceName] = useState('');
     const [customServicePrice, setCustomServicePrice] = useState('');
+    
+    // Autocomplete states
+    const [brandSuggestions, setBrandSuggestions] = useState([]);
+    const [modelSuggestions, setModelSuggestions] = useState([]);
+    const [showBrandSuggestions, setShowBrandSuggestions] = useState(false);
+    const [showModelSuggestions, setShowModelSuggestions] = useState(false);
+    const brandInputRef = useRef(null);
+    const modelInputRef = useRef(null);
     
     const [formData, setFormData] = useState({
         client_name: '',
@@ -47,8 +52,6 @@ export const Appointments = () => {
         plate: '',
         brand: '',
         model: '',
-        year: '',
-        color: '',
         time_slot: '',
         notes: '',
     });
@@ -100,15 +103,6 @@ export const Appointments = () => {
         fetchSlotsAvailability(selectedDate);
     }, [selectedDate, fetchOrders, fetchSlotsAvailability]);
 
-    // Update available models when brand changes
-    useEffect(() => {
-        if (formData.brand && CAR_MODELS[formData.brand]) {
-            setAvailableModels(CAR_MODELS[formData.brand]);
-        } else {
-            setAvailableModels([]);
-        }
-    }, [formData.brand]);
-
     // Calculate total from selected services
     const calculateTotal = () => {
         return selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
@@ -120,21 +114,62 @@ export const Appointments = () => {
                 toast.error('Los domingos no hay servicio');
                 return;
             }
+            if (isHoliday(date)) {
+                toast.error('Este día es festivo en Colombia');
+                return;
+            }
             setSelectedDate(date);
             setFormData(prev => ({ ...prev, time_slot: '' }));
         }
     };
 
-    const handleBrandChange = (value) => {
+    // Autocomplete handlers for brand
+    const handleBrandInputChange = (value) => {
         setFormData(prev => ({ ...prev, brand: value, model: '' }));
+        if (value.length > 0) {
+            const filtered = CAR_BRANDS.filter(brand => 
+                brand.toLowerCase().includes(value.toLowerCase())
+            );
+            setBrandSuggestions(filtered);
+            setShowBrandSuggestions(filtered.length > 0);
+        } else {
+            setBrandSuggestions([]);
+            setShowBrandSuggestions(false);
+        }
     };
 
-    const handleModelChange = (value) => {
+    const handleBrandSelect = (brand) => {
+        setFormData(prev => ({ ...prev, brand, model: '' }));
+        setShowBrandSuggestions(false);
+    };
+
+    // Autocomplete handlers for model
+    const handleModelInputChange = (value) => {
         setFormData(prev => ({ ...prev, model: value }));
+        const models = CAR_MODELS[formData.brand] || [];
+        if (value.length > 0 && models.length > 0) {
+            const filtered = models.filter(model => 
+                model.toLowerCase().includes(value.toLowerCase())
+            );
+            setModelSuggestions(filtered);
+            setShowModelSuggestions(filtered.length > 0);
+        } else if (value.length === 0 && models.length > 0) {
+            setModelSuggestions(models);
+            setShowModelSuggestions(true);
+        } else {
+            setModelSuggestions([]);
+            setShowModelSuggestions(false);
+        }
+    };
+
+    const handleModelSelect = (model) => {
+        setFormData(prev => ({ ...prev, model }));
+        setShowModelSuggestions(false);
     };
 
     const handleTimeSlotChange = (value) => {
         setFormData(prev => ({ ...prev, time_slot: value }));
+    };
     };
 
     // Toggle service selection
@@ -194,14 +229,14 @@ export const Appointments = () => {
             plate: '',
             brand: '',
             model: '',
-            year: '',
-            color: '',
             time_slot: '',
             notes: '',
         });
         setSelectedServices([]);
         setCustomServiceName('');
         setCustomServicePrice('');
+        setBrandSuggestions([]);
+        setModelSuggestions([]);
     };
 
     const handleSubmit = async (e) => {
@@ -244,8 +279,8 @@ export const Appointments = () => {
                 plate: formData.plate,
                 brand: formData.brand,
                 model: formData.model,
-                year: formData.year ? parseInt(formData.year) : null,
-                color: formData.color || null,
+                year: null,
+                color: null,
                 date: format(selectedDate, 'yyyy-MM-dd'),
                 time_slot: formData.time_slot,
                 services: servicesData,
@@ -271,7 +306,8 @@ export const Appointments = () => {
     };
 
     const disabledDays = (date) => {
-        return date.getDay() === 0;
+        // Deshabilitar domingos y festivos de Colombia
+        return date.getDay() === 0 || isHoliday(date);
     };
 
     const getSlotDisplayName = (slotId) => {
@@ -450,59 +486,73 @@ export const Appointments = () => {
                                             data-testid="appointment-plate"
                                         />
                                     </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="year">Año</Label>
-                                        <Input
-                                            id="year"
-                                            type="number"
-                                            min="1990"
-                                            max="2030"
-                                            value={formData.year}
-                                            onChange={(e) => setFormData(prev => ({ ...prev, year: e.target.value }))}
-                                            data-testid="appointment-year"
-                                        />
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div className="space-y-2">
+                                    <div className="space-y-2 relative">
                                         <Label>Marca *</Label>
-                                        <Select value={formData.brand} onValueChange={handleBrandChange}>
-                                            <SelectTrigger data-testid="appointment-brand">
-                                                <SelectValue placeholder="Seleccionar marca" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {CAR_BRANDS.map((brand) => (
-                                                    <SelectItem key={brand} value={brand}>{brand}</SelectItem>
+                                        <Input
+                                            ref={brandInputRef}
+                                            value={formData.brand}
+                                            onChange={(e) => handleBrandInputChange(e.target.value)}
+                                            onFocus={() => {
+                                                if (formData.brand.length > 0) {
+                                                    const filtered = CAR_BRANDS.filter(b => 
+                                                        b.toLowerCase().includes(formData.brand.toLowerCase())
+                                                    );
+                                                    setBrandSuggestions(filtered);
+                                                    setShowBrandSuggestions(filtered.length > 0);
+                                                }
+                                            }}
+                                            onBlur={() => setTimeout(() => setShowBrandSuggestions(false), 200)}
+                                            placeholder="Escriba la marca..."
+                                            data-testid="appointment-brand"
+                                            autoComplete="off"
+                                        />
+                                        {showBrandSuggestions && brandSuggestions.length > 0 && (
+                                            <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-auto">
+                                                {brandSuggestions.map((brand) => (
+                                                    <div
+                                                        key={brand}
+                                                        className="px-3 py-2 cursor-pointer hover:bg-muted transition-colors text-sm"
+                                                        onMouseDown={() => handleBrandSelect(brand)}
+                                                    >
+                                                        {brand}
+                                                    </div>
                                                 ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label>Modelo *</Label>
-                                        <Select 
-                                            value={formData.model} 
-                                            onValueChange={handleModelChange}
-                                            disabled={!formData.brand}
-                                        >
-                                            <SelectTrigger data-testid="appointment-model">
-                                                <SelectValue placeholder={formData.brand ? "Seleccionar modelo" : "Primero seleccione marca"} />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {availableModels.map((model) => (
-                                                    <SelectItem key={model} value={model}>{model}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-                                <div className="space-y-2">
-                                    <Label>Color</Label>
+                                <div className="space-y-2 relative">
+                                    <Label>Modelo *</Label>
                                     <Input
-                                        value={formData.color}
-                                        onChange={(e) => setFormData(prev => ({ ...prev, color: e.target.value }))}
-                                        placeholder="Ej: Blanco, Negro, Plata..."
-                                        data-testid="appointment-color"
+                                        ref={modelInputRef}
+                                        value={formData.model}
+                                        onChange={(e) => handleModelInputChange(e.target.value)}
+                                        onFocus={() => {
+                                            const models = CAR_MODELS[formData.brand] || [];
+                                            if (models.length > 0) {
+                                                setModelSuggestions(models);
+                                                setShowModelSuggestions(true);
+                                            }
+                                        }}
+                                        onBlur={() => setTimeout(() => setShowModelSuggestions(false), 200)}
+                                        placeholder={formData.brand ? "Escriba el modelo..." : "Primero ingrese la marca"}
+                                        disabled={!formData.brand}
+                                        data-testid="appointment-model"
+                                        autoComplete="off"
                                     />
+                                    {showModelSuggestions && modelSuggestions.length > 0 && (
+                                        <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-auto">
+                                            {modelSuggestions.map((model) => (
+                                                <div
+                                                    key={model}
+                                                    className="px-3 py-2 cursor-pointer hover:bg-muted transition-colors text-sm"
+                                                    onMouseDown={() => handleModelSelect(model)}
+                                                >
+                                                    {model}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
