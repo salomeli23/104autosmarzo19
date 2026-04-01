@@ -840,13 +840,19 @@ export const Appointments = () => {
                                                                                             e.stopPropagation();
                                                                                             handlePartToggle(service.id, part.id);
                                                                                         }}
+                                                                                        data-testid={`part-${service.id}-${part.id}`}
                                                                                     >
-                                                                                        <Checkbox
-                                                                                            id={`part-${service.id}-${part.id}`}
-                                                                                            checked={isPartSelected || false}
-                                                                                            className="pointer-events-none"
-                                                                                            data-testid={`part-${service.id}-${part.id}`}
-                                                                                        />
+                                                                                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                                                                                            isPartSelected 
+                                                                                                ? 'bg-cyan-500 border-cyan-500' 
+                                                                                                : 'border-muted-foreground/50'
+                                                                                        }`}>
+                                                                                            {isPartSelected && (
+                                                                                                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                                                                                </svg>
+                                                                                            )}
+                                                                                        </div>
                                                                                         <span className="text-xs select-none">
                                                                                             {part.name}
                                                                                         </span>

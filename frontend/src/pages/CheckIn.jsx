@@ -830,10 +830,17 @@ export const CheckIn = () => {
                                                                             handlePartToggle(svc.serviceId, part.id);
                                                                         }}
                                                                     >
-                                                                        <Checkbox
-                                                                            checked={isPartSelected || false}
-                                                                            className="pointer-events-none"
-                                                                        />
+                                                                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                                                                            isPartSelected 
+                                                                                ? 'bg-cyan-500 border-cyan-500' 
+                                                                                : 'border-muted-foreground/50'
+                                                                        }`}>
+                                                                            {isPartSelected && (
+                                                                                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                                                                </svg>
+                                                                            )}
+                                                                        </div>
                                                                         <span className="text-xs select-none">
                                                                             {part.name}
                                                                         </span>
