@@ -836,18 +836,20 @@ export const Appointments = () => {
                                                                                                 ? 'bg-cyan-500/20 border border-cyan-500/40' 
                                                                                                 : 'bg-muted/30 hover:bg-muted/50 border border-transparent'
                                                                                         }`}
-                                                                                        onClick={() => handlePartToggle(service.id, part.id)}
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            handlePartToggle(service.id, part.id);
+                                                                                        }}
                                                                                     >
                                                                                         <Checkbox
                                                                                             id={`part-${service.id}-${part.id}`}
-                                                                                            checked={isPartSelected}
-                                                                                            onCheckedChange={() => handlePartToggle(service.id, part.id)}
+                                                                                            checked={isPartSelected || false}
                                                                                             className="pointer-events-none"
                                                                                             data-testid={`part-${service.id}-${part.id}`}
                                                                                         />
-                                                                                        <label className="text-xs cursor-pointer select-none">
+                                                                                        <span className="text-xs select-none">
                                                                                             {part.name}
-                                                                                        </label>
+                                                                                        </span>
                                                                                     </div>
                                                                                 );
                                                                             })}

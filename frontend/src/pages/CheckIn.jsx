@@ -825,16 +825,18 @@ export const CheckIn = () => {
                                                                                 ? 'bg-cyan-500/20 border border-cyan-500/40' 
                                                                                 : 'bg-muted/30 hover:bg-muted/50 border border-transparent'
                                                                         }`}
-                                                                        onClick={() => handlePartToggle(svc.serviceId, part.id)}
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handlePartToggle(svc.serviceId, part.id);
+                                                                        }}
                                                                     >
                                                                         <Checkbox
-                                                                            checked={isPartSelected}
-                                                                            onCheckedChange={() => handlePartToggle(svc.serviceId, part.id)}
+                                                                            checked={isPartSelected || false}
                                                                             className="pointer-events-none"
                                                                         />
-                                                                        <label className="text-xs cursor-pointer select-none">
+                                                                        <span className="text-xs select-none">
                                                                             {part.name}
-                                                                        </label>
+                                                                        </span>
                                                                     </div>
                                                                 );
                                                             })}
