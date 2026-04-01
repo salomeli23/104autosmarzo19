@@ -170,7 +170,6 @@ export const Appointments = () => {
     const handleTimeSlotChange = (value) => {
         setFormData(prev => ({ ...prev, time_slot: value }));
     };
-    };
 
     // Toggle service selection
     const handleServiceToggle = (serviceId, serviceName, categoryName) => {
