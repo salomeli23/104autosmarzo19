@@ -355,8 +355,45 @@ export const Appointments = () => {
     };
 
     const disabledDays = (date) => {
-        // Deshabilitar domingos y festivos de Colombia
-        return date.getDay() === 0 || isHoliday(date);
+        // Obtener la fecha de hoy sin hora (solo año, mes, día)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        // Crear copia de la fecha para comparar sin hora
+        const compareDate = new Date(date);
+        compareDate.setHours(0, 0, 0, 0);
+        
+        // Deshabilitar: fechas pasadas, domingos y festivos de Colombia
+        return compareDate < today || date.getDay() === 0 || isHoliday(date);
+    };
+
+    // Verificar si una franja horaria está disponible según la hora actual
+    const isSlotAvailableByTime = (slot) => {
+        const today = new Date();
+        const selectedDateStr = format(selectedDate, 'yyyy-MM-dd');
+        const todayStr = format(today, 'yyyy-MM-dd');
+        
+        // Si no es hoy, todas las franjas están disponibles (respetando capacidad)
+        if (selectedDateStr !== todayStr) {
+            return true;
+        }
+        
+        // Si es hoy, verificar que la franja no haya pasado
+        // Usar hora de Colombia (UTC-5)
+        const colombiaOffset = -5 * 60; // minutos
+        const localOffset = today.getTimezoneOffset(); // minutos
+        const colombiaTime = new Date(today.getTime() + (localOffset - colombiaOffset) * 60000);
+        
+        const currentHour = colombiaTime.getHours();
+        const currentMinute = colombiaTime.getMinutes();
+        const currentTimeInMinutes = currentHour * 60 + currentMinute;
+        
+        // Parsear hora de inicio del slot (formato "HH:MM")
+        const [slotHour, slotMinute] = slot.start.split(':').map(Number);
+        const slotStartInMinutes = slotHour * 60 + slotMinute;
+        
+        // La franja está disponible si su hora de inicio es mayor a la hora actual
+        return slotStartInMinutes > currentTimeInMinutes;
     };
 
     const getSlotDisplayName = (slotId) => {
@@ -698,55 +735,73 @@ export const Appointments = () => {
                                             </div>
                                         ) : (
                                             <div className="space-y-2">
-                                                {slotsAvailability?.slots?.map((slot) => (
-                                                    <div
-                                                        key={slot.id}
-                                                        className={`p-3 rounded-lg border transition-all cursor-pointer ${
-                                                            formData.time_slot === slot.id
-                                                                ? 'border-primary bg-primary/10'
-                                                                : slot.available
-                                                                ? 'border-border hover:border-primary/50 bg-card'
-                                                                : 'border-border bg-muted/50 opacity-60 cursor-not-allowed'
-                                                        }`}
-                                                        onClick={() => slot.available && handleTimeSlotChange(slot.id)}
-                                                        data-testid={`slot-${slot.id}`}
-                                                    >
-                                                        <div className="flex items-center justify-between">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                                                                    formData.time_slot === slot.id
-                                                                        ? 'border-primary bg-primary'
-                                                                        : 'border-muted-foreground'
-                                                                }`}>
-                                                                    {formData.time_slot === slot.id && (
-                                                                        <div className="w-2 h-2 rounded-full bg-white" />
-                                                                    )}
+                                                {slotsAvailability?.slots?.map((slot) => {
+                                                    const isTimeAvailable = isSlotAvailableByTime(slot);
+                                                    const isAvailable = slot.available && isTimeAvailable;
+                                                    const isPastSlot = !isTimeAvailable;
+                                                    
+                                                    return (
+                                                        <div
+                                                            key={slot.id}
+                                                            className={`p-3 rounded-lg border transition-all ${
+                                                                formData.time_slot === slot.id
+                                                                    ? 'border-primary bg-primary/10 cursor-pointer'
+                                                                    : isAvailable
+                                                                    ? 'border-border hover:border-primary/50 bg-card cursor-pointer'
+                                                                    : isPastSlot
+                                                                    ? 'border-border bg-muted/30 opacity-40 cursor-not-allowed'
+                                                                    : 'border-border bg-muted/50 opacity-60 cursor-not-allowed'
+                                                            }`}
+                                                            onClick={() => isAvailable && handleTimeSlotChange(slot.id)}
+                                                            data-testid={`slot-${slot.id}`}
+                                                        >
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                                                                        formData.time_slot === slot.id
+                                                                            ? 'border-primary bg-primary'
+                                                                            : 'border-muted-foreground'
+                                                                    }`}>
+                                                                        {formData.time_slot === slot.id && (
+                                                                            <div className="w-2 h-2 rounded-full bg-white" />
+                                                                        )}
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className={`font-medium ${isPastSlot ? 'line-through text-muted-foreground' : ''}`}>
+                                                                            {slot.name}
+                                                                            {isPastSlot && <span className="text-xs ml-2 text-red-400">(Franja pasada)</span>}
+                                                                        </p>
+                                                                        <p className="text-sm text-muted-foreground">
+                                                                            {slot.start} - {slot.end}
+                                                                        </p>
+                                                                    </div>
                                                                 </div>
-                                                                <div>
-                                                                    <p className="font-medium">{slot.name}</p>
-                                                                    <p className="text-sm text-muted-foreground">
-                                                                        {slot.start} - {slot.end}
-                                                                    </p>
+                                                                <div className="flex items-center gap-2">
+                                                                    <Users className="w-4 h-4 text-muted-foreground" />
+                                                                    <span className={`text-sm font-medium ${
+                                                                        isPastSlot
+                                                                            ? 'text-muted-foreground'
+                                                                            : slot.remaining === 0
+                                                                            ? 'text-red-500'
+                                                                            : slot.remaining <= 3
+                                                                            ? 'text-yellow-500'
+                                                                            : 'text-green-500'
+                                                                    }`}>
+                                                                        {slot.remaining} / {slot.capacity}
+                                                                    </span>
                                                                 </div>
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                                <Users className="w-4 h-4 text-muted-foreground" />
-                                                                <span className={`text-sm font-medium ${
-                                                                    slot.remaining === 0
-                                                                        ? 'text-red-500'
-                                                                        : slot.remaining <= 3
-                                                                        ? 'text-yellow-500'
-                                                                        : 'text-green-500'
-                                                                }`}>
-                                                                    {slot.remaining} / {slot.capacity}
-                                                                </span>
                                                             </div>
                                                         </div>
-                                                    </div>
-                                                ))}
+                                                    );
+                                                })}
                                                 <p className="text-xs text-muted-foreground">
                                                     * Registro hasta las {slotsAvailability?.last_registration}
                                                 </p>
+                                                {format(selectedDate, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') && (
+                                                    <p className="text-xs text-cyan-400 mt-1">
+                                                        * Las franjas cuya hora de inicio ya pasó no están disponibles
+                                                    </p>
+                                                )}
                                             </div>
                                         )}
                                     </div>
