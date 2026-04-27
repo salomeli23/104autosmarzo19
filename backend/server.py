@@ -41,7 +41,7 @@ if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
 # Create the main app
-app = FastAPI(title="PolarizadosYA! API")
+app = FastAPI(title="Polarizados Manager API")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer()
 
@@ -536,7 +536,7 @@ def generate_appointment_email_html(order: dict) -> str:
     <body>
         <div class="container">
             <div class="header">
-                <div class="logo">PolarizadosYA!</div>
+                <div class="logo">Polarizados Manager</div>
                 <p>Confirmación de Cita</p>
             </div>
             
@@ -575,7 +575,7 @@ def generate_appointment_email_html(order: dict) -> str:
             </div>
             
             <div class="footer">
-                <p>PolarizadosYA! - Servicio de Calidad</p>
+                <p>Polarizados Manager - Servicio de Calidad</p>
                 <p>Este es un correo automático, por favor no responda</p>
             </div>
         </div>
@@ -592,7 +592,7 @@ def generate_whatsapp_message(order: dict) -> str:
         parts_text = f" ({', '.join(parts)})" if parts else ""
         services_text += f"• {svc_name}{parts_text}\n"
     
-    message = f"""🚗 *PolarizadosYA! - Confirmación de Cita*
+    message = f"""🚗 *Polarizados Manager - Confirmación de Cita*
 
 📋 *Código de Cita:* {order.get('order_code', 'N/A')}
 
@@ -609,7 +609,7 @@ def generate_whatsapp_message(order: dict) -> str:
 📱 Presente este código al momento de ingresar.
 ✅ El check-in estará disponible a partir de las {order.get('scheduled_time', 'hora indicada')}
 
-_PolarizadosYA! - Servicio de Calidad_"""
+_Polarizados Manager - Servicio de Calidad_"""
     
     return message
 
@@ -650,7 +650,7 @@ async def send_notification(data: NotificationRequest, current_user: dict = Depe
                 params = {
                     "from": SENDER_EMAIL,
                     "to": [email],
-                    "subject": f"PolarizadosYA! - Confirmación de Cita #{order.get('order_code', '')}",
+                    "subject": f"Polarizados Manager - Confirmación de Cita #{order.get('order_code', '')}",
                     "html": html_content
                 }
                 email_result = await asyncio.to_thread(resend.Emails.send, params)
@@ -1356,7 +1356,7 @@ async def get_slot_availability(date: str):
 
 @api_router.get("/")
 async def root():
-    return {"message": "PolarizadosYA! API v2.0"}
+    return {"message": "Polarizados Manager API v2.0"}
 
 @api_router.get("/time/colombia")
 async def get_current_colombia_time():

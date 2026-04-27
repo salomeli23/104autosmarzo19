@@ -45,11 +45,11 @@ export const Login = () => {
                 <div className="relative z-10 flex flex-col justify-center items-center w-full p-12">
                     <img 
                         src={LOGO_URL} 
-                        alt="PolarizadosYA!" 
+                        alt="Polarizados Manager" 
                         className="h-32 w-auto mb-8"
                     />
                     <h1 className="font-heading text-4xl md:text-5xl text-white text-center mb-4">
-                        Sistema de Gestión
+                        Manager Software
                     </h1>
                     <p className="text-white/80 text-center text-lg max-w-md">
                         Polarizado • Nanocerámica • Autobahn Black CE • Ultrasecure
@@ -74,7 +74,7 @@ export const Login = () => {
                 {/* Mobile logo */}
                 <img 
                     src={LOGO_URL} 
-                    alt="PolarizadosYA!" 
+                    alt="Polarizados Manager" 
                     className="h-20 w-auto mb-6 lg:hidden"
                 />
 

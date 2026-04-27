@@ -361,7 +361,7 @@ export const CheckIn = () => {
                         <div className="space-y-4">
                             {/* Header del documento */}
                             <div className="text-center p-4 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-lg border border-cyan-500/30">
-                                <h3 className="font-heading text-lg text-cyan-400">POLARIZADOS YA!</h3>
+                                <h3 className="font-heading text-lg text-cyan-400">POLARIZADOS MANAGER</h3>
                                 <p className="text-sm text-muted-foreground">Términos y Condiciones del Servicio</p>
                             </div>
 
@@ -453,9 +453,9 @@ export const CheckIn = () => {
                                                     Autorizaciones Generales
                                                 </label>
                                                 <p className="text-sm text-muted-foreground mt-1">
-                                                    Autorizo a POLARIZADOSYA para que instale los productos acordados en esta orden de pedido, 
+                                                    Autorizo a POLARIZADOS MANAGER para que instale los productos acordados en esta orden de pedido, 
                                                     así mismo los autorizo para que una vez terminada la instalación, pueda probar el vehículo 
-                                                    dentro del circuito que se tenga fijado. POLARIZADOSYA no responde por la pérdida 
+                                                    dentro del circuito que se tenga fijado. POLARIZADOS MANAGER no responde por la pérdida 
                                                     de objetos o bienes si estos no han sido reportados.
                                                 </p>
                                             </div>
@@ -476,7 +476,7 @@ export const CheckIn = () => {
                                                     Tratamiento de Datos Personales
                                                 </label>
                                                 <p className="text-sm text-muted-foreground mt-1">
-                                                    El uso de la información suministrada a POLARIZADOS YA está limitada a fines privados 
+                                                    El uso de la información suministrada a POLARIZADOS MANAGER está limitada a fines privados 
                                                     y amparados por la Ley 1581 de 2012 (protección de datos) y Ley 1480 de 2011 
                                                     (protección al consumidor).
                                                 </p>
