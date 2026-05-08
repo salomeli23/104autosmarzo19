@@ -29,6 +29,9 @@ export const Appointments = () => {
     const [slotsAvailability, setSlotsAvailability] = useState(null);
     const [loadingSlots, setLoadingSlots] = useState(false);
     
+    // Notification email (editable in QR dialog)
+    const [notificationEmail, setNotificationEmail] = useState('');
+    
     // Services with individual prices
     const [selectedServices, setSelectedServices] = useState([]);
     
@@ -339,6 +342,7 @@ export const Appointments = () => {
 
             const response = await ordersAPI.create(submitData);
             setCreatedOrder(response.data);
+            setNotificationEmail(response.data.client_email || ''); // Set email for notification
             setDialogOpen(false);
             setShowQRDialog(true);
             fetchOrders(selectedDate);
@@ -378,22 +382,22 @@ export const Appointments = () => {
             return true;
         }
         
-        // Si es hoy, verificar que la franja no haya pasado
-        // Usar hora de Colombia (UTC-5)
-        const colombiaOffset = -5 * 60; // minutos
-        const localOffset = today.getTimezoneOffset(); // minutos
-        const colombiaTime = new Date(today.getTime() + (localOffset - colombiaOffset) * 60000);
+        // Si es hoy, verificar que la franja no haya terminado
+        // Obtener hora actual en Colombia (UTC-5)
+        const nowUTC = new Date();
+        const colombiaOffset = -5; // UTC-5
+        const colombiaTime = new Date(nowUTC.getTime() + (colombiaOffset * 60 * 60 * 1000));
         
-        const currentHour = colombiaTime.getHours();
-        const currentMinute = colombiaTime.getMinutes();
+        const currentHour = colombiaTime.getUTCHours();
+        const currentMinute = colombiaTime.getUTCMinutes();
         const currentTimeInMinutes = currentHour * 60 + currentMinute;
         
-        // Parsear hora de inicio del slot (formato "HH:MM")
-        const [slotHour, slotMinute] = slot.start.split(':').map(Number);
-        const slotStartInMinutes = slotHour * 60 + slotMinute;
+        // Parsear hora de FIN del slot (formato "HH:MM")
+        const [slotEndHour, slotEndMinute] = slot.end.split(':').map(Number);
+        const slotEndInMinutes = slotEndHour * 60 + slotEndMinute;
         
-        // La franja está disponible si su hora de inicio es mayor a la hora actual
-        return slotStartInMinutes > currentTimeInMinutes;
+        // La franja está disponible si aún no ha terminado (hora actual < hora fin)
+        return currentTimeInMinutes < slotEndInMinutes;
     };
 
     const getSlotDisplayName = (slotId) => {
@@ -465,6 +469,20 @@ export const Appointments = () => {
                                     <Send className="w-4 h-4" />
                                     Enviar confirmación al cliente:
                                 </p>
+                                
+                                {/* Editable Email Field */}
+                                <div className="flex gap-2 items-center">
+                                    <Mail className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                                    <Input
+                                        type="email"
+                                        value={notificationEmail}
+                                        onChange={(e) => setNotificationEmail(e.target.value)}
+                                        placeholder="correo@ejemplo.com"
+                                        className="flex-1 h-9 text-sm"
+                                        data-testid="notification-email-input"
+                                    />
+                                </div>
+                                
                                 <div className="flex gap-2">
                                     <Button
                                         variant="outline"
@@ -487,18 +505,18 @@ export const Appointments = () => {
                                         variant="outline"
                                         className="flex-1 bg-blue-500/10 border-blue-500/30 hover:bg-blue-500/20 text-blue-500"
                                         onClick={async () => {
-                                            if (!createdOrder.client_email) {
-                                                toast.error('El cliente no tiene correo electrónico registrado');
+                                            if (!notificationEmail) {
+                                                toast.error('Ingresa un correo electrónico');
                                                 return;
                                             }
                                             try {
                                                 const res = await notificationsAPI.send({
                                                     order_id: createdOrder.id,
                                                     send_email: true,
-                                                    email: createdOrder.client_email
+                                                    email: notificationEmail
                                                 });
                                                 if (res.data.results?.email?.success) {
-                                                    toast.success(`Correo enviado a ${createdOrder.client_email}`);
+                                                    toast.success(`Correo enviado a ${notificationEmail}`);
                                                 } else {
                                                     toast.error(res.data.results?.email?.error || 'Error al enviar correo');
                                                 }
@@ -512,9 +530,6 @@ export const Appointments = () => {
                                         Email
                                     </Button>
                                 </div>
-                                <p className="text-xs text-muted-foreground text-center">
-                                    {createdOrder.client_email ? `Email: ${createdOrder.client_email}` : 'Sin email registrado'}
-                                </p>
                             </div>
 
                             <div className="flex gap-2">
@@ -702,10 +717,10 @@ export const Appointments = () => {
                                     <CalendarIcon className="w-4 h-4" />
                                     Fecha y Franja Horaria
                                 </h3>
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-2">
                                         <Label>Fecha de la Cita *</Label>
-                                        <div className="flex justify-center border rounded-lg p-2">
+                                        <div className="flex justify-center border rounded-lg p-2 overflow-x-auto">
                                             <Calendar
                                                 mode="single"
                                                 selected={selectedDate}
@@ -799,7 +814,7 @@ export const Appointments = () => {
                                                 </p>
                                                 {format(selectedDate, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') && (
                                                     <p className="text-xs text-cyan-400 mt-1">
-                                                        * Las franjas cuya hora de inicio ya pasó no están disponibles
+                                                        * Las franjas ya finalizadas no están disponibles
                                                     </p>
                                                 )}
                                             </div>
@@ -937,7 +952,7 @@ export const Appointments = () => {
                                         <PlusCircle className="w-4 h-4" />
                                         Agregar Servicio/Producto Personalizado
                                     </Label>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-col sm:flex-row gap-2">
                                         <Input
                                             value={customServiceName}
                                             onChange={(e) => setCustomServiceName(e.target.value)}
@@ -945,27 +960,30 @@ export const Appointments = () => {
                                             className="flex-1"
                                             data-testid="custom-service-name"
                                         />
-                                        <div className="flex items-center gap-1">
-                                            <span className="text-sm text-muted-foreground">$</span>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                value={customServicePrice}
-                                                onChange={(e) => setCustomServicePrice(e.target.value)}
-                                                placeholder="Valor"
-                                                className="w-28"
-                                                data-testid="custom-service-price"
-                                            />
+                                        <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-1 flex-1 sm:flex-initial">
+                                                <span className="text-sm text-muted-foreground">$</span>
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    value={customServicePrice}
+                                                    onChange={(e) => setCustomServicePrice(e.target.value)}
+                                                    placeholder="Valor"
+                                                    className="w-full sm:w-28"
+                                                    data-testid="custom-service-price"
+                                                />
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="icon"
+                                                onClick={handleAddCustomService}
+                                                className="flex-shrink-0"
+                                                data-testid="add-custom-service-btn"
+                                            >
+                                                <Plus className="w-4 h-4" />
+                                            </Button>
                                         </div>
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon"
-                                            onClick={handleAddCustomService}
-                                            data-testid="add-custom-service-btn"
-                                        >
-                                            <Plus className="w-4 h-4" />
-                                        </Button>
                                     </div>
                                 </div>
 
@@ -976,17 +994,17 @@ export const Appointments = () => {
                                         <div className="space-y-3">
                                             {selectedServices.map((svc) => (
                                                 <div key={svc.serviceId} className="text-sm">
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex items-center gap-2">
+                                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                                        <div className="flex items-center gap-2 flex-1 min-w-0">
                                                             {svc.isCustom && (
-                                                                <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded">
+                                                                <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded flex-shrink-0">
                                                                     Personalizado
                                                                 </span>
                                                             )}
-                                                            <span className="font-medium">{svc.serviceName}</span>
+                                                            <span className="font-medium truncate">{svc.serviceName}</span>
                                                         </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="font-mono">{formatCurrency(svc.price)}</span>
+                                                        <div className="flex items-center justify-between sm:justify-end gap-2 flex-shrink-0">
+                                                            <span className="font-mono text-base">{formatCurrency(svc.price)}</span>
                                                             <Button
                                                                 type="button"
                                                                 variant="ghost"
