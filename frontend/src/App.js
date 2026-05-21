@@ -17,6 +17,7 @@ import { Quotes } from './pages/Quotes';
 import { ServiceOrders } from './pages/ServiceOrders';
 import { Notifications } from './pages/Notifications';
 import { Settings } from './pages/Settings';
+import CuttingView from './pages/CuttingView';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -115,6 +116,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'coordinador']}>
                         <Assign />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/cutting" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'corte', 'coordinador']}>
+                        <CuttingView />
                     </ProtectedRoute>
                 } 
             />

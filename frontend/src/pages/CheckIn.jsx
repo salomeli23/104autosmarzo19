@@ -15,11 +15,12 @@ import { SignaturePad } from '../components/SignaturePad';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { formatCurrency } from '../lib/utils';
+import { generateOrderPDF } from '../components/OrderPDFGenerator';
 import { toast } from 'sonner';
 import { 
     QrCode, Search, Car, User, Phone, FileCheck, 
     Pen, CheckCircle, Plus, DollarSign, ArrowRight,
-    Clock, AlertTriangle, Timer, Shield, Package, Trash2, PlusCircle
+    Clock, AlertTriangle, Timer, Shield, Package, Trash2, PlusCircle, Download, FileText
 } from 'lucide-react';
 import api from '../lib/api';
 
@@ -1055,6 +1056,32 @@ export const CheckIn = () => {
                             <p className="text-muted-foreground">
                                 El vehículo ha sido registrado. Proceda a la revisión 360°.
                             </p>
+                            
+                            {/* Download PDF Button */}
+                            <Button 
+                                variant="outline"
+                                className="mt-4 border-cyan-500/50 text-cyan-500 hover:bg-cyan-500/10"
+                                onClick={() => {
+                                    if (foundOrder) {
+                                        generateOrderPDF({
+                                            ...foundOrder,
+                                            services: selectedServices.map(s => ({
+                                                service: s.serviceId,
+                                                description: s.serviceName,
+                                                price: s.price,
+                                                parts: s.parts
+                                            })),
+                                            negotiated_value: calculateTotal()
+                                        });
+                                        toast.success('PDF generado correctamente');
+                                    }
+                                }}
+                                data-testid="download-order-pdf-btn"
+                            >
+                                <Download className="w-4 h-4 mr-2" />
+                                Descargar Orden de Pedido (PDF)
+                            </Button>
+                            
                             <div className="flex gap-3 pt-4">
                                 <Button variant="outline" onClick={resetForm}>
                                     Nuevo Check-in

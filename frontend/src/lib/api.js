@@ -100,6 +100,26 @@ export const slotsAPI = {
     getAvailability: (date) => api.get('/slots/availability', { params: { date } }),
 };
 
+// Bahias (Garage bays)
+export const bahiasAPI = {
+    getAll: () => api.get('/bahias'),
+    assign: (bahiaId, orderId) => api.put(`/bahias/${bahiaId}/assign`, null, { params: { order_id: orderId } }),
+    release: (bahiaId) => api.put(`/bahias/${bahiaId}/release`),
+};
+
+// Cutting module
+export const cuttingAPI = {
+    getPending: () => api.get('/cutting/pending'),
+    start: (orderId) => api.put(`/cutting/${orderId}/start`),
+    complete: (orderId, measurements, notes) => api.put(`/cutting/${orderId}/complete`, null, { params: { measurements, notes } }),
+};
+
+// Seed data
+export const seedAPI = {
+    users: () => api.post('/seed/users'),
+    bahias: () => api.post('/seed/bahias'),
+};
+
 // Legacy API aliases for backwards compatibility
 export const appointmentsAPI = {
     getAll: (date) => api.get('/orders', { params: { date } }),

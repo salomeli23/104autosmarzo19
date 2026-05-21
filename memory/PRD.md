@@ -4,16 +4,20 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2025-12-19
+2026-05-21
 
-## Última Sesión (2025-12-19)
-- **CORREGIDO:** Error de sintaxis crítico en `Appointments.jsx`
-- **NUEVO:** Selección de partes del vehículo para servicios de polarizado
-  - Partes: Panorámico, Vidrio Copiloto, Vidrio Piloto, Vidrio Trasero, Vidrio Trasero Copiloto, Trasero, Luneta, Sunroof, Custodias
-- **NUEVO:** Notificaciones al cliente al agendar cita
-  - **WhatsApp:** Usa enlace wa.me con mensaje predefinido (no requiere API key)
-  - **Email:** Integración con Resend (requiere API key en .env)
-  - Botones de envío en el diálogo de confirmación de cita
+## Última Sesión (2026-05-21)
+- **NUEVO:** Módulo de Corte de Piezas (`/cutting`)
+  - Vista para servicios de Polarizado y PPF después del check-in
+  - Estados: Pendiente → En Proceso → Completado
+  - Campos para medidas y notas
+  - Notificaciones para coordinador cuando corte está listo
+- **NUEVO:** Rol de usuario "Corte" (corte@polarizadosya.com / corte123)
+- **NUEVO:** Sistema de Bahías (10 garages para asignación)
+- **NUEVO:** Generación de PDF "Orden de Pedido" en Check-in
+- **NUEVO:** Estado "en_corte" en el flujo de órdenes
+- **CORREGIDO:** Selección de servicios en Check-in
+- **CORREGIDO:** Lógica de franjas horarias disponibles
 
 ## Stack Tecnológico
 - **Frontend:** React, Tailwind CSS, Shadcn/UI

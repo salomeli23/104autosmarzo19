@@ -56,6 +56,7 @@ class UserRole(str, Enum):
     COORDINADOR = "coordinador"
     TECNICO = "tecnico"
     FACTURACION = "facturacion"
+    CORTE = "corte"  # Nuevo rol para corte de piezas
 
 class ServiceType(str, Enum):
     POLARIZADO = "polarizado"
@@ -66,6 +67,7 @@ class ServiceType(str, Enum):
 class OrderStatus(str, Enum):
     AGENDADO = "agendado"
     INGRESADO = "ingresado"
+    EN_CORTE = "en_corte"  # Nuevo estado para corte de piezas
     EN_REVISION = "en_revision"
     ASIGNADO = "asignado"
     EN_PROCESO = "en_proceso"
@@ -77,6 +79,8 @@ class OrderStatus(str, Enum):
 
 class AlertType(str, Enum):
     NUEVO_INGRESO = "nuevo_ingreso"
+    NUEVO_CORTE = "nuevo_corte"  # Alerta para área de corte
+    CORTE_COMPLETADO = "corte_completado"  # Corte terminado
     SERVICIO_ASIGNADO = "servicio_asignado"
     SERVICIO_COMPLETADO = "servicio_completado"
     PENDIENTE_FACTURACION = "pendiente_facturacion"
@@ -1388,6 +1392,7 @@ async def seed_test_users():
         {"email": "tecnico@polarizadosya.com", "name": "Juan Técnico", "role": "tecnico", "password": "tecnico123"},
         {"email": "tecnico2@polarizadosya.com", "name": "Pedro Técnico", "role": "tecnico", "password": "tecnico123"},
         {"email": "facturacion@polarizadosya.com", "name": "Ana Facturación", "role": "facturacion", "password": "factura123"},
+        {"email": "corte@polarizadosya.com", "name": "Luis Corte", "role": "corte", "password": "corte123"},
     ]
     
     created = []
@@ -1407,6 +1412,202 @@ async def seed_test_users():
             created.append({"email": user_data["email"], "role": user_data["role"], "password": user_data["password"]})
     
     return {"message": f"Created {len(created)} users", "users": created}
+
+@api_router.post("/seed/bahias")
+async def seed_bahias():
+    """Create test bahias (garages/bays) for vehicle assignment"""
+    bahias = [
+        {"id": "bahia_1", "name": "Bahía 1", "description": "Polarizado Premium", "capacity": 1, "active": True},
+        {"id": "bahia_2", "name": "Bahía 2", "description": "Polarizado Estándar", "capacity": 1, "active": True},
+        {"id": "bahia_3", "name": "Bahía 3", "description": "PPF y Wrapping", "capacity": 1, "active": True},
+        {"id": "bahia_4", "name": "Bahía 4", "description": "Ceramic Coating", "capacity": 1, "active": True},
+        {"id": "bahia_5", "name": "Bahía 5", "description": "Detailing", "capacity": 1, "active": True},
+        {"id": "bahia_6", "name": "Bahía 6", "description": "Multiservicio 1", "capacity": 1, "active": True},
+        {"id": "bahia_7", "name": "Bahía 7", "description": "Multiservicio 2", "capacity": 1, "active": True},
+        {"id": "bahia_8", "name": "Bahía 8", "description": "Reparaciones", "capacity": 1, "active": True},
+        {"id": "bahia_9", "name": "Bahía 9", "description": "Express", "capacity": 1, "active": True},
+        {"id": "bahia_10", "name": "Bahía 10", "description": "VIP", "capacity": 1, "active": True},
+    ]
+    
+    created = []
+    for bahia in bahias:
+        existing = await db.bahias.find_one({"id": bahia["id"]})
+        if not existing:
+            bahia["created_at"] = datetime.now(timezone.utc).isoformat()
+            bahia["current_order_id"] = None
+            await db.bahias.insert_one(bahia)
+            created.append(bahia["name"])
+    
+    return {"message": f"Created {len(created)} bahias", "bahias": created}
+
+@api_router.get("/bahias")
+async def get_bahias(current_user: dict = Depends(get_current_user)):
+    """Get all bahias with their current status"""
+    bahias = await db.bahias.find({}, {"_id": 0}).to_list(100)
+    
+    # Enrich with current order info
+    for bahia in bahias:
+        if bahia.get("current_order_id"):
+            order = await db.orders.find_one({"id": bahia["current_order_id"]}, {"_id": 0})
+            bahia["current_order"] = order
+        else:
+            bahia["current_order"] = None
+    
+    return bahias
+
+@api_router.put("/bahias/{bahia_id}/assign")
+async def assign_order_to_bahia(bahia_id: str, order_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Assign an order to a bahia"""
+    bahia = await db.bahias.find_one({"id": bahia_id})
+    if not bahia:
+        raise HTTPException(status_code=404, detail="Bahía no encontrada")
+    
+    order = await db.orders.find_one({"id": order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    
+    # Update bahia
+    await db.bahias.update_one(
+        {"id": bahia_id},
+        {"$set": {"current_order_id": order_id, "assigned_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    
+    # Update order with bahia info
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {"bahia_id": bahia_id, "bahia_name": bahia["name"]}}
+    )
+    
+    return {"message": f"Orden asignada a {bahia['name']}", "bahia_id": bahia_id, "order_id": order_id}
+
+@api_router.put("/bahias/{bahia_id}/release")
+async def release_bahia(bahia_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Release a bahia (remove current order)"""
+    await db.bahias.update_one(
+        {"id": bahia_id},
+        {"$set": {"current_order_id": None, "assigned_at": None}}
+    )
+    return {"message": "Bahía liberada"}
+
+# ==================== CUTTING MODULE ====================
+@api_router.get("/cutting/pending")
+async def get_cutting_pending(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    """Get orders pending cutting (polarizado/PPF services after check-in)"""
+    # Services that require cutting
+    cutting_services = [
+        "nanooptik", "black_ceramic_autobahn", "ultraoptik_aswf", 
+        "ceramic_i3_autobahn", "ceramic_i3_plus_autobahn", "huperoptik",
+        "ultrasecure", "ppf_matte", "ppf_brillante", "matte", "brillante",
+        "proteccion_ppf", "wrap"
+    ]
+    
+    # Find orders that are in "ingresado" status and have cutting services
+    orders = await db.orders.find(
+        {"status": {"$in": ["ingresado", "en_corte"]}},
+        {"_id": 0}
+    ).to_list(100)
+    
+    # Filter orders that have cutting services
+    cutting_orders = []
+    for order in orders:
+        services = order.get("services", [])
+        has_cutting_service = False
+        cutting_service_names = []
+        
+        for svc in services:
+            svc_id = (svc.get("service") or "").lower().replace(" ", "_")
+            svc_desc = (svc.get("description") or "").lower()
+            
+            # Check if this service requires cutting
+            if any(cs in svc_id or cs in svc_desc for cs in cutting_services) or \
+               "polarizado" in svc_desc or "ppf" in svc_desc or "ultrasecure" in svc_desc:
+                has_cutting_service = True
+                cutting_service_names.append({
+                    "name": svc.get("description") or svc.get("service") or "Servicio",
+                    "parts": svc.get("parts", []),
+                    "price": svc.get("price", 0)
+                })
+        
+        if has_cutting_service:
+            order["cutting_services"] = cutting_service_names
+            order["cutting_status"] = order.get("cutting_status", "pendiente")
+            cutting_orders.append(order)
+    
+    return cutting_orders
+
+@api_router.put("/cutting/{order_id}/start")
+async def start_cutting(order_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
+    """Mark cutting as started for an order"""
+    order = await db.orders.find_one({"id": order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "status": "en_corte",
+            "cutting_status": "en_proceso",
+            "cutting_started_at": datetime.now(timezone.utc).isoformat(),
+            "cutting_started_by": current_user["id"]
+        }}
+    )
+    
+    # Add to history
+    await db.order_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "order_id": order_id,
+        "action": "cutting_started",
+        "status": "en_corte",
+        "user_id": current_user["id"],
+        "user_name": current_user.get("name", current_user["email"]),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    return {"message": "Corte iniciado", "status": "en_corte"}
+
+@api_router.put("/cutting/{order_id}/complete")
+async def complete_cutting(order_id: str, measurements: Optional[str] = None, notes: Optional[str] = None, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
+    """Mark cutting as completed for an order"""
+    order = await db.orders.find_one({"id": order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "cutting_status": "completado",
+            "cutting_completed_at": datetime.now(timezone.utc).isoformat(),
+            "cutting_completed_by": current_user["id"],
+            "cutting_measurements": measurements,
+            "cutting_notes": notes
+        }}
+    )
+    
+    # Create alert for coordinator
+    await db.alerts.insert_one({
+        "id": str(uuid.uuid4()),
+        "type": "corte_completado",
+        "title": "Corte Completado",
+        "message": f"Corte completado para {order.get('plate')} - {order.get('brand')} {order.get('model')}",
+        "order_id": order_id,
+        "target_role": "coordinador",
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Add to history
+    await db.order_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "order_id": order_id,
+        "action": "cutting_completed",
+        "status": "en_corte",
+        "details": {"measurements": measurements, "notes": notes},
+        "user_id": current_user["id"],
+        "user_name": current_user.get("name", current_user["email"]),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    return {"message": "Corte completado", "status": "completado"}
 
 # Include router and configure CORS
 app.include_router(api_router)
