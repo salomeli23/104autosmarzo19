@@ -1062,9 +1062,9 @@ export const CheckIn = () => {
                                 variant="outline"
                                 className="mt-4 border-cyan-500/50 text-cyan-500 hover:bg-cyan-500/10"
                                 onClick={() => {
-                                    if (foundOrder) {
+                                    if (order) {
                                         generateOrderPDF({
-                                            ...foundOrder,
+                                            ...order,
                                             services: selectedServices.map(s => ({
                                                 service: s.serviceId,
                                                 description: s.serviceName,
@@ -1074,6 +1074,8 @@ export const CheckIn = () => {
                                             negotiated_value: calculateTotal()
                                         });
                                         toast.success('PDF generado correctamente');
+                                    } else {
+                                        toast.error('No hay orden para descargar');
                                     }
                                 }}
                                 data-testid="download-order-pdf-btn"
