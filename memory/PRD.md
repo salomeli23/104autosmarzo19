@@ -6,7 +6,13 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-05-21
 
-## Última Sesión (2026-05-21)
+## Última Sesión (2026-05-21) — Iteración 5
+- **CORREGIDO (P0):** Generación de PDF en Check-in. Error previo `doc.autoTable is not a function` solucionado.
+  - `OrderPDFGenerator.js` reescrito usando únicamente métodos nativos de jsPDF (rect, text, line, save).
+  - Eliminada dependencia de `jspdf-autotable` (incompatible con jsPDF v4).
+  - Validado en navegador (jsPDF 4.2.1) y en Node: PDF de ~4.3KB generado sin errores.
+
+## Sesión Anterior (2026-05-21)
 - **NUEVO:** Módulo de Corte de Piezas (`/cutting`)
   - Vista para servicios de Polarizado y PPF después del check-in
   - Estados: Pendiente → En Proceso → Completado

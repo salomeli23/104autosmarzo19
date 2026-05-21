@@ -1,7 +1,4 @@
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
-
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_techgarage-app/artifacts/8kw8x7h6_Captura%20de%20Pantalla%202026-01-30%20a%20la%28s%29%2011.36.02%20a.%C2%A0m..png";
 
 export const generateOrderPDF = async (order) => {
     const doc = new jsPDF();
@@ -12,18 +9,8 @@ export const generateOrderPDF = async (order) => {
     // Colors
     const primaryColor = [0, 180, 216]; // Cyan
     const darkColor = [30, 30, 50];
-    const grayColor = [100, 100, 100];
 
-    // Helper function to add text
-    const addText = (text, x, y, options = {}) => {
-        doc.setFontSize(options.size || 10);
-        doc.setFont('helvetica', options.style || 'normal');
-        if (options.color) doc.setTextColor(...options.color);
-        else doc.setTextColor(0, 0, 0);
-        doc.text(text, x, y);
-    };
-
-    // Header with logo placeholder and company info
+    // Header with company info
     doc.setFillColor(30, 30, 50);
     doc.rect(0, 0, pageWidth, 35, 'F');
     
@@ -35,7 +22,7 @@ export const generateOrderPDF = async (order) => {
     
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text('Polarizado • Nanocerámica • Autobahn Black CE • Ultrasecure', margin, 26);
+    doc.text('Polarizado | Nanoceramica | Autobahn Black CE | Ultrasecure', margin, 26);
 
     // Order number box
     doc.setFillColor(...primaryColor);
@@ -64,55 +51,66 @@ export const generateOrderPDF = async (order) => {
     doc.rect(margin, yPos, pageWidth - 2 * margin, 8, 'F');
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 0, 0);
     doc.text('DATOS DEL CLIENTE', margin + 3, yPos + 6);
     yPos += 12;
 
-    // Client info in two columns
-    const clientData = [
-        ['Nombre:', order.client_name || 'N/A'],
-        ['Teléfono:', order.client_phone || 'N/A'],
-        ['Cédula/NIT:', order.client_id_number || 'N/A'],
-        ['Email:', order.client_email || 'N/A'],
-    ];
-
+    // Client info
     doc.setFontSize(9);
-    clientData.forEach((item, idx) => {
-        const xOffset = idx % 2 === 0 ? margin : pageWidth / 2;
-        const yOffset = yPos + Math.floor(idx / 2) * 6;
-        doc.setFont('helvetica', 'bold');
-        doc.text(item[0], xOffset, yOffset);
-        doc.setFont('helvetica', 'normal');
-        doc.text(item[1], xOffset + 25, yOffset);
-    });
+    doc.setFont('helvetica', 'bold');
+    doc.text('Nombre:', margin, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(order.client_name || 'N/A', margin + 25, yPos);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Telefono:', pageWidth / 2, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(order.client_phone || 'N/A', pageWidth / 2 + 25, yPos);
+    
+    yPos += 6;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Cedula/NIT:', margin, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(order.client_id_number || 'N/A', margin + 25, yPos);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Email:', pageWidth / 2, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(order.client_email || 'N/A', pageWidth / 2 + 25, yPos);
 
-    yPos += 18;
+    yPos += 12;
 
     // Section: Vehicle Data
     doc.setFillColor(240, 240, 240);
     doc.rect(margin, yPos, pageWidth - 2 * margin, 8, 'F');
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text('DATOS DEL VEHÍCULO', margin + 3, yPos + 6);
+    doc.text('DATOS DEL VEHICULO', margin + 3, yPos + 6);
     yPos += 12;
 
-    const vehicleData = [
-        ['Placa:', order.plate || 'N/A'],
-        ['Marca:', order.brand || 'N/A'],
-        ['Modelo:', order.model || 'N/A'],
-        ['Color:', order.color || 'N/A'],
-    ];
-
     doc.setFontSize(9);
-    vehicleData.forEach((item, idx) => {
-        const xOffset = idx % 2 === 0 ? margin : pageWidth / 2;
-        const yOffset = yPos + Math.floor(idx / 2) * 6;
-        doc.setFont('helvetica', 'bold');
-        doc.text(item[0], xOffset, yOffset);
-        doc.setFont('helvetica', 'normal');
-        doc.text(item[1], xOffset + 20, yOffset);
-    });
+    doc.setFont('helvetica', 'bold');
+    doc.text('Placa:', margin, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(order.plate || 'N/A', margin + 20, yPos);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Marca:', pageWidth / 2, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(order.brand || 'N/A', pageWidth / 2 + 20, yPos);
+    
+    yPos += 6;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Modelo:', margin, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(order.model || 'N/A', margin + 20, yPos);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Color:', pageWidth / 2, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(order.color || 'N/A', pageWidth / 2 + 20, yPos);
 
-    yPos += 18;
+    yPos += 12;
 
     // Section: Services/Products
     doc.setFillColor(240, 240, 240);
@@ -122,47 +120,64 @@ export const generateOrderPDF = async (order) => {
     doc.text('PRODUCTOS / SERVICIOS', margin + 3, yPos + 6);
     yPos += 12;
 
-    // Services table
+    // Services table header
+    doc.setFillColor(30, 30, 50);
+    doc.rect(margin, yPos, pageWidth - 2 * margin, 8, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text('#', margin + 3, yPos + 6);
+    doc.text('Descripcion', margin + 15, yPos + 6);
+    doc.text('Valor', pageWidth - 35, yPos + 6);
+    yPos += 10;
+
+    // Services rows
+    doc.setTextColor(0, 0, 0);
     const services = order.services || [];
-    const servicesTableData = services.map((svc, idx) => {
+    services.forEach((svc, idx) => {
         const name = svc.description || svc.service || 'Servicio';
-        const parts = svc.parts && svc.parts.length > 0 ? `(${svc.parts.join(', ')})` : '';
-        return [
-            (idx + 1).toString(),
-            `${name} ${parts}`,
-            `$${(svc.price || 0).toLocaleString('es-CO')}`
-        ];
+        const parts = svc.parts && svc.parts.length > 0 ? ` (${svc.parts.join(', ')})` : '';
+        const displayName = `${name}${parts}`;
+        const price = `$${(svc.price || 0).toLocaleString('es-CO')}`;
+        
+        // Alternate row color
+        if (idx % 2 === 0) {
+            doc.setFillColor(250, 250, 250);
+            doc.rect(margin, yPos - 2, pageWidth - 2 * margin, 8, 'F');
+        }
+        
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.text((idx + 1).toString(), margin + 3, yPos + 4);
+        
+        // Truncate long names
+        const maxWidth = pageWidth - 80;
+        let truncatedName = displayName;
+        if (doc.getTextWidth(displayName) > maxWidth) {
+            while (doc.getTextWidth(truncatedName + '...') > maxWidth && truncatedName.length > 0) {
+                truncatedName = truncatedName.slice(0, -1);
+            }
+            truncatedName += '...';
+        }
+        doc.text(truncatedName, margin + 15, yPos + 4);
+        doc.text(price, pageWidth - 35, yPos + 4);
+        yPos += 8;
     });
 
-    // Add custom services if any
+    // Custom services if any
     if (order.custom_services) {
         const customItems = order.custom_services.split(',').map(s => s.trim());
         customItems.forEach((item, idx) => {
-            servicesTableData.push([
-                (services.length + idx + 1).toString(),
-                `${item} (Personalizado)`,
-                '-'
-            ]);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(8);
+            doc.text((services.length + idx + 1).toString(), margin + 3, yPos + 4);
+            doc.text(`${item} (Personalizado)`, margin + 15, yPos + 4);
+            doc.text('-', pageWidth - 35, yPos + 4);
+            yPos += 8;
         });
     }
 
-    if (servicesTableData.length > 0) {
-        doc.autoTable({
-            startY: yPos,
-            head: [['#', 'Descripción', 'Valor']],
-            body: servicesTableData,
-            theme: 'grid',
-            headStyles: { fillColor: [30, 30, 50], fontSize: 9 },
-            bodyStyles: { fontSize: 8 },
-            columnStyles: {
-                0: { cellWidth: 10, halign: 'center' },
-                1: { cellWidth: 'auto' },
-                2: { cellWidth: 30, halign: 'right' }
-            },
-            margin: { left: margin, right: margin }
-        });
-        yPos = doc.lastAutoTable.finalY + 5;
-    }
+    yPos += 5;
 
     // Total
     const total = order.negotiated_value || order.total_value || services.reduce((sum, s) => sum + (s.price || 0), 0);
@@ -181,7 +196,7 @@ export const generateOrderPDF = async (order) => {
     doc.rect(margin, yPos, pageWidth - 2 * margin, 8, 'F');
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text('VERIFICACIÓN DEL VEHÍCULO', margin + 3, yPos + 6);
+    doc.text('VERIFICACION DEL VEHICULO', margin + 3, yPos + 6);
     yPos += 12;
 
     // Interior items
@@ -191,10 +206,10 @@ export const generateOrderPDF = async (order) => {
     doc.setFont('helvetica', 'normal');
     yPos += 5;
     
-    const interiorItems = ['Radio', 'Antena', 'Espejos', 'Encendedor', 'Tapetes', 'Herramientas', 'Gato', 'Llanta Repuesto'];
+    const interiorItems = ['Radio', 'Antena', 'Espejos', 'Encendedor', 'Tapetes', 'Herramientas', 'Gato', 'Llanta Rep.'];
     interiorItems.forEach((item, idx) => {
         const xOffset = margin + (idx % 4) * 45;
-        const yOffset = yPos + Math.floor(idx / 4) * 5;
+        const yOffset = yPos + Math.floor(idx / 4) * 6;
         doc.rect(xOffset, yOffset - 3, 3, 3);
         doc.text(item, xOffset + 5, yOffset);
     });
@@ -210,7 +225,7 @@ export const generateOrderPDF = async (order) => {
     const exteriorItems = ['Antena', 'Plumillas', 'Pito', 'Emblemas', 'Espejos', 'Stops', 'Exploradoras', 'Rayones'];
     exteriorItems.forEach((item, idx) => {
         const xOffset = margin + (idx % 4) * 45;
-        const yOffset = yPos + Math.floor(idx / 4) * 5;
+        const yOffset = yPos + Math.floor(idx / 4) * 6;
         doc.rect(xOffset, yOffset - 3, 3, 3);
         doc.text(item, xOffset + 5, yOffset);
     });
@@ -219,39 +234,38 @@ export const generateOrderPDF = async (order) => {
 
     // Legal notes
     doc.setFillColor(245, 245, 245);
-    doc.rect(margin, yPos, pageWidth - 2 * margin, 35, 'F');
+    doc.rect(margin, yPos, pageWidth - 2 * margin, 32, 'F');
     doc.setFontSize(7);
     doc.setTextColor(80, 80, 80);
     
     const legalNotes = [
-        '• El vehículo permanecerá en las instalaciones por cuenta y riesgo del cliente.',
-        '• POLARIZADOS MANAGER no se hace responsable por objetos dejados en el vehículo.',
-        '• Al firmar este documento, el cliente acepta los términos y condiciones del servicio.',
-        '• La garantía aplica según el tipo de servicio contratado.',
-        '• El cliente autoriza la instalación de los productos acordados en esta orden de pedido.',
+        '- El vehiculo permanecera en las instalaciones por cuenta y riesgo del cliente.',
+        '- POLARIZADOS MANAGER no se hace responsable por objetos dejados en el vehiculo.',
+        '- Al firmar este documento, el cliente acepta los terminos y condiciones del servicio.',
+        '- La garantia aplica segun el tipo de servicio contratado.',
     ];
     
     legalNotes.forEach((note, idx) => {
         doc.text(note, margin + 3, yPos + 5 + (idx * 6));
     });
 
-    yPos += 42;
+    yPos += 38;
 
     // Signatures
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(9);
     
     // Client signature
-    doc.line(margin, yPos + 15, margin + 70, yPos + 15);
-    doc.text('Firma del Cliente', margin + 20, yPos + 20);
-    doc.text(`Cédula: ${order.client_id_number || '________________'}`, margin, yPos + 26);
+    doc.line(margin, yPos + 12, margin + 70, yPos + 12);
+    doc.text('Firma del Cliente', margin + 20, yPos + 17);
+    doc.text(`Cedula: ${order.client_id_number || '________________'}`, margin, yPos + 23);
 
     // Advisor signature
-    doc.line(pageWidth - 85, yPos + 15, pageWidth - margin, yPos + 15);
-    doc.text('Firma del Asesor', pageWidth - 65, yPos + 20);
+    doc.line(pageWidth - 85, yPos + 12, pageWidth - margin, yPos + 12);
+    doc.text('Firma del Asesor', pageWidth - 65, yPos + 17);
 
     // Delivery date
-    yPos += 35;
+    yPos += 30;
     doc.setFont('helvetica', 'bold');
     doc.text('Fecha estimada de entrega:', margin, yPos);
     doc.setFont('helvetica', 'normal');
@@ -261,7 +275,7 @@ export const generateOrderPDF = async (order) => {
     const footerY = doc.internal.pageSize.getHeight() - 10;
     doc.setFontSize(8);
     doc.setTextColor(100, 100, 100);
-    doc.text('POLARIZADOS MANAGER - Documento generado automáticamente', pageWidth / 2, footerY, { align: 'center' });
+    doc.text('POLARIZADOS MANAGER - Documento generado automaticamente', pageWidth / 2, footerY, { align: 'center' });
 
     // Save the PDF
     doc.save(`Orden_${order.order_code || 'pedido'}_${order.plate || ''}.pdf`);
