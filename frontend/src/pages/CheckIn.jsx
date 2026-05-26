@@ -652,18 +652,21 @@ export const CheckIn = () => {
                                 <TabsContent value="code" className="mt-4">
                                     <Card>
                                         <CardHeader>
-                                            <CardTitle className="font-heading text-lg">Ingresar Código de Cita</CardTitle>
+                                            <CardTitle className="font-heading text-lg">Buscar por Código o Placa</CardTitle>
                                         </CardHeader>
                                         <CardContent className="space-y-4">
                                             <div className="space-y-2">
-                                                <Label>Código de la Cita</Label>
+                                                <Label>Código de Cita o Placa del Vehículo</Label>
                                                 <Input
                                                     value={orderCode}
                                                     onChange={(e) => setOrderCode(e.target.value.toUpperCase())}
-                                                    placeholder="Ej: ABC12345"
+                                                    placeholder="Ej: ABC12345  o  XYZ123"
                                                     className="font-mono text-lg"
                                                     data-testid="order-code-input"
                                                 />
+                                                <p className="text-xs text-muted-foreground">
+                                                    Ingresa el código de la cita o la placa del vehículo.
+                                                </p>
                                             </div>
                                             <Button 
                                                 onClick={() => searchOrder(orderCode)}
@@ -694,7 +697,7 @@ export const CheckIn = () => {
                                     <div className="space-y-3">
                                         <div className="flex items-start gap-3">
                                             <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium shrink-0">1</div>
-                                            <p className="text-sm">Escanea el código QR o ingresa el código manualmente</p>
+                                            <p className="text-sm">Escanea el QR, ingresa el código de la cita, o busca por placa</p>
                                         </div>
                                         <div className="flex items-start gap-3">
                                             <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium shrink-0">2</div>

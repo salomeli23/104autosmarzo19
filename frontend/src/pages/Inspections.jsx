@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ordersAPI, inspectionsAPI } from '../lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { ordersAPI, inspectionsAPI } from '../lib/api';import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -12,10 +11,9 @@ import { CameraCapture } from '../components/CameraCapture';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { INSPECTION_AREAS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, ClipboardCheck, Car, AlertTriangle, Check, Camera, Image } from 'lucide-react';
+import { Plus, ClipboardCheck, Car, AlertTriangle, Check, Camera, Image, Mail, Send } from 'lucide-react';
 
 const CONDITIONS = [
-    { value: 'excellent', label: 'Excelente', color: 'text-green-500' },
     { value: 'good', label: 'Bueno', color: 'text-blue-500' },
     { value: 'fair', label: 'Regular', color: 'text-yellow-500' },
     { value: 'poor', label: 'Malo', color: 'text-red-500' },
@@ -38,6 +36,9 @@ export const Inspections = () => {
         }))
     );
     const [generalNotes, setGeneralNotes] = useState('');
+    const [sendEmailDialog, setSendEmailDialog] = useState(false);
+    const [lastSavedOrder, setLastSavedOrder] = useState(null);
+    const [sendingEmail, setSendingEmail] = useState(false);
 
     const fetchOrders = useCallback(async () => {
         try {
@@ -82,11 +83,31 @@ export const Inspections = () => {
                 photos: photos,
             });
             toast.success('Revisión 360° completada');
+            // Offer to send photos by email if there are any photos
+            if (photos.length > 0) {
+                setLastSavedOrder({ ...selectedOrder, photos_count: photos.length });
+                setSendEmailDialog(true);
+            }
             setDialogOpen(false);
             resetForm();
             fetchOrders();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al guardar la revisión');
+        }
+    };
+
+    const handleSendPhotosEmail = async () => {
+        if (!lastSavedOrder) return;
+        setSendingEmail(true);
+        try {
+            const res = await ordersAPI.sendInspectionPhotos(lastSavedOrder.id);
+            toast.success(`Fotos enviadas a ${res.data?.recipients?.length || 0} destinatario(s)`);
+            setSendEmailDialog(false);
+            setLastSavedOrder(null);
+        } catch (error) {
+            toast.error(error.response?.data?.detail || 'Error al enviar las fotos por correo');
+        } finally {
+            setSendingEmail(false);
         }
     };
 
@@ -240,13 +261,13 @@ export const Inspections = () => {
                                 <CameraCapture 
                                     photos={photos}
                                     onPhotosChange={setPhotos}
-                                    maxPhotos={10}
+                                    maxPhotos={20}
                                 />
 
                                 {/* Photo count */}
                                 <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                                     <Image className="w-4 h-4" />
-                                    <span>{photos.length} foto(s) capturada(s)</span>
+                                    <span>{photos.length} / 20 fotos capturadas</span>
                                 </div>
 
                                 {/* Actions */}
@@ -445,6 +466,57 @@ export const Inspections = () => {
                     )}
                 </CardContent>
             </Card>
+
+            {/* Send Photos Email Dialog */}
+            <Dialog open={sendEmailDialog} onOpenChange={setSendEmailDialog}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Mail className="w-5 h-5 text-primary" />
+                            Enviar Fotos por Correo
+                        </DialogTitle>
+                        <DialogDescription>
+                            Las fotos serán comprimidas y enviadas al cliente y a los coordinadores.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {lastSavedOrder && (
+                        <div className="space-y-3">
+                            <div className="p-3 rounded-lg bg-muted/50">
+                                <p className="font-mono font-medium">{lastSavedOrder.plate}</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {lastSavedOrder.brand} {lastSavedOrder.model} • {lastSavedOrder.client_name}
+                                </p>
+                                <p className="text-sm mt-2">
+                                    <strong>{lastSavedOrder.photos_count}</strong> foto(s) a enviar
+                                </p>
+                                {lastSavedOrder.client_email && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        Cliente: {lastSavedOrder.client_email}
+                                    </p>
+                                )}
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setSendEmailDialog(false)}
+                                    disabled={sendingEmail}
+                                    data-testid="skip-send-photos-btn"
+                                >
+                                    Omitir
+                                </Button>
+                                <Button
+                                    onClick={handleSendPhotosEmail}
+                                    disabled={sendingEmail}
+                                    data-testid="send-photos-email-btn"
+                                >
+                                    <Send className="w-4 h-4 mr-2" />
+                                    {sendingEmail ? 'Enviando...' : 'Enviar Fotos'}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 };

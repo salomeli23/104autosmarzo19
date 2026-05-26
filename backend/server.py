@@ -723,6 +723,150 @@ async def get_whatsapp_url(order_id: str, current_user: dict = Depends(get_curre
     
     return {"url": whatsapp_url}
 
+# ==================== INSPECTION PHOTO EMAIL ====================
+def _compress_data_url_image(data_url: str, max_dim: int = 1280, quality: int = 70) -> Optional[bytes]:
+    """Compress a base64 data URL image and return JPEG bytes.
+    Returns None on any failure. Max dimension defaults to 1280px and 70% JPEG quality.
+    """
+    try:
+        from PIL import Image
+        if not data_url or "," not in data_url:
+            return None
+        header, b64 = data_url.split(",", 1)
+        raw = base64.b64decode(b64)
+        img = Image.open(BytesIO(raw))
+        # Convert RGBA / P modes to RGB for JPEG
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        # Resize if any dim > max_dim
+        w, h = img.size
+        if max(w, h) > max_dim:
+            ratio = max_dim / max(w, h)
+            img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=quality, optimize=True)
+        return out.getvalue()
+    except Exception as e:
+        logger.warning(f"Image compression failed: {e}")
+        return None
+
+
+class InspectionPhotosNotification(BaseModel):
+    order_id: str
+    additional_recipients: Optional[List[EmailStr]] = None  # Allow asesor to add extra recipients
+
+
+@api_router.post("/orders/{order_id}/send-inspection-photos")
+async def send_inspection_photos(
+    order_id: str,
+    payload: Optional[InspectionPhotosNotification] = None,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))
+):
+    """Send inspection 360° photos (compressed) to client + coordinators by email."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=500, detail="Servicio de email no configurado")
+    
+    photos = order.get("inspection_photos") or []
+    if not photos:
+        raise HTTPException(status_code=400, detail="La orden no tiene fotos de inspección")
+    
+    # Build recipient list
+    recipients = set()
+    if order.get("client_email"):
+        recipients.add(order["client_email"])
+    # All coordinators receive a copy
+    coord_users = await db.users.find({"role": UserRole.COORDINADOR.value}, {"_id": 0, "email": 1}).to_list(50)
+    for u in coord_users:
+        if u.get("email"):
+            recipients.add(u["email"])
+    if payload and payload.additional_recipients:
+        for e in payload.additional_recipients:
+            recipients.add(str(e))
+    
+    if not recipients:
+        raise HTTPException(status_code=400, detail="No hay destinatarios (cliente sin email y sin coordinadores)")
+    
+    # Compress photos (run in thread pool to avoid blocking event loop)
+    def _compress_all():
+        out = []
+        for idx, p in enumerate(photos):
+            data = _compress_data_url_image(p, max_dim=1280, quality=70)
+            if data:
+                out.append({"filename": f"foto_{idx+1:02d}.jpg", "content": list(data)})
+        return out
+    
+    attachments = await asyncio.to_thread(_compress_all)
+    if not attachments:
+        raise HTTPException(status_code=500, detail="No se pudieron procesar las fotos")
+    
+    # Build HTML body
+    services_text = ", ".join([
+        (s.get("description") or s.get("service") or "Servicio") for s in (order.get("services") or [])
+    ])
+    html = f"""
+<div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; color:#222;">
+  <div style="background:#1e1e32; color:#fff; padding:16px 20px;">
+    <h2 style="margin:0;">Polarizados Manager — Revisión 360°</h2>
+  </div>
+  <div style="padding:20px;">
+    <p>Hola,</p>
+    <p>Adjuntamos las fotos del estado de ingreso del vehículo de la revisión 360°.</p>
+    <table style="width:100%; border-collapse:collapse; margin:16px 0;">
+      <tr><td style="padding:6px 0;"><b>Código de Orden:</b></td><td>{order.get('order_code','N/A')}</td></tr>
+      <tr><td style="padding:6px 0;"><b>Cliente:</b></td><td>{order.get('client_name','N/A')}</td></tr>
+      <tr><td style="padding:6px 0;"><b>Vehículo:</b></td><td>{order.get('plate','N/A')} — {order.get('brand','')} {order.get('model','')}</td></tr>
+      <tr><td style="padding:6px 0;"><b>Servicios:</b></td><td>{services_text}</td></tr>
+      <tr><td style="padding:6px 0;"><b>Fotos adjuntas:</b></td><td>{len(attachments)}</td></tr>
+    </table>
+    <p style="font-size:13px; color:#666;">Las fotos fueron comprimidas para envío por correo. Los originales en alta calidad están almacenados en el sistema.</p>
+    <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
+    <p style="font-size:12px;color:#888;">Polarizados Manager — Notificación automática</p>
+  </div>
+</div>
+""".strip()
+    
+    # Prepare resend attachments (base64-encoded content)
+    resend_attachments = []
+    for a in attachments:
+        resend_attachments.append({
+            "filename": a["filename"],
+            "content": base64.b64encode(bytes(a["content"])).decode("ascii"),
+        })
+    
+    # Resend has a per-email size limit (~25-40MB). Truncate if needed.
+    MAX_ATTACHMENTS = 20
+    if len(resend_attachments) > MAX_ATTACHMENTS:
+        resend_attachments = resend_attachments[:MAX_ATTACHMENTS]
+    
+    try:
+        params = {
+            "from": SENDER_EMAIL,
+            "to": list(recipients),
+            "subject": f"Revisión 360° - {order.get('plate','N/A')} - Orden #{order.get('order_code','')}",
+            "html": html,
+            "attachments": resend_attachments,
+        }
+        email_result = await asyncio.to_thread(resend.Emails.send, params)
+        # Log history
+        await log_order_history(
+            order_id, "FOTOS_ENVIADAS_EMAIL",
+            order.get("status",""), order.get("status",""),
+            current_user["id"], current_user["name"],
+            {"recipients": list(recipients), "photos_sent": len(resend_attachments)}
+        )
+        return {
+            "message": "Fotos enviadas por correo",
+            "recipients": list(recipients),
+            "photos_sent": len(resend_attachments),
+            "email_id": email_result.get("id") if isinstance(email_result, dict) else None,
+        }
+    except Exception as e:
+        logger.error(f"Failed to send inspection photos email: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al enviar correo: {str(e)}")
+
 # Step 2: Ingreso - Check-in and approval
 def get_colombia_time():
     """Get current time in Colombia (UTC-5)"""
@@ -766,58 +910,67 @@ def get_slot_info(slot_id: str, date_str: str):
 async def calculate_scheduled_time(date_str: str, slot_id: str):
     """Calculate specific scheduled time.
     
-    - Position derived from existing orders in the slot.
-    - If the booking is for TODAY, the scheduled time is forced to be the next
-      free interval AFTER the current Colombia local time (respecting the slot's
-      interval per vehicle).
+    Rule: each booking is spaced 15 minutes from the previous one in the same slot.
+    Picks the next free 15-min boundary at-or-after slot_start (and at-or-after current
+    Colombia time if booking is for today). Skips minutes already used by other orders
+    in the same slot.
     """
     import math
     slot_info = get_slot_info(slot_id, date_str)
     if not slot_info:
         return None
     
-    # Count existing orders in this slot
-    existing_count = await db.orders.count_documents({
-        "date": date_str,
-        "time_slot": slot_id,
-        "status": {"$nin": ["desistimiento"]}
-    })
-    
     # Parse slot times
     start_hour, start_min = map(int, slot_info["start"].split(":"))
     end_hour, end_min = map(int, slot_info["end"].split(":"))
-    
     start_total_min = start_hour * 60 + start_min
     end_total_min = end_hour * 60 + end_min
-    slot_duration_min = end_total_min - start_total_min
     
-    capacity = slot_info["capacity"]
-    interval_min = slot_duration_min / capacity
+    INTERVAL_MIN = 15
     
-    position = existing_count
-    
-    # If booking for TODAY, ensure scheduled time is in the future
+    # Determine earliest acceptable minute (relative to day)
+    earliest_min = start_total_min
     now_colombia = get_colombia_time()
     today_str = now_colombia.strftime("%Y-%m-%d")
-    
     if date_str == today_str:
         current_total_min = now_colombia.hour * 60 + now_colombia.minute
-        # Determine minimum position needed so scheduled time is AFTER current time
         if current_total_min > start_total_min:
             offset = current_total_min - start_total_min
-            min_position_for_now = math.ceil(offset / interval_min)
-            position = max(position, min_position_for_now)
+            steps = math.ceil(offset / INTERVAL_MIN)
+            earliest_min = start_total_min + steps * INTERVAL_MIN
     
-    scheduled_min = start_total_min + (position * interval_min)
+    # Get all scheduled_time values already used in this slot
+    cursor = db.orders.find(
+        {"date": date_str, "time_slot": slot_id, "status": {"$nin": ["desistimiento"]}},
+        {"_id": 0, "scheduled_time": 1}
+    )
+    taken = set()
+    async for o in cursor:
+        st = o.get("scheduled_time")
+        if not st:
+            continue
+        try:
+            hh, mm = map(int, st.split(":"))
+            taken.add(hh * 60 + mm)
+        except ValueError:
+            continue
     
-    # Safety: don't exceed slot end
-    if scheduled_min >= end_total_min:
-        scheduled_min = end_total_min - interval_min
+    # Walk forward in 15-min steps starting from earliest_min until we find a free slot
+    candidate = earliest_min
+    safety_limit = 1000  # avoid infinite loop
+    while candidate < end_total_min and safety_limit > 0:
+        if candidate not in taken:
+            break
+        candidate += INTERVAL_MIN
+        safety_limit -= 1
     
-    scheduled_hour = int(scheduled_min // 60)
-    scheduled_minute = int(scheduled_min % 60)
+    if candidate >= end_total_min:
+        # Fallback: place at end - interval (over-capacity)
+        candidate = end_total_min - INTERVAL_MIN
     
-    return f"{scheduled_hour:02d}:{scheduled_minute:02d}"
+    h = int(candidate // 60)
+    m = int(candidate % 60)
+    return f"{h:02d}:{m:02d}"
 
 def validate_checkin_time(order_date: str, scheduled_time: str):
     """
@@ -861,10 +1014,19 @@ def validate_checkin_time(order_date: str, scheduled_time: str):
 
 @api_router.post("/orders/checkin")
 async def checkin_order(data: CheckInRequest, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR]))):
-    """Check-in with QR code or order code - validates scheduled time"""
-    order = await db.orders.find_one({"order_code": data.order_code.upper()}, {"_id": 0})
+    """Check-in with QR code, order code or plate - validates scheduled time"""
+    query_value = data.order_code.strip().upper()
+    
+    # Try order_code first, then plate (allows asesor to look up vehicles by plate at the door)
+    order = await db.orders.find_one({"order_code": query_value}, {"_id": 0})
     if not order:
-        raise HTTPException(status_code=404, detail="Orden no encontrada")
+        # Search by plate among agendado orders
+        order = await db.orders.find_one(
+            {"plate": query_value, "status": OrderStatus.AGENDADO.value},
+            {"_id": 0}
+        )
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada (revisa el código o la placa)")
     if order["status"] != OrderStatus.AGENDADO.value:
         raise HTTPException(status_code=400, detail=f"La orden no está en estado agendado. Estado actual: {order['status']}")
     

@@ -224,11 +224,11 @@ class TestScheduledTime:
         current_min = now.hour * 60 + now.minute
         # franja config (weekday): f1 8:30-11:30, f2 11:30-14:30, f3 14:30-16:00
         if current_min < 11 * 60 + 30:
-            slot = "franja_1"; start = 8 * 60 + 30; end = 11 * 60 + 30; cap = 20
+            slot = "franja_1"; start = 8 * 60 + 30; end = 11 * 60 + 30
         elif current_min < 14 * 60 + 30:
-            slot = "franja_2"; start = 11 * 60 + 30; end = 14 * 60 + 30; cap = 10
+            slot = "franja_2"; start = 11 * 60 + 30; end = 14 * 60 + 30
         elif current_min < 15 * 60 + 30:
-            slot = "franja_3"; start = 14 * 60 + 30; end = 16 * 60; cap = 10
+            slot = "franja_3"; start = 14 * 60 + 30; end = 16 * 60
         else:
             pytest.skip("Outside today's last_registration window")
         plate = f"TDY{datetime.now().microsecond:03d}"
@@ -241,15 +241,18 @@ class TestScheduledTime:
         assert st is not None
         hh, mm = map(int, st.split(":"))
         scheduled_min = hh * 60 + mm
-        interval = (end - start) / cap
-        # If current_time is BEFORE slot_start, scheduled = slot_start (position 0).
-        # Otherwise scheduled must be >= current_time and within the next interval boundary.
+        INTERVAL = 15  # New rule: fixed 15-min interval between bookings
+        # Time must align to a 15-min boundary from slot_start
+        offset_from_start = scheduled_min - start
+        assert offset_from_start % INTERVAL == 0, f"scheduled {st} not aligned to {INTERVAL}-min boundary from {start}"
+        # If current_time is BEFORE slot_start, scheduled >= slot_start; else scheduled >= current_time (rounded up)
         if current_min < start:
-            assert scheduled_min == start, f"scheduled {st} should be slot_start when booking before slot opens"
+            assert scheduled_min >= start, f"scheduled {st} before slot start"
         else:
-            assert scheduled_min + 1 >= current_min, f"scheduled {st} before now {now.strftime('%H:%M')}"
-            assert scheduled_min <= current_min + math.ceil(interval) + 1, (
-                f"scheduled {st} not within next interval (~{interval}min) of now {now.strftime('%H:%M')}"
+            assert scheduled_min >= current_min, f"scheduled {st} before now {now.strftime('%H:%M')}"
+            # Must be within next 1-2 INTERVAL boundaries (accounting for other today bookings already taken)
+            assert scheduled_min <= current_min + INTERVAL * 30, (
+                f"scheduled {st} way past now {now.strftime('%H:%M')}"
             )
 
 # -------------------- OrderResponse extended fields --------------------

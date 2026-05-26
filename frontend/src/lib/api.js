@@ -53,6 +53,8 @@ export const ordersAPI = {
     
     // Step 3: Inspection
     saveInspection: (data) => api.post('/orders/inspection', data),
+    sendInspectionPhotos: (orderId, additionalRecipients = []) =>
+        api.post(`/orders/${orderId}/send-inspection-photos`, { order_id: orderId, additional_recipients: additionalRecipients }),
     
     // Step 4: Assignment (Coordinator)
     assignTechnician: (data) => api.post('/orders/assign', data),
