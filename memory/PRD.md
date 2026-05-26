@@ -4,23 +4,26 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-05-22
+2026-05-26
 
-## Última Sesión (2026-05-22) — Iteración 5 (Backend+Frontend)
-- **NUEVO (P0):** PIN de Confirmación obligatorio al agendar cita
-  - Default `00000`, configurable por **admin** en `/settings` (sección "PIN de Confirmación de Citas")
-  - Validación 4-10 dígitos numéricos
-  - Campo `data-testid="appointment-pin-input"` en formulario de Nueva Cita
-- **NUEVO (P0):** Bloqueo de duplicados por **misma placa + misma fecha** (409 Conflict)
-- **NUEVO (P0):** Hora de cita para HOY = siguiente intervalo libre **después** de la hora actual Colombia (respeta intervalo de franja). Si se agenda antes de que abra el slot, devuelve `slot_start`.
-- **NUEVO (P0):** Componente `LiveTimer` (HH:MM:SS, actualiza cada segundo, congela si `endTime`)
-- **NUEVO (P0):** Cronómetros en vivo en:
-  - `/assign` (DraggableOrderCard): "En taller" (ingreso_at), "Corte" (cutting_started_at→cutting_completed_at), "Técnico" (assigned_at→service_completed_at)
-  - `/cutting` (CuttingView): "En taller" en pending, "En corte" + "En taller" en in-progress
-  - Bahía con orden activa muestra "En taller"
-- **CORREGIDO (P0):** Las 10 bahías ahora son drop-zones funcionales en `/assign` (`useDroppable` de @dnd-kit) — antes no aceptaban drops.
-- **EXTENDIDO:** `OrderResponse` incluye `cutting_status`, `cutting_started_at`, `cutting_completed_at`, `cutting_measurements`, `cutting_notes`, `bahia_id`, `bahia_name`.
-- **CORREGIDO (P0):** PDF de Orden de Pedido en Check-in (`OrderPDFGenerator.js` con jsPDF nativo, sin `autoTable`).
+## Última Sesión (2026-05-26) — Iteración 6
+- **CAMBIO (P0):** Intervalo entre citas ahora es **fijo 15 minutos** entre autos (ya no calculado por capacidad/duración). El sistema busca el próximo hueco libre de 15 min ≥ slot_start (≥ hora actual si es hoy), saltando minutos ya ocupados.
+- **NUEVO (P0):** Check-in busca por **código O placa** del vehículo. Endpoint `POST /api/orders/checkin` ahora acepta ambos en el mismo campo (busca primero por order_code, luego por placa entre órdenes agendadas).
+- **NUEVO (P0):** Envío de **fotos de Revisión 360° por correo** al cliente + coordinadores
+  - Endpoint `POST /api/orders/{id}/send-inspection-photos`
+  - **Backend comprime imágenes con Pillow** (max 1280px, JPEG quality 70%) antes de adjuntar — los originales en alta calidad permanecen en MongoDB
+  - Envía a TODOS los coordinadores automáticamente + email del cliente + recipients adicionales opcionales
+  - Dialog en Inspections.jsx aparece automáticamente tras guardar revisión con fotos
+- **CAMBIO (P0):** En Revisión 360° **se eliminó "Excelente"**. Solo quedan **Bueno, Regular, Malo**.
+- **CAMBIO (P0):** maxPhotos en Revisión 360° pasó de 10 → **20 fotos**.
+
+## Sesión Anterior (2026-05-22) — Iteración 5
+- PIN de Confirmación obligatorio al agendar (configurable por admin)
+- Bloqueo de duplicados por placa+fecha (409)
+- Cronómetros en vivo (LiveTimer HH:MM:SS) en /assign y /cutting
+- 10 Bahías como drop-zones funcionales (useDroppable)
+- OrderResponse extendido (cutting_* y bahia_*)
+- PDF de Orden de Pedido (jsPDF nativo)
 
 ## Sesión Anterior (2026-05-21)
 - **NUEVO:** Módulo de Corte de Piezas (`/cutting`)
