@@ -1020,15 +1020,44 @@ async def checkin_order(data: CheckInRequest, current_user: dict = Depends(requi
     # Try order_code first, then plate (allows asesor to look up vehicles by plate at the door)
     order = await db.orders.find_one({"order_code": query_value}, {"_id": 0})
     if not order:
-        # Search by plate among agendado orders
+        # Search by plate – try AGENDADO first to prefer valid bookings,
+        # then fall back to ANY order so we can show a clear status message.
         order = await db.orders.find_one(
             {"plate": query_value, "status": OrderStatus.AGENDADO.value},
             {"_id": 0}
         )
+        if not order:
+            order = await db.orders.find_one(
+                {"plate": query_value, "status": {"$ne": OrderStatus.DESISTIMIENTO.value}},
+                {"_id": 0}
+            )
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada (revisa el código o la placa)")
     if order["status"] != OrderStatus.AGENDADO.value:
-        raise HTTPException(status_code=400, detail=f"La orden no está en estado agendado. Estado actual: {order['status']}")
+        status_labels = {
+            "ingresado": "Aprobada (lista para Revisión 360°)",
+            "en_revision": "En Revisión 360°",
+            "en_corte": "En Corte de Piezas",
+            "asignado": "Asignada a Técnico",
+            "en_proceso": "Servicio en proceso",
+            "servicio_completado": "Servicio Completado",
+            "terminado_pagado": "Pagada",
+            "entregado": "Entregada",
+            "desistimiento": "Desistida",
+        }
+        current_label = status_labels.get(order["status"], order["status"])
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "type": "already_checked_in",
+                "message": f"Esta orden ya está {current_label}. No se puede repetir el check-in.",
+                "current_status": order["status"],
+                "current_status_label": current_label,
+                "plate": order.get("plate"),
+                "order_code": order.get("order_code"),
+                "client_name": order.get("client_name"),
+            }
+        )
     
     # Validate check-in time based on scheduled time
     scheduled_time = order.get("scheduled_time")
@@ -1142,8 +1171,29 @@ async def assign_technician(data: AssignTechnician, current_user: dict = Depends
     order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    if order["status"] != OrderStatus.EN_REVISION.value:
-        raise HTTPException(status_code=400, detail="La orden debe estar en estado EN_REVISION")
+    # Allow assignment from EN_REVISION (no cutting needed) or EN_CORTE with completed cutting
+    current_status = order["status"]
+    if current_status not in (OrderStatus.EN_REVISION.value, OrderStatus.EN_CORTE.value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"La orden debe estar en Revisión 360° completada o Corte completado. Estado actual: {current_status}"
+        )
+    
+    # If order has cutting services, require cutting completion before assignment
+    cutting_keywords = ["polarizado", "ppf", "ultrasecure", "nanooptik", "huperoptik",
+                        "black_ceramic", "ultraoptik", "ceramic_i3", "matte", "brillante", "wrap"]
+    has_cutting_service = False
+    for svc in (order.get("services") or []):
+        svc_id = (svc.get("service") or "").lower().replace(" ", "_")
+        svc_desc = (svc.get("description") or "").lower()
+        if any(kw in svc_id or kw in svc_desc for kw in cutting_keywords):
+            has_cutting_service = True
+            break
+    if has_cutting_service and order.get("cutting_status") != "completado":
+        raise HTTPException(
+            status_code=400,
+            detail="Esta orden requiere completar el Corte de Piezas antes de asignar al técnico."
+        )
     
     technician = await db.users.find_one({"id": data.technician_id, "role": "tecnico"}, {"_id": 0})
     if not technician:
@@ -1163,7 +1213,7 @@ async def assign_technician(data: AssignTechnician, current_user: dict = Depends
     # Log history
     await log_order_history(
         data.order_id, "TECNICO_ASIGNADO",
-        OrderStatus.EN_REVISION.value, OrderStatus.ASIGNADO.value,
+        current_status, OrderStatus.ASIGNADO.value,
         current_user["id"], current_user["name"],
         {"technician_name": technician["name"], "service_time_minutes": data.service_time_minutes}
     )
@@ -1741,9 +1791,9 @@ async def get_cutting_pending(current_user: dict = Depends(require_roles([UserRo
         "proteccion_ppf", "wrap"
     ]
     
-    # Find orders that are in "ingresado" status and have cutting services
+    # Find orders that finished 360 inspection (en_revision) or are currently in cutting
     orders = await db.orders.find(
-        {"status": {"$in": ["ingresado", "en_corte"]}},
+        {"status": {"$in": ["en_revision", "en_corte"]}},
         {"_id": 0}
     ).to_list(100)
     
@@ -1777,10 +1827,15 @@ async def get_cutting_pending(current_user: dict = Depends(require_roles([UserRo
 
 @api_router.put("/cutting/{order_id}/start")
 async def start_cutting(order_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
-    """Mark cutting as started for an order"""
+    """Mark cutting as started for an order. Must be in en_revision status (after 360 inspection)."""
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") not in ("en_revision", "en_corte"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"La orden debe estar en Revisión 360° completada para iniciar corte. Estado actual: {order.get('status')}"
+        )
     
     await db.orders.update_one(
         {"id": order_id},

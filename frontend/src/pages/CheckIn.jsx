@@ -119,6 +119,21 @@ export const CheckIn = () => {
                     appointmentDate: errorData.appointment_date
                 });
                 toast.error(errorData.message);
+            } else if (errorData && typeof errorData === 'object' && errorData.type === 'already_checked_in') {
+                // Show structured info: the order exists but cannot be checked in again
+                toast.error(errorData.message, { duration: 6000 });
+                setWaitingInfo({
+                    message: errorData.message,
+                    timeRemaining: null,
+                    scheduledTime: null,
+                    slotTime: null,
+                    appointmentDate: null,
+                    alreadyCheckedIn: true,
+                    plate: errorData.plate,
+                    orderCode: errorData.order_code,
+                    clientName: errorData.client_name,
+                    currentStatusLabel: errorData.current_status_label,
+                });
             } else {
                 const message = typeof errorData === 'string' ? errorData : 'Orden no encontrada';
                 toast.error(message);
@@ -311,6 +326,21 @@ export const CheckIn = () => {
             });
 
             toast.success('Ingreso aprobado exitosamente');
+
+            // Auto-download Order PDF
+            try {
+                generateOrderPDF({
+                    ...order,
+                    services: servicesData,
+                    negotiated_value: total,
+                    client_id_number: cedulaNumber || order.client_id_number,
+                });
+                toast.success('Orden PDF descargada');
+            } catch (pdfErr) {
+                console.error('Error generando PDF:', pdfErr);
+                toast.error('No se pudo generar el PDF de la orden');
+            }
+
             setStep(3);
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al procesar el ingreso');
@@ -571,45 +601,92 @@ export const CheckIn = () => {
                 <div className="grid lg:grid-cols-2 gap-6">
                     {/* Waiting Card */}
                     {waitingInfo && (
-                        <Card className="lg:col-span-2 border-yellow-500/50 bg-yellow-500/10">
+                        <Card className={`lg:col-span-2 ${waitingInfo.alreadyCheckedIn ? 'border-red-500/50 bg-red-500/10' : 'border-yellow-500/50 bg-yellow-500/10'}`}>
                             <CardContent className="pt-6">
                                 <div className="flex flex-col items-center text-center space-y-4">
-                                    <div className="w-20 h-20 rounded-full bg-yellow-500/20 flex items-center justify-center">
-                                        <Timer className="w-10 h-10 text-yellow-500 animate-pulse" />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-heading text-2xl text-yellow-500 flex items-center justify-center gap-2">
-                                            <AlertTriangle className="w-6 h-6" />
-                                            Debe Esperar
-                                        </h3>
-                                        
-                                        {/* Hora de la cita */}
-                                        {waitingInfo.scheduledTime && (
-                                            <div className="mt-4 p-4 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/40">
-                                                <p className="text-sm text-muted-foreground">Su cita es a las:</p>
-                                                <p className="text-4xl font-mono font-bold text-cyan-400 mt-1">
-                                                    {waitingInfo.scheduledTime}
+                                    {waitingInfo.alreadyCheckedIn ? (
+                                        <>
+                                            <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center">
+                                                <CheckCircle className="w-10 h-10 text-red-500" />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-heading text-2xl text-red-500 flex items-center justify-center gap-2">
+                                                    <AlertTriangle className="w-6 h-6" />
+                                                    Esta orden ya fue ingresada
+                                                </h3>
+                                                <p className="text-muted-foreground mt-2">No se puede repetir el check-in.</p>
+
+                                                <div className="mt-4 p-4 rounded-lg bg-card border space-y-2 text-left">
+                                                    {waitingInfo.plate && (
+                                                        <div className="flex justify-between">
+                                                            <span className="text-sm text-muted-foreground">Placa:</span>
+                                                            <span className="font-mono font-bold">{waitingInfo.plate}</span>
+                                                        </div>
+                                                    )}
+                                                    {waitingInfo.orderCode && (
+                                                        <div className="flex justify-between">
+                                                            <span className="text-sm text-muted-foreground">Código:</span>
+                                                            <span className="font-mono">{waitingInfo.orderCode}</span>
+                                                        </div>
+                                                    )}
+                                                    {waitingInfo.clientName && (
+                                                        <div className="flex justify-between">
+                                                            <span className="text-sm text-muted-foreground">Cliente:</span>
+                                                            <span>{waitingInfo.clientName}</span>
+                                                        </div>
+                                                    )}
+                                                    {waitingInfo.currentStatusLabel && (
+                                                        <div className="flex justify-between">
+                                                            <span className="text-sm text-muted-foreground">Estado actual:</span>
+                                                            <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-xs font-medium">{waitingInfo.currentStatusLabel}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <Button variant="outline" onClick={() => setWaitingInfo(null)} data-testid="search-another-btn">
+                                                Buscar otra orden
+                                            </Button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="w-20 h-20 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                                                <Timer className="w-10 h-10 text-yellow-500 animate-pulse" />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-heading text-2xl text-yellow-500 flex items-center justify-center gap-2">
+                                                    <AlertTriangle className="w-6 h-6" />
+                                                    Debe Esperar
+                                                </h3>
+                                                
+                                                {/* Hora de la cita */}
+                                                {waitingInfo.scheduledTime && (
+                                                    <div className="mt-4 p-4 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/40">
+                                                        <p className="text-sm text-muted-foreground">Su cita es a las:</p>
+                                                        <p className="text-4xl font-mono font-bold text-cyan-400 mt-1">
+                                                            {waitingInfo.scheduledTime}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Tiempo restante */}
+                                                {waitingInfo.timeRemaining && (
+                                                    <div className="mt-4 p-4 rounded-lg bg-card border">
+                                                        <p className="text-sm text-muted-foreground">Tiempo restante para check-in:</p>
+                                                        <p className="text-3xl font-mono font-bold text-primary mt-1">
+                                                            {waitingInfo.timeRemaining}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                                
+                                                <p className="text-sm text-muted-foreground mt-4">
+                                                    Fecha: {waitingInfo.appointmentDate}
                                                 </p>
                                             </div>
-                                        )}
-                                        
-                                        {/* Tiempo restante */}
-                                        {waitingInfo.timeRemaining && (
-                                            <div className="mt-4 p-4 rounded-lg bg-card border">
-                                                <p className="text-sm text-muted-foreground">Tiempo restante para check-in:</p>
-                                                <p className="text-3xl font-mono font-bold text-primary mt-1">
-                                                    {waitingInfo.timeRemaining}
-                                                </p>
-                                            </div>
-                                        )}
-                                        
-                                        <p className="text-sm text-muted-foreground mt-4">
-                                            Fecha: {waitingInfo.appointmentDate}
-                                        </p>
-                                    </div>
-                                    <Button variant="outline" onClick={() => setWaitingInfo(null)}>
-                                        Buscar otra orden
-                                    </Button>
+                                            <Button variant="outline" onClick={() => setWaitingInfo(null)}>
+                                                Buscar otra orden
+                                            </Button>
+                                        </>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>

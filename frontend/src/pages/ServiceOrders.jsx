@@ -11,13 +11,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Checkbox } from '../components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { StatusBadge } from '../components/StatusBadge';
+import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
-import { SERVICE_LABELS, STATUS_LABELS, formatDateTime } from '../lib/utils';
+import { ORDER_STATUS_LABELS as STATUS_LABELS, SERVICE_LABELS, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
 import { Plus, Wrench, Car, User, Clock, ArrowRight, Play, CheckCircle2 } from 'lucide-react';
 
 const SERVICES = Object.entries(SERVICE_LABELS).map(([value, label]) => ({ value, label }));
-const STATUSES = ['agendado', 'en_proceso', 'en_revision', 'terminado'];
+const STATUSES = [
+    'agendado',
+    'ingresado',
+    'en_revision',
+    'en_corte',
+    'asignado',
+    'en_proceso',
+    'servicio_completado',
+    'entregado',
+];
 
 export const ServiceOrders = () => {
     const { user, isAdmin, isAsesor, isTecnico } = useAuth();
@@ -266,11 +276,11 @@ export const ServiceOrders = () => {
 
             {/* Kanban View */}
             <div className="overflow-x-auto pb-4 -mx-4 px-4">
-                <div className="flex gap-4 min-w-max md:min-w-0 md:grid md:grid-cols-4">
+                <div className="flex gap-4 min-w-max md:min-w-0 md:grid md:grid-cols-4 lg:grid-cols-8">
                     {STATUSES.map((status) => (
                         <div key={status} className="w-72 md:w-auto shrink-0">
                             <div className="flex items-center gap-2 mb-3">
-                                <StatusBadge status={status} />
+                                <OrderStatusBadge status={status} />
                                 <span className="text-sm text-muted-foreground">
                                     ({ordersByStatus[status].length})
                                 </span>
