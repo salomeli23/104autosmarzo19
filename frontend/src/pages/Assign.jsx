@@ -26,6 +26,7 @@ import {
     useSensor,
     useSensors,
     DragOverlay,
+    useDroppable,
 } from '@dnd-kit/core';
 import {
     arrayMove,
@@ -35,6 +36,7 @@ import {
     useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { LiveTimer } from '../components/LiveTimer';
 
 // Draggable Order Card Component
 const DraggableOrderCard = ({ order, onAssign, onDesist }) => {
@@ -119,6 +121,36 @@ const DraggableOrderCard = ({ order, onAssign, onDesist }) => {
                             {order.bahia_name}
                         </div>
                     )}
+
+                    {/* Live timers */}
+                    <div className="mt-2 flex flex-wrap gap-3">
+                        {order.ingreso_at && (
+                            <LiveTimer
+                                startTime={order.ingreso_at}
+                                label="En taller"
+                                colorClass="text-blue-400"
+                                testId={`timer-ingreso-${order.id}`}
+                            />
+                        )}
+                        {order.cutting_started_at && (
+                            <LiveTimer
+                                startTime={order.cutting_started_at}
+                                endTime={order.cutting_status === 'completado' ? order.cutting_completed_at : null}
+                                label="Corte"
+                                colorClass="text-yellow-400"
+                                testId={`timer-corte-${order.id}`}
+                            />
+                        )}
+                        {order.assigned_at && (
+                            <LiveTimer
+                                startTime={order.assigned_at}
+                                endTime={order.service_completed_at || null}
+                                label="Técnico"
+                                colorClass="text-purple-400"
+                                testId={`timer-tecnico-${order.id}`}
+                            />
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex flex-col gap-1">
@@ -149,17 +181,23 @@ const DraggableOrderCard = ({ order, onAssign, onDesist }) => {
 // Bahia Drop Zone Component
 const BahiaDropZone = ({ bahia, onRelease }) => {
     const hasOrder = bahia.current_order !== null;
+    const { isOver, setNodeRef } = useDroppable({ id: bahia.id, disabled: hasOrder });
     
     return (
-        <div className={`p-3 rounded-lg border-2 transition-all ${
-            hasOrder 
-                ? 'border-cyan-500/50 bg-cyan-500/5' 
-                : 'border-dashed border-muted-foreground/30 bg-muted/20'
-        }`}>
+        <div
+            ref={setNodeRef}
+            data-testid={`bahia-drop-${bahia.id}`}
+            className={`p-3 rounded-lg border-2 transition-all ${
+                hasOrder 
+                    ? 'border-cyan-500/50 bg-cyan-500/5' 
+                    : isOver
+                        ? 'border-primary bg-primary/10 scale-[1.02]'
+                        : 'border-dashed border-muted-foreground/30 bg-muted/20 hover:border-muted-foreground/50'
+            }`}>
             <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                     <Warehouse className="w-4 h-4 text-cyan-400" />
-                    <span className="font-medium text-sm">{bahia.name}</span>
+                    <span className="font-bold text-sm">{bahia.name}</span>
                 </div>
                 {hasOrder && (
                     <Button
@@ -167,6 +205,7 @@ const BahiaDropZone = ({ bahia, onRelease }) => {
                         variant="ghost"
                         className="h-6 text-xs text-red-500 hover:bg-red-500/10"
                         onClick={() => onRelease(bahia.id)}
+                        data-testid={`release-bahia-${bahia.id}`}
                     >
                         Liberar
                     </Button>
@@ -186,6 +225,16 @@ const BahiaDropZone = ({ bahia, onRelease }) => {
                     <p className="text-xs text-muted-foreground">
                         {bahia.current_order.client_name}
                     </p>
+                    {bahia.current_order.ingreso_at && (
+                        <div className="mt-1">
+                            <LiveTimer
+                                startTime={bahia.current_order.ingreso_at}
+                                label="En taller"
+                                colorClass="text-blue-400"
+                                testId={`bahia-timer-${bahia.id}`}
+                            />
+                        </div>
+                    )}
                 </div>
             ) : (
                 <div className="h-16 flex items-center justify-center text-muted-foreground text-xs">

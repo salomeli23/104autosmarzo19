@@ -234,6 +234,7 @@ class OrderCreate(BaseModel):
     services: List[ServiceItem]
     negotiated_value: float
     notes: Optional[str] = None
+    confirmation_pin: Optional[str] = None  # PIN de confirmación para evitar duplicados
 
 class OrderResponse(BaseModel):
     id: str
@@ -283,6 +284,15 @@ class OrderResponse(BaseModel):
     # Entrega data
     delivery_photo_url: Optional[str] = None
     delivered_at: Optional[str] = None
+    # Cutting data
+    cutting_status: Optional[str] = None
+    cutting_started_at: Optional[str] = None
+    cutting_completed_at: Optional[str] = None
+    cutting_measurements: Optional[str] = None
+    cutting_notes: Optional[str] = None
+    # Bahia data
+    bahia_id: Optional[str] = None
+    bahia_name: Optional[str] = None
     # Metadata
     created_by: str
     created_at: str
@@ -415,6 +425,28 @@ async def get_technicians(current_user: dict = Depends(get_current_user)):
 @api_router.post("/orders", response_model=OrderResponse)
 async def create_order(order: OrderCreate, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR]))):
     """Step 1: Create new appointment - Status: AGENDADO"""
+    # Validate confirmation PIN
+    settings = await db.settings.find_one({"key": "booking_pin"}, {"_id": 0})
+    expected_pin = (settings or {}).get("value", "00000")
+    
+    if not order.confirmation_pin:
+        raise HTTPException(status_code=400, detail="PIN de confirmación requerido")
+    if str(order.confirmation_pin).strip() != str(expected_pin).strip():
+        raise HTTPException(status_code=400, detail="PIN de confirmación incorrecto")
+    
+    # Block duplicate: same plate + same date (excluding desistimiento)
+    plate_upper = order.plate.upper()
+    existing = await db.orders.find_one({
+        "plate": plate_upper,
+        "date": order.date,
+        "status": {"$nin": ["desistimiento"]}
+    })
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ya existe una cita para la placa {plate_upper} en la fecha {order.date} (código: {existing.get('order_code', 'N/A')})"
+        )
+    
     order_id = str(uuid.uuid4())
     order_code = generate_order_code()
     qr_code = generate_qr_code(order_code)
@@ -732,7 +764,14 @@ def get_slot_info(slot_id: str, date_str: str):
     return None
 
 async def calculate_scheduled_time(date_str: str, slot_id: str):
-    """Calculate specific scheduled time based on position in the slot queue"""
+    """Calculate specific scheduled time.
+    
+    - Position derived from existing orders in the slot.
+    - If the booking is for TODAY, the scheduled time is forced to be the next
+      free interval AFTER the current Colombia local time (respecting the slot's
+      interval per vehicle).
+    """
+    import math
     slot_info = get_slot_info(slot_id, date_str)
     if not slot_info:
         return None
@@ -748,18 +787,32 @@ async def calculate_scheduled_time(date_str: str, slot_id: str):
     start_hour, start_min = map(int, slot_info["start"].split(":"))
     end_hour, end_min = map(int, slot_info["end"].split(":"))
     
-    # Calculate total minutes in slot
     start_total_min = start_hour * 60 + start_min
     end_total_min = end_hour * 60 + end_min
     slot_duration_min = end_total_min - start_total_min
     
-    # Calculate interval per vehicle
     capacity = slot_info["capacity"]
     interval_min = slot_duration_min / capacity
     
-    # Calculate this vehicle's scheduled time
-    position = existing_count  # 0-indexed position
+    position = existing_count
+    
+    # If booking for TODAY, ensure scheduled time is in the future
+    now_colombia = get_colombia_time()
+    today_str = now_colombia.strftime("%Y-%m-%d")
+    
+    if date_str == today_str:
+        current_total_min = now_colombia.hour * 60 + now_colombia.minute
+        # Determine minimum position needed so scheduled time is AFTER current time
+        if current_total_min > start_total_min:
+            offset = current_total_min - start_total_min
+            min_position_for_now = math.ceil(offset / interval_min)
+            position = max(position, min_position_for_now)
+    
     scheduled_min = start_total_min + (position * interval_min)
+    
+    # Safety: don't exceed slot end
+    if scheduled_min >= end_total_min:
+        scheduled_min = end_total_min - interval_min
     
     scheduled_hour = int(scheduled_min // 60)
     scheduled_minute = int(scheduled_min % 60)
@@ -1380,6 +1433,31 @@ async def get_order_history(order_id: str, current_user: dict = Depends(get_curr
     """Get complete history of an order for traceability"""
     history = await db.order_history.find({"order_id": order_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
     return history
+
+# ==================== SETTINGS ====================
+class BookingPinUpdate(BaseModel):
+    pin: str
+
+@api_router.get("/settings/booking-pin")
+async def get_booking_pin(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Get the current booking confirmation PIN (admin only)."""
+    settings = await db.settings.find_one({"key": "booking_pin"}, {"_id": 0})
+    pin = (settings or {}).get("value", "00000")
+    return {"pin": pin}
+
+@api_router.put("/settings/booking-pin")
+async def update_booking_pin(data: BookingPinUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Update the booking confirmation PIN (admin only)."""
+    pin = (data.pin or "").strip()
+    if not pin or len(pin) < 4 or len(pin) > 10 or not pin.isdigit():
+        raise HTTPException(status_code=400, detail="El PIN debe ser numérico de 4 a 10 dígitos")
+    
+    await db.settings.update_one(
+        {"key": "booking_pin"},
+        {"$set": {"key": "booking_pin", "value": pin, "updated_at": datetime.now(timezone.utc).isoformat(), "updated_by": current_user["id"]}},
+        upsert=True
+    )
+    return {"message": "PIN actualizado correctamente", "pin": pin}
 
 # ==================== SEED DATA ====================
 @api_router.post("/seed/users")

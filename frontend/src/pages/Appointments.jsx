@@ -57,6 +57,7 @@ export const Appointments = () => {
         model: '',
         time_slot: '',
         notes: '',
+        confirmation_pin: '',
     });
 
     // Fetch service catalog on mount
@@ -282,6 +283,7 @@ export const Appointments = () => {
             model: '',
             time_slot: '',
             notes: '',
+            confirmation_pin: '',
         });
         setSelectedServices([]);
         setCustomServiceName('');
@@ -315,6 +317,11 @@ export const Appointments = () => {
             return;
         }
 
+        if (!formData.confirmation_pin || formData.confirmation_pin.trim() === '') {
+            toast.error('Ingresa el PIN de confirmación para agendar');
+            return;
+        }
+
         try {
             const servicesData = selectedServices.map(svc => ({
                 service: svc.serviceId,
@@ -338,6 +345,7 @@ export const Appointments = () => {
                 services: servicesData,
                 negotiated_value: total,
                 notes: formData.notes || null,
+                confirmation_pin: formData.confirmation_pin.trim(),
             };
 
             const response = await ordersAPI.create(submitData);
@@ -1055,11 +1063,34 @@ export const Appointments = () => {
                                 />
                             </div>
 
+                            {/* Confirmation PIN */}
+                            <div className="space-y-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                                <Label htmlFor="confirmation_pin" className="flex items-center gap-2 text-amber-400">
+                                    <AlertCircle className="w-4 h-4" />
+                                    PIN de Confirmación *
+                                </Label>
+                                <Input
+                                    id="confirmation_pin"
+                                    type="password"
+                                    inputMode="numeric"
+                                    autoComplete="off"
+                                    maxLength={10}
+                                    value={formData.confirmation_pin}
+                                    onChange={(e) => setFormData(prev => ({ ...prev, confirmation_pin: e.target.value.replace(/\D/g, '') }))}
+                                    placeholder="Ingresa el PIN para confirmar"
+                                    required
+                                    data-testid="appointment-pin-input"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Se requiere PIN para evitar duplicados. Configúralo en Ajustes (Admin).
+                                </p>
+                            </div>
+
                             <Button 
                                 type="submit" 
                                 className="w-full brand-glow" 
                                 data-testid="submit-appointment-btn"
-                                disabled={!slotsAvailability?.is_open || selectedServices.length === 0}
+                                disabled={!slotsAvailability?.is_open || selectedServices.length === 0 || !formData.confirmation_pin}
                             >
                                 <DollarSign className="w-4 h-4 mr-2" />
                                 Agendar Cita - {formatCurrency(calculateTotal())}

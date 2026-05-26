@@ -9,6 +9,7 @@ import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package } from 'lucide-react';
+import { LiveTimer } from '../components/LiveTimer';
 
 const CuttingView = () => {
     const [orders, setOrders] = useState([]);
@@ -169,6 +170,16 @@ const CuttingView = () => {
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
                                                 <p className="text-sm text-muted-foreground">Cliente: {order.client_name}</p>
                                                 <p className="text-xs text-muted-foreground">Código: {order.order_code}</p>
+                                                {order.ingreso_at && (
+                                                    <div className="mt-1">
+                                                        <LiveTimer
+                                                            startTime={order.ingreso_at}
+                                                            label="En taller"
+                                                            colorClass="text-blue-400"
+                                                            testId={`pending-timer-ingreso-${order.id}`}
+                                                        />
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                         
@@ -239,6 +250,24 @@ const CuttingView = () => {
                                                         Iniciado: {new Date(order.cutting_started_at).toLocaleTimeString()}
                                                     </p>
                                                 )}
+                                                <div className="mt-2 flex flex-wrap gap-3">
+                                                    {order.ingreso_at && (
+                                                        <LiveTimer
+                                                            startTime={order.ingreso_at}
+                                                            label="En taller"
+                                                            colorClass="text-blue-400"
+                                                            testId={`cutting-timer-ingreso-${order.id}`}
+                                                        />
+                                                    )}
+                                                    {order.cutting_started_at && (
+                                                        <LiveTimer
+                                                            startTime={order.cutting_started_at}
+                                                            label="En corte"
+                                                            colorClass="text-yellow-400"
+                                                            testId={`cutting-timer-${order.id}`}
+                                                        />
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                         

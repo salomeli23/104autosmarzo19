@@ -120,6 +120,12 @@ export const seedAPI = {
     bahias: () => api.post('/seed/bahias'),
 };
 
+// Settings (admin)
+export const settingsAPI = {
+    getBookingPin: () => api.get('/settings/booking-pin'),
+    updateBookingPin: (pin) => api.put('/settings/booking-pin', { pin }),
+};
+
 // Legacy API aliases for backwards compatibility
 export const appointmentsAPI = {
     getAll: (date) => api.get('/orders', { params: { date } }),

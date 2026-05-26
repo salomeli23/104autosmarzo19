@@ -1,17 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { usersAPI } from '../lib/api';
+import { usersAPI, settingsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ROLE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Settings as SettingsIcon, Users, Shield, User } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff } from 'lucide-react';
 
 export const Settings = () => {
     const { user } = useAuth();
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
+
+    // Booking PIN
+    const [bookingPin, setBookingPin] = useState('');
+    const [newPin, setNewPin] = useState('');
+    const [confirmPin, setConfirmPin] = useState('');
+    const [showPin, setShowPin] = useState(false);
+    const [pinLoading, setPinLoading] = useState(false);
+    const [pinSaving, setPinSaving] = useState(false);
 
     useEffect(() => {
         const fetchUsers = async () => {
@@ -26,6 +36,44 @@ export const Settings = () => {
         };
         fetchUsers();
     }, []);
+
+    useEffect(() => {
+        const fetchPin = async () => {
+            try {
+                setPinLoading(true);
+                const res = await settingsAPI.getBookingPin();
+                setBookingPin(res.data?.pin || '');
+            } catch (error) {
+                console.error('Error fetching PIN:', error);
+            } finally {
+                setPinLoading(false);
+            }
+        };
+        fetchPin();
+    }, []);
+
+    const handleSavePin = async () => {
+        if (!newPin || newPin.length < 4) {
+            toast.error('El PIN debe tener al menos 4 dígitos');
+            return;
+        }
+        if (newPin !== confirmPin) {
+            toast.error('Los PINs no coinciden');
+            return;
+        }
+        try {
+            setPinSaving(true);
+            const res = await settingsAPI.updateBookingPin(newPin);
+            setBookingPin(res.data?.pin || newPin);
+            setNewPin('');
+            setConfirmPin('');
+            toast.success('PIN actualizado correctamente');
+        } catch (error) {
+            toast.error(error.response?.data?.detail || 'Error al actualizar PIN');
+        } finally {
+            setPinSaving(false);
+        }
+    };
 
     const handleRoleChange = async (userId, newRole) => {
         try {
@@ -57,6 +105,80 @@ export const Settings = () => {
                     Administra usuarios y configuraciones del sistema
                 </p>
             </div>
+
+            {/* Booking PIN Configuration */}
+            <Card className="card-hover border-amber-500/30">
+                <CardHeader>
+                    <CardTitle className="font-heading text-xl flex items-center gap-2">
+                        <KeyRound className="w-5 h-5 text-amber-400" />
+                        PIN de Confirmación de Citas
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm text-muted-foreground mb-4">
+                        El PIN es solicitado al agendar una nueva cita para prevenir duplicados.
+                        Compártelo solo con asesores autorizados.
+                    </p>
+
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-3 p-4 rounded-lg bg-muted/50 border border-border">
+                            <div className="flex-1">
+                                <p className="text-xs text-muted-foreground mb-1">PIN actual</p>
+                                <p className="font-mono text-2xl font-bold tracking-widest text-amber-400" data-testid="current-pin-display">
+                                    {pinLoading ? '••••' : (showPin ? bookingPin : '•'.repeat(bookingPin.length || 5))}
+                                </p>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowPin(prev => !prev)}
+                                data-testid="toggle-pin-visibility"
+                            >
+                                {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </Button>
+                        </div>
+
+                        <div className="grid sm:grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="new-pin">Nuevo PIN (4-10 dígitos)</Label>
+                                <Input
+                                    id="new-pin"
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={10}
+                                    value={newPin}
+                                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                                    placeholder="Nuevo PIN"
+                                    data-testid="new-pin-input"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="confirm-pin">Confirmar PIN</Label>
+                                <Input
+                                    id="confirm-pin"
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={10}
+                                    value={confirmPin}
+                                    onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                                    placeholder="Repite el PIN"
+                                    data-testid="confirm-pin-input"
+                                />
+                            </div>
+                        </div>
+
+                        <Button
+                            onClick={handleSavePin}
+                            disabled={pinSaving || !newPin || newPin !== confirmPin}
+                            className="w-full sm:w-auto"
+                            data-testid="save-pin-btn"
+                        >
+                            <KeyRound className="w-4 h-4 mr-2" />
+                            {pinSaving ? 'Guardando...' : 'Actualizar PIN'}
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
 
             {/* User Management */}
             <Card className="card-hover">
