@@ -7,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Dict
 import uuid
 from datetime import datetime, timezone, timedelta
 import jwt
@@ -290,6 +290,9 @@ class OrderResponse(BaseModel):
     cutting_completed_at: Optional[str] = None
     cutting_measurements: Optional[str] = None
     cutting_notes: Optional[str] = None
+    cutting_part_measurements: Optional[Dict[str, str]] = None  # {part_id: "120x60 cm"}
+    ppf_vehicle_serial: Optional[str] = None
+    ppf_vehicle_model: Optional[str] = None
     # Bahia data
     bahia_id: Optional[str] = None
     bahia_name: Optional[str] = None
@@ -1860,9 +1863,26 @@ async def start_cutting(order_id: str, current_user: dict = Depends(require_role
     
     return {"message": "Corte iniciado", "status": "en_corte"}
 
+class CuttingCompleteRequest(BaseModel):
+    measurements: Optional[str] = None  # legacy free-text
+    notes: Optional[str] = None
+    part_measurements: Optional[Dict[str, str]] = None  # {part_id: "120x60 cm"}
+    ppf_vehicle_serial: Optional[str] = None
+    ppf_vehicle_model: Optional[str] = None
+
+
 @api_router.put("/cutting/{order_id}/complete")
-async def complete_cutting(order_id: str, measurements: Optional[str] = None, notes: Optional[str] = None, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
-    """Mark cutting as completed. Order must be currently in 'en_corte' status."""
+async def complete_cutting(
+    order_id: str,
+    payload: Optional[CuttingCompleteRequest] = None,
+    measurements: Optional[str] = None,
+    notes: Optional[str] = None,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))
+):
+    """Mark cutting as completed. Order must be currently in 'en_corte' status.
+    
+    Accepts either a JSON body (preferred) or legacy query params (measurements, notes).
+    """
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
@@ -1872,16 +1892,47 @@ async def complete_cutting(order_id: str, measurements: Optional[str] = None, no
             detail=f"Solo se puede completar corte si la orden está en estado 'en_corte'. Estado actual: {order.get('status')}"
         )
     
-    await db.orders.update_one(
-        {"id": order_id},
-        {"$set": {
-            "cutting_status": "completado",
-            "cutting_completed_at": datetime.now(timezone.utc).isoformat(),
-            "cutting_completed_by": current_user["id"],
-            "cutting_measurements": measurements,
-            "cutting_notes": notes
-        }}
-    )
+    # Resolve fields with body taking precedence over query params
+    p = payload or CuttingCompleteRequest()
+    final_measurements = p.measurements or measurements
+    final_notes = p.notes or notes
+    part_measurements = p.part_measurements or {}
+    ppf_vehicle_serial = (p.ppf_vehicle_serial or "").strip() or None
+    ppf_vehicle_model = (p.ppf_vehicle_model or "").strip() or None
+    
+    # If part_measurements provided but no aggregated measurements, build a readable summary
+    if part_measurements and not final_measurements:
+        labels = {
+            "panoramico": "Panorámico",
+            "vidrio_copiloto": "Vidrio Copiloto",
+            "vidrio_piloto": "Vidrio Piloto",
+            "vidrio_trasero": "Vidrio Trasero",
+            "vidrio_trasero_copiloto": "Vidrio Trasero Copiloto",
+            "trasero": "Trasero",
+            "luneta": "Luneta",
+            "sunroof": "Sunroof",
+            "custodias": "Custodias",
+        }
+        parts_text = []
+        for k, v in part_measurements.items():
+            if v and str(v).strip():
+                parts_text.append(f"{labels.get(k, k)}: {v}")
+        final_measurements = "; ".join(parts_text)
+    
+    update_fields = {
+        "cutting_status": "completado",
+        "cutting_completed_at": datetime.now(timezone.utc).isoformat(),
+        "cutting_completed_by": current_user["id"],
+        "cutting_measurements": final_measurements,
+        "cutting_notes": final_notes,
+        "cutting_part_measurements": part_measurements or None,
+    }
+    if ppf_vehicle_serial is not None:
+        update_fields["ppf_vehicle_serial"] = ppf_vehicle_serial
+    if ppf_vehicle_model is not None:
+        update_fields["ppf_vehicle_model"] = ppf_vehicle_model
+    
+    await db.orders.update_one({"id": order_id}, {"$set": update_fields})
     
     # Create alert for coordinator
     await db.alerts.insert_one({

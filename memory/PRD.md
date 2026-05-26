@@ -6,14 +6,21 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-05-26
 
-## Última Sesión (2026-05-26) — Iteración 7 (Flujo Estricto + PDF Auto)
-- **NUEVO (P0):** **Descarga automática del PDF de Orden** al aprobar el check-in. El navegador descarga `orden_pedido_*.pdf` sin clic adicional.
-- **NUEVO (P0):** **Error estructurado** al intentar buscar una orden ya ingresada: muestra card roja con placa, código, cliente, estado actual ('Aprobada (lista para Revisión 360°)', 'En Revisión 360°', etc.) y botón "Buscar otra orden". La búsqueda por placa ahora encuentra órdenes en cualquier estado (excepto desistidas) para poder mostrar este mensaje.
-- **NUEVO (P0):** **Bloqueo de asignación al técnico** si la orden tiene servicio de polarizado/PPF/ultrasecure/etc. y `cutting_status != 'completado'`. Devuelve 400 con mensaje claro.
-- **CAMBIO (P0):** Módulo de **Corte ahora consume órdenes en estado `en_revision`** (después de la inspección 360°), no `ingresado`. Esto sigue el flujo correcto: check-in → revisión 360° → corte → asignación → servicio.
-- **NUEVO:** `/cutting/{id}/start` valida estado `en_revision` o `en_corte`. `/cutting/{id}/complete` valida estado `en_corte`.
-- **CAMBIO:** Kanban `/service-orders` muestra **8 columnas con todos los estados del flujo**: Agendado, Ingresado, En Revisión, En Corte, Asignado, En Proceso, Servicio Completado, Facturado y Entregado.
-- **NUEVO:** Label "En Corte" añadido a `ORDER_STATUS_LABELS` y color pink.
+## Última Sesión (2026-05-26 — PM) — Iteración 8 (Medidas y PPF)
+- **NUEVO (P0):** En "Completar Corte" ahora se piden **9 medidas por pieza (cm)**: Panorámico, Vidrio Copiloto, Vidrio Piloto, Vidrio Trasero, Vidrio Trasero Copiloto, Trasero, Luneta, Sunroof, Custodias. Las piezas seleccionadas en el check-in resaltan con borde cyan.
+- **NUEVO (P0):** Campo de **Observación** (textarea) en Completar Corte.
+- **NUEVO (P0):** Para servicios **PPF**, se solicita **Serie y Modelo del vehículo** (campos requeridos). Se guarda en `ppf_vehicle_serial` y `ppf_vehicle_model` en la orden.
+- **CAMBIO:** Endpoint `PUT /api/cutting/{id}/complete` ahora acepta JSON body con `part_measurements`, `notes`, `ppf_vehicle_serial`, `ppf_vehicle_model` (manteniendo compat con query params legacy).
+- **CAMBIO:** El backend genera automáticamente `cutting_measurements` (texto legible) concatenando las medidas por pieza si no se envía explícito.
+- **CONFIRMADO:** Solo hay 10 bahías activas en BD (Bahía 1-10).
+
+## Última Sesión (2026-05-26 — AM) — Iteración 7 (Flujo Estricto + PDF Auto)
+- Descarga automática del PDF al aprobar el check-in
+- Error estructurado al buscar orden ya ingresada (card roja con datos completos)
+- Bloqueo de asignación al técnico si polarizado/PPF no completó corte
+- Corte ahora consume órdenes en estado `en_revision` (después de Revisión 360°)
+- Validaciones de estado en `/cutting/{id}/start` y `/cutting/{id}/complete`
+- Kanban /service-orders con 8 columnas etiquetadas
 
 ## Sesión Anterior (2026-05-26) — Iteración 6
 - Intervalo fijo 15 min entre citas

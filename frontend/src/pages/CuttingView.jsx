@@ -16,8 +16,39 @@ const CuttingView = () => {
     const [loading, setLoading] = useState(true);
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [completeDialog, setCompleteDialog] = useState(false);
-    const [measurements, setMeasurements] = useState('');
+    const [partMeasurements, setPartMeasurements] = useState({});
     const [notes, setNotes] = useState('');
+    const [ppfSerial, setPpfSerial] = useState('');
+    const [ppfModel, setPpfModel] = useState('');
+
+    // Partes del vehículo (mismo set que el check-in)
+    const VEHICLE_PARTS = [
+        { id: 'panoramico', label: 'Panorámico' },
+        { id: 'vidrio_copiloto', label: 'Vidrio Copiloto' },
+        { id: 'vidrio_piloto', label: 'Vidrio Piloto' },
+        { id: 'vidrio_trasero', label: 'Vidrio Trasero' },
+        { id: 'vidrio_trasero_copiloto', label: 'Vidrio Trasero Copiloto' },
+        { id: 'trasero', label: 'Trasero' },
+        { id: 'luneta', label: 'Luneta' },
+        { id: 'sunroof', label: 'Sunroof' },
+        { id: 'custodias', label: 'Custodias' },
+    ];
+
+    const orderHasPPF = (order) => {
+        const services = order?.cutting_services || order?.services || [];
+        return services.some(s => {
+            const txt = `${s.name || ''} ${s.description || ''} ${s.service || ''}`.toLowerCase();
+            return txt.includes('ppf') || txt.includes('proteccion') || txt.includes('protección');
+        });
+    };
+
+    // Parts already selected during check-in for this order's cutting services
+    const orderSelectedParts = (order) => {
+        const set = new Set();
+        const services = order?.cutting_services || [];
+        services.forEach(s => (s.parts || []).forEach(p => set.add(p)));
+        return set;
+    };
 
     const fetchOrders = useCallback(async () => {
         try {
@@ -51,17 +82,53 @@ const CuttingView = () => {
     const handleCompleteCutting = async () => {
         if (!selectedOrder) return;
         
+        // Validation: at least one part must have a measurement
+        const filled = Object.values(partMeasurements).filter(v => v && String(v).trim()).length;
+        if (filled === 0) {
+            toast.error('Ingresa al menos una medida de pieza');
+            return;
+        }
+        
+        const isPPF = orderHasPPF(selectedOrder);
+        if (isPPF && (!ppfSerial.trim() || !ppfModel.trim())) {
+            toast.error('Para servicios PPF debes ingresar serie y modelo del vehículo');
+            return;
+        }
+        
         try {
-            await cuttingAPI.complete(selectedOrder.id, measurements, notes);
+            await cuttingAPI.complete(selectedOrder.id, {
+                part_measurements: partMeasurements,
+                notes: notes || null,
+                ppf_vehicle_serial: isPPF ? ppfSerial.trim() : null,
+                ppf_vehicle_model: isPPF ? ppfModel.trim() : null,
+            });
             toast.success('Corte completado - Listo para asignación');
             setCompleteDialog(false);
             setSelectedOrder(null);
-            setMeasurements('');
+            setPartMeasurements({});
             setNotes('');
+            setPpfSerial('');
+            setPpfModel('');
             fetchOrders();
         } catch (error) {
-            toast.error('Error al completar corte');
+            toast.error(error.response?.data?.detail || 'Error al completar corte');
         }
+    };
+
+    const openCompleteDialog = (order) => {
+        setSelectedOrder(order);
+        // Pre-fill empty measurements only for parts that were selected at check-in
+        const selectedSet = orderSelectedParts(order);
+        const initial = {};
+        VEHICLE_PARTS.forEach(p => {
+            if (selectedSet.has(p.id)) initial[p.id] = '';
+        });
+        // If none was explicitly selected, leave object empty so user can enter freely
+        setPartMeasurements(initial);
+        setNotes('');
+        setPpfSerial(order?.ppf_vehicle_serial || '');
+        setPpfModel(order?.ppf_vehicle_model || '');
+        setCompleteDialog(true);
     };
 
     const getStatusBadge = (order) => {
@@ -292,11 +359,9 @@ const CuttingView = () => {
                                         </div>
                                         
                                         <Button 
-                                            onClick={() => {
-                                                setSelectedOrder(order);
-                                                setCompleteDialog(true);
-                                            }}
+                                            onClick={() => openCompleteDialog(order)}
                                             className="bg-green-600 hover:bg-green-700"
+                                            data-testid={`complete-cutting-btn-${order.id}`}
                                         >
                                             <CheckCircle className="w-4 h-4 mr-2" />
                                             Completar Corte
@@ -378,7 +443,7 @@ const CuttingView = () => {
 
             {/* Complete Dialog */}
             <Dialog open={completeDialog} onOpenChange={setCompleteDialog}>
-                <DialogContent>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <CheckCircle className="w-5 h-5 text-green-500" />
@@ -390,32 +455,86 @@ const CuttingView = () => {
                             <div className="p-4 rounded-lg bg-muted/50">
                                 <p className="font-bold">{selectedOrder.plate}</p>
                                 <p className="text-muted-foreground">{selectedOrder.brand} {selectedOrder.model}</p>
+                                <p className="text-xs text-muted-foreground">Cliente: {selectedOrder.client_name}</p>
                             </div>
-                            
-                            <div className="space-y-2">
-                                <Label htmlFor="measurements" className="flex items-center gap-2">
+
+                            {/* PPF: serie y modelo del carro */}
+                            {orderHasPPF(selectedOrder) && (
+                                <div className="space-y-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                                    <Label className="flex items-center gap-2 text-amber-400 font-medium">
+                                        <Package className="w-4 h-4" />
+                                        Datos del Vehículo PPF (requeridos)
+                                    </Label>
+                                    <div className="grid sm:grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                            <Label htmlFor="ppf-serial" className="text-xs">Serie del Vehículo</Label>
+                                            <Input
+                                                id="ppf-serial"
+                                                value={ppfSerial}
+                                                onChange={(e) => setPpfSerial(e.target.value)}
+                                                placeholder="Ej: VIN, número de serie"
+                                                data-testid="ppf-serial-input"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label htmlFor="ppf-model" className="text-xs">Modelo</Label>
+                                            <Input
+                                                id="ppf-model"
+                                                value={ppfModel}
+                                                onChange={(e) => setPpfModel(e.target.value)}
+                                                placeholder="Ej: Mazda 3 2024"
+                                                data-testid="ppf-model-input"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Medidas por parte */}
+                            <div className="space-y-3">
+                                <Label className="flex items-center gap-2 font-medium">
                                     <Ruler className="w-4 h-4" />
-                                    Medidas (opcional)
+                                    Medidas por pieza (en centímetros)
                                 </Label>
-                                <Input
-                                    id="measurements"
-                                    value={measurements}
-                                    onChange={(e) => setMeasurements(e.target.value)}
-                                    placeholder="Ej: Panorámico 120x60cm, Laterales 50x40cm"
-                                />
+                                <p className="text-xs text-muted-foreground -mt-1">
+                                    Ingresa la medida de cada pieza cortada (ej: 120x60).
+                                </p>
+                                <div className="grid sm:grid-cols-2 gap-3">
+                                    {VEHICLE_PARTS.map((part) => {
+                                        const wasSelected = orderSelectedParts(selectedOrder).has(part.id);
+                                        return (
+                                            <div key={part.id} className={`space-y-1 p-2 rounded ${wasSelected ? 'bg-cyan-500/5 border border-cyan-500/20' : 'bg-muted/30'}`}>
+                                                <Label htmlFor={`pm-${part.id}`} className="text-xs flex items-center gap-1">
+                                                    {wasSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+                                                    {part.label}
+                                                </Label>
+                                                <Input
+                                                    id={`pm-${part.id}`}
+                                                    value={partMeasurements[part.id] ?? ''}
+                                                    onChange={(e) => setPartMeasurements(prev => ({ ...prev, [part.id]: e.target.value }))}
+                                                    placeholder="Ej: 120x60 cm"
+                                                    className="text-sm h-8"
+                                                    data-testid={`part-measurement-${part.id}`}
+                                                />
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                            
+
+                            {/* Observación general */}
                             <div className="space-y-2">
                                 <Label htmlFor="notes" className="flex items-center gap-2">
                                     <FileText className="w-4 h-4" />
-                                    Notas (opcional)
+                                    Observación
                                 </Label>
                                 <Textarea
                                     id="notes"
                                     value={notes}
                                     onChange={(e) => setNotes(e.target.value)}
-                                    placeholder="Observaciones sobre el corte..."
+                                    placeholder="Observaciones sobre el corte (opcional)..."
                                     rows={3}
+                                    data-testid="cutting-notes-input"
                                 />
                             </div>
                         </div>
@@ -424,7 +543,11 @@ const CuttingView = () => {
                         <Button variant="outline" onClick={() => setCompleteDialog(false)}>
                             Cancelar
                         </Button>
-                        <Button onClick={handleCompleteCutting} className="bg-green-600 hover:bg-green-700">
+                        <Button
+                            onClick={handleCompleteCutting}
+                            className="bg-green-600 hover:bg-green-700"
+                            data-testid="confirm-complete-cutting-btn"
+                        >
                             <CheckCircle className="w-4 h-4 mr-2" />
                             Confirmar Corte Completado
                         </Button>

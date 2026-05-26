@@ -113,7 +113,7 @@ export const bahiasAPI = {
 export const cuttingAPI = {
     getPending: () => api.get('/cutting/pending'),
     start: (orderId) => api.put(`/cutting/${orderId}/start`),
-    complete: (orderId, measurements, notes) => api.put(`/cutting/${orderId}/complete`, null, { params: { measurements, notes } }),
+    complete: (orderId, body) => api.put(`/cutting/${orderId}/complete`, body || {}),
 };
 
 // Seed data
