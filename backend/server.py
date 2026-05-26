@@ -1862,10 +1862,15 @@ async def start_cutting(order_id: str, current_user: dict = Depends(require_role
 
 @api_router.put("/cutting/{order_id}/complete")
 async def complete_cutting(order_id: str, measurements: Optional[str] = None, notes: Optional[str] = None, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
-    """Mark cutting as completed for an order"""
+    """Mark cutting as completed. Order must be currently in 'en_corte' status."""
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") != "en_corte":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Solo se puede completar corte si la orden está en estado 'en_corte'. Estado actual: {order.get('status')}"
+        )
     
     await db.orders.update_one(
         {"id": order_id},

@@ -12,7 +12,17 @@ import pytest
 import requests
 from datetime import datetime, timezone
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "")
+if not BASE_URL:
+    try:
+        with open("/app/frontend/.env") as f:
+            for line in f:
+                if line.startswith("REACT_APP_BACKEND_URL="):
+                    BASE_URL = line.split("=", 1)[1].strip()
+                    break
+    except Exception:
+        pass
+BASE_URL = BASE_URL.rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN = {"email": "admin@polarizadosya.com", "password": "admin123"}

@@ -6,24 +6,26 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-05-26
 
-## Última Sesión (2026-05-26) — Iteración 6
-- **CAMBIO (P0):** Intervalo entre citas ahora es **fijo 15 minutos** entre autos (ya no calculado por capacidad/duración). El sistema busca el próximo hueco libre de 15 min ≥ slot_start (≥ hora actual si es hoy), saltando minutos ya ocupados.
-- **NUEVO (P0):** Check-in busca por **código O placa** del vehículo. Endpoint `POST /api/orders/checkin` ahora acepta ambos en el mismo campo (busca primero por order_code, luego por placa entre órdenes agendadas).
-- **NUEVO (P0):** Envío de **fotos de Revisión 360° por correo** al cliente + coordinadores
-  - Endpoint `POST /api/orders/{id}/send-inspection-photos`
-  - **Backend comprime imágenes con Pillow** (max 1280px, JPEG quality 70%) antes de adjuntar — los originales en alta calidad permanecen en MongoDB
-  - Envía a TODOS los coordinadores automáticamente + email del cliente + recipients adicionales opcionales
-  - Dialog en Inspections.jsx aparece automáticamente tras guardar revisión con fotos
-- **CAMBIO (P0):** En Revisión 360° **se eliminó "Excelente"**. Solo quedan **Bueno, Regular, Malo**.
-- **CAMBIO (P0):** maxPhotos en Revisión 360° pasó de 10 → **20 fotos**.
+## Última Sesión (2026-05-26) — Iteración 7 (Flujo Estricto + PDF Auto)
+- **NUEVO (P0):** **Descarga automática del PDF de Orden** al aprobar el check-in. El navegador descarga `orden_pedido_*.pdf` sin clic adicional.
+- **NUEVO (P0):** **Error estructurado** al intentar buscar una orden ya ingresada: muestra card roja con placa, código, cliente, estado actual ('Aprobada (lista para Revisión 360°)', 'En Revisión 360°', etc.) y botón "Buscar otra orden". La búsqueda por placa ahora encuentra órdenes en cualquier estado (excepto desistidas) para poder mostrar este mensaje.
+- **NUEVO (P0):** **Bloqueo de asignación al técnico** si la orden tiene servicio de polarizado/PPF/ultrasecure/etc. y `cutting_status != 'completado'`. Devuelve 400 con mensaje claro.
+- **CAMBIO (P0):** Módulo de **Corte ahora consume órdenes en estado `en_revision`** (después de la inspección 360°), no `ingresado`. Esto sigue el flujo correcto: check-in → revisión 360° → corte → asignación → servicio.
+- **NUEVO:** `/cutting/{id}/start` valida estado `en_revision` o `en_corte`. `/cutting/{id}/complete` valida estado `en_corte`.
+- **CAMBIO:** Kanban `/service-orders` muestra **8 columnas con todos los estados del flujo**: Agendado, Ingresado, En Revisión, En Corte, Asignado, En Proceso, Servicio Completado, Facturado y Entregado.
+- **NUEVO:** Label "En Corte" añadido a `ORDER_STATUS_LABELS` y color pink.
 
-## Sesión Anterior (2026-05-22) — Iteración 5
-- PIN de Confirmación obligatorio al agendar (configurable por admin)
-- Bloqueo de duplicados por placa+fecha (409)
-- Cronómetros en vivo (LiveTimer HH:MM:SS) en /assign y /cutting
-- 10 Bahías como drop-zones funcionales (useDroppable)
-- OrderResponse extendido (cutting_* y bahia_*)
-- PDF de Orden de Pedido (jsPDF nativo)
+## Sesión Anterior (2026-05-26) — Iteración 6
+- Intervalo fijo 15 min entre citas
+- Check-in busca por código O placa
+- Envío de fotos de Revisión 360° por email (con compresión Pillow)
+- Eliminado "Excelente" del checklist; max 20 fotos
+
+## Sesión Iteración 5 (2026-05-22)
+- PIN de Confirmación, duplicados por placa+fecha
+- LiveTimer en /assign y /cutting
+- 10 Bahías como drop-zones
+- PDF de Orden de Pedido
 
 ## Sesión Anterior (2026-05-21)
 - **NUEVO:** Módulo de Corte de Piezas (`/cutting`)
