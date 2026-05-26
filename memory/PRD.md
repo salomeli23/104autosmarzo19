@@ -4,13 +4,23 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-05-21
+2026-05-22
 
-## Última Sesión (2026-05-21) — Iteración 5
-- **CORREGIDO (P0):** Generación de PDF en Check-in. Error previo `doc.autoTable is not a function` solucionado.
-  - `OrderPDFGenerator.js` reescrito usando únicamente métodos nativos de jsPDF (rect, text, line, save).
-  - Eliminada dependencia de `jspdf-autotable` (incompatible con jsPDF v4).
-  - Validado en navegador (jsPDF 4.2.1) y en Node: PDF de ~4.3KB generado sin errores.
+## Última Sesión (2026-05-22) — Iteración 5 (Backend+Frontend)
+- **NUEVO (P0):** PIN de Confirmación obligatorio al agendar cita
+  - Default `00000`, configurable por **admin** en `/settings` (sección "PIN de Confirmación de Citas")
+  - Validación 4-10 dígitos numéricos
+  - Campo `data-testid="appointment-pin-input"` en formulario de Nueva Cita
+- **NUEVO (P0):** Bloqueo de duplicados por **misma placa + misma fecha** (409 Conflict)
+- **NUEVO (P0):** Hora de cita para HOY = siguiente intervalo libre **después** de la hora actual Colombia (respeta intervalo de franja). Si se agenda antes de que abra el slot, devuelve `slot_start`.
+- **NUEVO (P0):** Componente `LiveTimer` (HH:MM:SS, actualiza cada segundo, congela si `endTime`)
+- **NUEVO (P0):** Cronómetros en vivo en:
+  - `/assign` (DraggableOrderCard): "En taller" (ingreso_at), "Corte" (cutting_started_at→cutting_completed_at), "Técnico" (assigned_at→service_completed_at)
+  - `/cutting` (CuttingView): "En taller" en pending, "En corte" + "En taller" en in-progress
+  - Bahía con orden activa muestra "En taller"
+- **CORREGIDO (P0):** Las 10 bahías ahora son drop-zones funcionales en `/assign` (`useDroppable` de @dnd-kit) — antes no aceptaban drops.
+- **EXTENDIDO:** `OrderResponse` incluye `cutting_status`, `cutting_started_at`, `cutting_completed_at`, `cutting_measurements`, `cutting_notes`, `bahia_id`, `bahia_name`.
+- **CORREGIDO (P0):** PDF de Orden de Pedido en Check-in (`OrderPDFGenerator.js` con jsPDF nativo, sin `autoTable`).
 
 ## Sesión Anterior (2026-05-21)
 - **NUEVO:** Módulo de Corte de Piezas (`/cutting`)
