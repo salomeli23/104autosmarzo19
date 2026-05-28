@@ -260,6 +260,15 @@ export const Assign = () => {
     const [activeId, setActiveId] = useState(null);
     const [priorityList, setPriorityList] = useState([]);
 
+    // Release Bahia dialog state
+    const [releaseDialog, setReleaseDialog] = useState(false);
+    const [releaseBahiaId, setReleaseBahiaId] = useState(null);
+    const [releaseChoice, setReleaseChoice] = useState(null); // 'completed' | 'pending'
+    const [releaseNotes, setReleaseNotes] = useState('');
+    const [releasePin, setReleasePin] = useState('');
+    const [releasePhotos, setReleasePhotos] = useState([]);
+    const [releaseProcessing, setReleaseProcessing] = useState(false);
+
     const sensors = useSensors(
         useSensor(PointerSensor),
         useSensor(KeyboardSensor, {
@@ -346,14 +355,57 @@ export const Assign = () => {
         }
     };
 
-    const handleReleaseBahia = async (bahiaId) => {
+    const handleReleaseBahia = (bahiaId) => {
+        // Open the release dialog (don't directly hit the API)
+        setReleaseBahiaId(bahiaId);
+        setReleaseChoice(null);
+        setReleaseNotes('');
+        setReleasePin('');
+        setReleasePhotos([]);
+        setReleaseDialog(true);
+    };
+
+    const submitRelease = async () => {
+        if (!releaseChoice) {
+            toast.error('Selecciona una opción');
+            return;
+        }
+        if (releaseChoice === 'completed' && !releasePin) {
+            toast.error('Ingresa el PIN para completar el servicio');
+            return;
+        }
+        setReleaseProcessing(true);
         try {
-            await bahiasAPI.release(bahiaId);
-            toast.success('Bahía liberada');
+            const body = {
+                completed: releaseChoice === 'completed',
+                completion_pin: releaseChoice === 'completed' ? releasePin : null,
+                notes: releaseNotes || null,
+                completion_photos: releaseChoice === 'completed' ? releasePhotos : [],
+            };
+            const res = await bahiasAPI.release(releaseBahiaId, body);
+            toast.success(res.data?.message || 'Bahía liberada');
+            setReleaseDialog(false);
             fetchData();
         } catch (error) {
-            toast.error('Error al liberar bahía');
+            toast.error(error.response?.data?.detail || 'Error al liberar bahía');
+        } finally {
+            setReleaseProcessing(false);
         }
+    };
+
+    const handlePhotoCapture = (e) => {
+        const files = Array.from(e.target.files || []);
+        if (releasePhotos.length + files.length > 10) {
+            toast.error('Máximo 10 fotos');
+            return;
+        }
+        files.forEach(f => {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                setReleasePhotos(prev => [...prev, ev.target.result]);
+            };
+            reader.readAsDataURL(f);
+        });
     };
 
     const handleAssign = async () => {
@@ -713,6 +765,133 @@ export const Assign = () => {
                             disabled={processing}
                         >
                             {processing ? 'Procesando...' : 'Confirmar Desistimiento'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Release Bahia Dialog */}
+            <Dialog open={releaseDialog} onOpenChange={setReleaseDialog}>
+                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Warehouse className="w-5 h-5 text-cyan-400" />
+                            Liberar Bahía
+                        </DialogTitle>
+                        <DialogDescription>
+                            ¿El servicio fue concluido o falta algo por terminar?
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {/* Choice */}
+                    <div className="grid grid-cols-2 gap-3 mt-2">
+                        <button
+                            type="button"
+                            onClick={() => setReleaseChoice('completed')}
+                            className={`p-4 rounded-lg border-2 text-left transition-all ${releaseChoice === 'completed' ? 'border-green-500 bg-green-500/10' : 'border-border hover:border-green-500/40'}`}
+                            data-testid="release-choice-completed"
+                        >
+                            <CheckCircle className={`w-5 h-5 mb-2 ${releaseChoice === 'completed' ? 'text-green-500' : 'text-muted-foreground'}`} />
+                            <p className="font-medium">Servicio Concluido</p>
+                            <p className="text-xs text-muted-foreground mt-1">Enviar a Facturación</p>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setReleaseChoice('pending')}
+                            className={`p-4 rounded-lg border-2 text-left transition-all ${releaseChoice === 'pending' ? 'border-yellow-500 bg-yellow-500/10' : 'border-border hover:border-yellow-500/40'}`}
+                            data-testid="release-choice-pending"
+                        >
+                            <AlertTriangle className={`w-5 h-5 mb-2 ${releaseChoice === 'pending' ? 'text-yellow-500' : 'text-muted-foreground'}`} />
+                            <p className="font-medium">Falta algo</p>
+                            <p className="text-xs text-muted-foreground mt-1">La orden vuelve a la cola</p>
+                        </button>
+                    </div>
+
+                    {releaseChoice === 'completed' && (
+                        <div className="space-y-3 mt-2">
+                            <div className="space-y-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                                <Label htmlFor="completion-pin" className="text-amber-400 flex items-center gap-2">
+                                    <AlertTriangle className="w-4 h-4" />
+                                    PIN de Completar Servicio
+                                </Label>
+                                <Input
+                                    id="completion-pin"
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={10}
+                                    value={releasePin}
+                                    onChange={(e) => setReleasePin(e.target.value.replace(/\D/g, ''))}
+                                    placeholder="Ingresa el PIN"
+                                    data-testid="release-pin-input"
+                                />
+                                <p className="text-xs text-muted-foreground">Configurable por admin en /settings (default 11111)</p>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="release-notes">Observaciones del servicio</Label>
+                                <textarea
+                                    id="release-notes"
+                                    className="w-full min-h-[80px] px-3 py-2 rounded-md border border-input bg-background text-sm"
+                                    value={releaseNotes}
+                                    onChange={(e) => setReleaseNotes(e.target.value)}
+                                    placeholder="Detalles del trabajo realizado..."
+                                    data-testid="release-notes-input"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Fotos del servicio terminado ({releasePhotos.length}/10)</Label>
+                                <Input
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    onChange={handlePhotoCapture}
+                                    disabled={releasePhotos.length >= 10}
+                                    data-testid="release-photo-input"
+                                />
+                                {releasePhotos.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                        {releasePhotos.map((p, i) => (
+                                            <div key={i} className="relative w-16 h-16 rounded overflow-hidden border">
+                                                <img src={p} alt={`f${i}`} className="w-full h-full object-cover" />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setReleasePhotos(prev => prev.filter((_, idx) => idx !== i))}
+                                                    className="absolute top-0 right-0 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-bl"
+                                                >×</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {releaseChoice === 'pending' && (
+                        <div className="space-y-2 mt-2">
+                            <Label htmlFor="pending-notes">¿Qué falta?</Label>
+                            <textarea
+                                id="pending-notes"
+                                className="w-full min-h-[80px] px-3 py-2 rounded-md border border-input bg-background text-sm"
+                                value={releaseNotes}
+                                onChange={(e) => setReleaseNotes(e.target.value)}
+                                placeholder="Describe brevemente qué quedó pendiente..."
+                                data-testid="pending-notes-input"
+                            />
+                        </div>
+                    )}
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setReleaseDialog(false)} disabled={releaseProcessing}>
+                            Cancelar
+                        </Button>
+                        <Button
+                            onClick={submitRelease}
+                            disabled={releaseProcessing || !releaseChoice}
+                            className={releaseChoice === 'completed' ? 'bg-green-600 hover:bg-green-700' : ''}
+                            data-testid="release-submit-btn"
+                        >
+                            {releaseProcessing ? 'Procesando...' : (releaseChoice === 'completed' ? 'Completar Servicio' : 'Liberar Bahía')}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

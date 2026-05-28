@@ -4,9 +4,29 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-05-26
+2026-05-28
 
-## Última Sesión (2026-05-26 — PM) — Iteración 8 (Medidas y PPF)
+## Última Sesión (2026-05-28) — Iteración 9 (Liberar Bahía + Legalización Facturación)
+- **NUEVO (P0):** Endpoint `/bahias/{id}/release` ahora acepta body con `completed`, `completion_pin`, `notes`, `completion_photos` (hasta 10). Si `completed=true`:
+  - Valida PIN configurable (default `11111`)
+  - Cambia status de la orden a `servicio_completado` (cola de Facturación)
+  - Guarda fotos en `service_completion_photos`
+  - Envía email al cliente y a todos los coordinadores con fotos comprimidas + observaciones
+  - Si `completed=false` (falta algo): solo libera la bahía, la orden queda asignada esperando otra bahía, guarda en `service_pending_notes`
+- **NUEVO (P0):** PIN de Completar Servicio configurable por admin en `/settings` (endpoints `/settings/completion-pin` GET/PUT). Tarjeta verde junto al PIN amarillo de citas.
+- **NUEVO (P0):** Dialog "Liberar Bahía" en `/assign` con:
+  - 2 opciones: "Servicio Concluido" (verde) | "Falta algo" (amarillo)
+  - Si concluido: PIN + observaciones + uploader de hasta 10 fotos
+  - Si falta: solo textarea con la observación
+- **CAMBIO:** `/orders/payment` ahora marca `ready_for_delivery=true` al legalizar pago y devuelve mensaje "Pago legalizado - Listo para entrega".
+- **NUEVO:** Endpoint `GET /api/billing/pending` para listar las órdenes en cola de Facturación.
+- **CAMBIO:** Botón "Procesar Pago" en `/billing` renombrado a **"Legalizar Pago"**. Dialog ahora se titula "Legalizar Pago" y el botón final dice "Legalizar y enviar a Entrega".
+
+## Sesiones anteriores
+- Iteración 8 (2026-05-26 PM): Medidas por pieza + serie PPF en Completar Corte
+- Iteración 7 (2026-05-26 AM): Flujo estricto Check-in → Revisión 360° → Corte → Técnico + PDF auto
+- Iteración 6: Intervalo 15 min, Check-in por placa, Email de fotos con compresión
+- Iteración 5: PIN de citas, duplicados, LiveTimer, 10 bahías drop-zones
 - **NUEVO (P0):** En "Completar Corte" ahora se piden **9 medidas por pieza (cm)**: Panorámico, Vidrio Copiloto, Vidrio Piloto, Vidrio Trasero, Vidrio Trasero Copiloto, Trasero, Luneta, Sunroof, Custodias. Las piezas seleccionadas en el check-in resaltan con borde cyan.
 - **NUEVO (P0):** Campo de **Observación** (textarea) en Completar Corte.
 - **NUEVO (P0):** Para servicios **PPF**, se solicita **Serie y Modelo del vehículo** (campos requeridos). Se guarda en `ppf_vehicle_serial` y `ppf_vehicle_model` en la orden.

@@ -23,6 +23,14 @@ export const Settings = () => {
     const [pinLoading, setPinLoading] = useState(false);
     const [pinSaving, setPinSaving] = useState(false);
 
+    // Completion PIN
+    const [completionPin, setCompletionPin] = useState('');
+    const [newCompletionPin, setNewCompletionPin] = useState('');
+    const [confirmCompletionPin, setConfirmCompletionPin] = useState('');
+    const [showCompletionPin, setShowCompletionPin] = useState(false);
+    const [completionPinLoading, setCompletionPinLoading] = useState(false);
+    const [completionPinSaving, setCompletionPinSaving] = useState(false);
+
     useEffect(() => {
         const fetchUsers = async () => {
             try {
@@ -51,6 +59,44 @@ export const Settings = () => {
         };
         fetchPin();
     }, []);
+
+    useEffect(() => {
+        const fetchCompletionPin = async () => {
+            try {
+                setCompletionPinLoading(true);
+                const res = await settingsAPI.getCompletionPin();
+                setCompletionPin(res.data?.pin || '');
+            } catch (error) {
+                console.error('Error fetching completion PIN:', error);
+            } finally {
+                setCompletionPinLoading(false);
+            }
+        };
+        fetchCompletionPin();
+    }, []);
+
+    const handleSaveCompletionPin = async () => {
+        if (!newCompletionPin || newCompletionPin.length < 4) {
+            toast.error('El PIN debe tener al menos 4 dígitos');
+            return;
+        }
+        if (newCompletionPin !== confirmCompletionPin) {
+            toast.error('Los PINs no coinciden');
+            return;
+        }
+        try {
+            setCompletionPinSaving(true);
+            const res = await settingsAPI.updateCompletionPin(newCompletionPin);
+            setCompletionPin(res.data?.pin || newCompletionPin);
+            setNewCompletionPin('');
+            setConfirmCompletionPin('');
+            toast.success('PIN actualizado correctamente');
+        } catch (error) {
+            toast.error(error.response?.data?.detail || 'Error al actualizar PIN');
+        } finally {
+            setCompletionPinSaving(false);
+        }
+    };
 
     const handleSavePin = async () => {
         if (!newPin || newPin.length < 4) {
@@ -175,6 +221,79 @@ export const Settings = () => {
                         >
                             <KeyRound className="w-4 h-4 mr-2" />
                             {pinSaving ? 'Guardando...' : 'Actualizar PIN'}
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Completion PIN Configuration */}
+            <Card className="card-hover border-green-500/30">
+                <CardHeader>
+                    <CardTitle className="font-heading text-xl flex items-center gap-2">
+                        <KeyRound className="w-5 h-5 text-green-400" />
+                        PIN de Completar Servicio
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm text-muted-foreground mb-4">
+                        Solicitado al coordinador al marcar un servicio como completado al liberar la bahía.
+                    </p>
+
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-3 p-4 rounded-lg bg-muted/50 border border-border">
+                            <div className="flex-1">
+                                <p className="text-xs text-muted-foreground mb-1">PIN actual</p>
+                                <p className="font-mono text-2xl font-bold tracking-widest text-green-400" data-testid="current-completion-pin-display">
+                                    {completionPinLoading ? '••••' : (showCompletionPin ? completionPin : '•'.repeat(completionPin.length || 5))}
+                                </p>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowCompletionPin(prev => !prev)}
+                                data-testid="toggle-completion-pin-visibility"
+                            >
+                                {showCompletionPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </Button>
+                        </div>
+
+                        <div className="grid sm:grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="new-completion-pin">Nuevo PIN (4-10 dígitos)</Label>
+                                <Input
+                                    id="new-completion-pin"
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={10}
+                                    value={newCompletionPin}
+                                    onChange={(e) => setNewCompletionPin(e.target.value.replace(/\D/g, ''))}
+                                    placeholder="Nuevo PIN"
+                                    data-testid="new-completion-pin-input"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="confirm-completion-pin">Confirmar PIN</Label>
+                                <Input
+                                    id="confirm-completion-pin"
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={10}
+                                    value={confirmCompletionPin}
+                                    onChange={(e) => setConfirmCompletionPin(e.target.value.replace(/\D/g, ''))}
+                                    placeholder="Repite el PIN"
+                                    data-testid="confirm-completion-pin-input"
+                                />
+                            </div>
+                        </div>
+
+                        <Button
+                            onClick={handleSaveCompletionPin}
+                            disabled={completionPinSaving || !newCompletionPin || newCompletionPin !== confirmCompletionPin}
+                            className="w-full sm:w-auto bg-green-600 hover:bg-green-700"
+                            data-testid="save-completion-pin-btn"
+                        >
+                            <KeyRound className="w-4 h-4 mr-2" />
+                            {completionPinSaving ? 'Guardando...' : 'Actualizar PIN'}
                         </Button>
                     </div>
                 </CardContent>

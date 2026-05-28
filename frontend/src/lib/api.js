@@ -106,7 +106,14 @@ export const slotsAPI = {
 export const bahiasAPI = {
     getAll: () => api.get('/bahias'),
     assign: (bahiaId, orderId) => api.put(`/bahias/${bahiaId}/assign`, null, { params: { order_id: orderId } }),
-    release: (bahiaId) => api.put(`/bahias/${bahiaId}/release`),
+    release: (bahiaId, body) => api.put(`/bahias/${bahiaId}/release`, body || { completed: false }),
+};
+
+// Billing (Facturación)
+export const billingAPI = {
+    listPending: () => api.get('/billing/pending'),
+    processPayment: (data) => api.post('/orders/payment', data),
+    confirmDelivery: (data) => api.post('/orders/delivery', data),
 };
 
 // Cutting module
@@ -126,6 +133,8 @@ export const seedAPI = {
 export const settingsAPI = {
     getBookingPin: () => api.get('/settings/booking-pin'),
     updateBookingPin: (pin) => api.put('/settings/booking-pin', { pin }),
+    getCompletionPin: () => api.get('/settings/completion-pin'),
+    updateCompletionPin: (pin) => api.put('/settings/completion-pin', { pin }),
 };
 
 // Legacy API aliases for backwards compatibility

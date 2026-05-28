@@ -1304,12 +1304,18 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
 # Step 6: Payment (Facturacion)
 @api_router.post("/orders/payment")
 async def process_payment(data: PaymentApproval, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION]))):
-    """Process payment - Status: TERMINADO_PAGADO or TERMINADO_FALTA_PAGO"""
+    """Process payment (legalizar) - Status: TERMINADO_PAGADO or TERMINADO_FALTA_PAGO.
+    
+    Once paid, sets ready_for_delivery=True so vehicle is queued for handover.
+    """
     order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    if order["status"] != OrderStatus.SERVICIO_COMPLETADO.value:
-        raise HTTPException(status_code=400, detail="La orden debe estar en estado SERVICIO_COMPLETADO")
+    if order["status"] not in (OrderStatus.SERVICIO_COMPLETADO.value, OrderStatus.TERMINADO_FALTA_PAGO.value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"La orden debe estar en SERVICIO_COMPLETADO o TERMINADO_FALTA_PAGO. Estado actual: {order['status']}"
+        )
     
     new_status = OrderStatus.TERMINADO_PAGADO.value if data.payment_method else OrderStatus.TERMINADO_FALTA_PAGO.value
     
@@ -1320,6 +1326,7 @@ async def process_payment(data: PaymentApproval, current_user: dict = Depends(re
         "discount_code": data.discount_code,
         "discount_amount": data.discount_amount,
         "paid_at": datetime.now(timezone.utc).isoformat() if data.payment_method else None,
+        "ready_for_delivery": new_status == OrderStatus.TERMINADO_PAGADO.value,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
@@ -1327,13 +1334,27 @@ async def process_payment(data: PaymentApproval, current_user: dict = Depends(re
     
     # Log history
     await log_order_history(
-        data.order_id, "PAGO_PROCESADO",
-        OrderStatus.SERVICIO_COMPLETADO.value, new_status,
+        data.order_id, "PAGO_LEGALIZADO" if data.payment_method else "PAGO_PENDIENTE",
+        order["status"], new_status,
         current_user["id"], current_user["name"],
-        {"payment_method": data.payment_method, "discount_amount": data.discount_amount}
+        {"payment_method": data.payment_method, "payment_reference": data.payment_reference, "discount_amount": data.discount_amount}
     )
     
-    return {"message": "Pago procesado exitosamente"}
+    return {
+        "message": "Pago legalizado - Listo para entrega" if data.payment_method else "Marcado como pendiente de pago",
+        "new_status": new_status,
+        "ready_for_delivery": new_status == OrderStatus.TERMINADO_PAGADO.value,
+    }
+
+
+@api_router.get("/billing/pending")
+async def list_pending_billing(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.COORDINADOR]))):
+    """Listar todas las órdenes encoladas para pago/legalización (servicio_completado o terminado_falta_pago)."""
+    orders = await db.orders.find(
+        {"status": {"$in": [OrderStatus.SERVICIO_COMPLETADO.value, OrderStatus.TERMINADO_FALTA_PAGO.value]}},
+        {"_id": 0}
+    ).sort("service_completed_at", -1).to_list(200)
+    return orders
 
 # Step 7: Delivery
 @api_router.post("/orders/delivery")
@@ -1674,6 +1695,27 @@ async def update_booking_pin(data: BookingPinUpdate, current_user: dict = Depend
     )
     return {"message": "PIN actualizado correctamente", "pin": pin}
 
+
+@api_router.get("/settings/completion-pin")
+async def get_completion_pin(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Get the service completion PIN (admin only)."""
+    settings = await db.settings.find_one({"key": "completion_pin"}, {"_id": 0})
+    pin = (settings or {}).get("value", "11111")
+    return {"pin": pin}
+
+@api_router.put("/settings/completion-pin")
+async def update_completion_pin(data: BookingPinUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Update the service completion PIN (admin only)."""
+    pin = (data.pin or "").strip()
+    if not pin or len(pin) < 4 or len(pin) > 10 or not pin.isdigit():
+        raise HTTPException(status_code=400, detail="El PIN debe ser numérico de 4 a 10 dígitos")
+    await db.settings.update_one(
+        {"key": "completion_pin"},
+        {"$set": {"key": "completion_pin", "value": pin, "updated_at": datetime.now(timezone.utc).isoformat(), "updated_by": current_user["id"]}},
+        upsert=True
+    )
+    return {"message": "PIN de completar servicio actualizado correctamente", "pin": pin}
+
 # ==================== SEED DATA ====================
 @api_router.post("/seed/users")
 async def seed_test_users():
@@ -1773,14 +1815,147 @@ async def assign_order_to_bahia(bahia_id: str, order_id: str, current_user: dict
     
     return {"message": f"Orden asignada a {bahia['name']}", "bahia_id": bahia_id, "order_id": order_id}
 
+class BahiaReleaseRequest(BaseModel):
+    completed: bool  # True = servicio terminado, False = falta algo
+    completion_pin: Optional[str] = None  # required if completed=True
+    notes: Optional[str] = None
+    completion_photos: Optional[List[str]] = None  # base64 data URLs, max 10
+
+
 @api_router.put("/bahias/{bahia_id}/release")
-async def release_bahia(bahia_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
-    """Release a bahia (remove current order)"""
+async def release_bahia(
+    bahia_id: str,
+    payload: BahiaReleaseRequest,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))
+):
+    """Release a bahia. If completed=True, validates PIN, attaches notes+photos
+    and moves the order to 'servicio_completado' for billing.
+    If completed=False, just releases the bahia (order stays assigned, awaiting another bahia)."""
+    
+    bahia = await db.bahias.find_one({"id": bahia_id}, {"_id": 0})
+    if not bahia:
+        raise HTTPException(status_code=404, detail="Bahía no encontrada")
+    
+    current_order_id = bahia.get("current_order_id")
+    
+    if payload.completed:
+        # Require PIN
+        settings = await db.settings.find_one({"key": "completion_pin"}, {"_id": 0})
+        expected_pin = (settings or {}).get("value", "11111")
+        if not payload.completion_pin or str(payload.completion_pin).strip() != str(expected_pin).strip():
+            raise HTTPException(status_code=400, detail="PIN de completar servicio incorrecto")
+        
+        # Limit photos
+        photos = payload.completion_photos or []
+        if len(photos) > 10:
+            photos = photos[:10]
+        
+        # Update order if attached
+        if current_order_id:
+            await db.orders.update_one(
+                {"id": current_order_id},
+                {"$set": {
+                    "status": OrderStatus.SERVICIO_COMPLETADO.value,
+                    "service_completed_at": datetime.now(timezone.utc).isoformat(),
+                    "service_completion_notes": payload.notes,
+                    "service_completion_photos": photos,
+                    "released_by_coordinator_id": current_user["id"],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }}
+            )
+            # Get order for history & email
+            order = await db.orders.find_one({"id": current_order_id}, {"_id": 0})
+            
+            # Log history
+            try:
+                await log_order_history(
+                    current_order_id, "SERVICIO_COMPLETADO_LIBERAR_BAHIA",
+                    order.get("status",""), OrderStatus.SERVICIO_COMPLETADO.value,
+                    current_user["id"], current_user["name"],
+                    {"bahia_id": bahia_id, "photos_count": len(photos)}
+                )
+            except Exception:
+                pass
+            
+            # Best-effort email to client + coordinators (compressed)
+            if photos and RESEND_API_KEY and order.get("client_email"):
+                try:
+                    def _compress_all():
+                        out = []
+                        for idx, p in enumerate(photos):
+                            data = _compress_data_url_image(p, max_dim=1280, quality=70)
+                            if data:
+                                out.append({"filename": f"servicio_{idx+1:02d}.jpg", "content": data})
+                        return out
+                    attachments_raw = await asyncio.to_thread(_compress_all)
+                    if attachments_raw:
+                        resend_attachments = [
+                            {"filename": a["filename"], "content": base64.b64encode(a["content"]).decode("ascii")}
+                            for a in attachments_raw
+                        ]
+                        recipients = {order["client_email"]}
+                        coord_users = await db.users.find({"role": UserRole.COORDINADOR.value}, {"_id": 0, "email": 1}).to_list(50)
+                        for u in coord_users:
+                            if u.get("email"):
+                                recipients.add(u["email"])
+                        html = f"""
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#222;">
+  <div style="background:#1e1e32;color:#fff;padding:16px 20px;">
+    <h2 style="margin:0;">Polarizados Manager — Servicio Completado</h2>
+  </div>
+  <div style="padding:20px;">
+    <p>Hola,</p>
+    <p>El servicio fue completado. Adjuntamos las fotos de evidencia final.</p>
+    <p><b>Vehículo:</b> {order.get('plate')} — {order.get('brand','')} {order.get('model','')}<br>
+       <b>Orden:</b> {order.get('order_code','')}<br>
+       <b>Observaciones:</b> {payload.notes or '-'}</p>
+    <p>El servicio quedó pendiente de validación de pago para entrega.</p>
+  </div>
+</div>
+""".strip()
+                        params = {
+                            "from": SENDER_EMAIL,
+                            "to": list(recipients),
+                            "subject": f"Servicio Completado - {order.get('plate')} - {order.get('order_code','')}",
+                            "html": html,
+                            "attachments": resend_attachments,
+                        }
+                        await asyncio.to_thread(resend.Emails.send, params)
+                except Exception as e:
+                    logger.warning(f"Could not send completion email: {e}")
+    else:
+        # "Falta algo": order stays assigned (status keeps), only bahia gets freed
+        if current_order_id:
+            await db.orders.update_one(
+                {"id": current_order_id},
+                {"$set": {
+                    "bahia_id": None,
+                    "bahia_name": None,
+                    "service_pending_notes": payload.notes,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }}
+            )
+            try:
+                order = await db.orders.find_one({"id": current_order_id}, {"_id": 0})
+                await log_order_history(
+                    current_order_id, "BAHIA_LIBERADA_SIN_COMPLETAR",
+                    order.get("status",""), order.get("status",""),
+                    current_user["id"], current_user["name"],
+                    {"bahia_id": bahia_id, "notes": payload.notes}
+                )
+            except Exception:
+                pass
+    
+    # Always free the bahia
     await db.bahias.update_one(
         {"id": bahia_id},
         {"$set": {"current_order_id": None, "assigned_at": None}}
     )
-    return {"message": "Bahía liberada"}
+    
+    return {
+        "message": "Servicio completado" if payload.completed else "Bahía liberada (servicio pendiente)",
+        "completed": payload.completed,
+    }
 
 # ==================== CUTTING MODULE ====================
 @api_router.get("/cutting/pending")
