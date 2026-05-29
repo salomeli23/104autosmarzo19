@@ -4,9 +4,27 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-05-28
+2026-05-29
 
-## Última Sesión (2026-05-28) — Iteración 9 (Liberar Bahía + Legalización Facturación)
+## Última Sesión (2026-05-29) — Iteración 10 (Módulo de Inventario)
+- **NUEVO (P0):** Página `/inventory` (admin/coordinador/corte) con:
+  - Tarjeta de **alertas de bajo stock** por tipo de rollo (13 tipos pre-configurados con sus umbrales: Spectra ≤5, Black Ceramic ≤5, Ceramic i3 ≤3, Upper Hoptik ≤3, Edge ≤3, Clear 4mil ≤5, Clear 7mil ≤2, Clear 12mil ≤2, Clear 1500 micras ≤4, Xpel Gloss ≤4, PPF Xpel Ultimate ≤2, PPF Autoban ≤4, PPF Techo ≤3) con severidad (critical/high/medium)
+  - Tabs Rollos / Accesorios-Materiales con barra de progreso de metros restantes por rollo
+  - Filtro por categoría
+  - Dialog Nuevo/Editar artículo con campos: nombre, categoría, tipo (rollo/cantidad), tipo_rollo (select de 13 marcas), factura, metros_iniciales o cantidad_inicial, costo, servicio vinculado, notas
+- **NUEVO endpoints backend:**
+  - `POST/GET/PUT/DELETE /api/inventory` (admin para create/update/delete)
+  - `GET /api/inventory/alerts` — alertas de bajo stock con conteos y metros
+  - `POST /api/inventory/{id}/deduct` — descuento manual (rollos por metros, accesorios por cantidad)
+  - `GET /api/inventory/movements` — historial de movimientos
+- **NUEVO (P0):** **Descuento automático al completar Corte**. En el dialog de "Completar Corte" se añadió un select "Rollo utilizado" que lista todos los rollos con metros > 0. Al confirmar, se descuenta automáticamente del inventario (cálculo automático sumando la dimensión mayor de cada medida en cm → metros). Permite override manual de metros.
+- **CAMBIO:** Endpoint `PUT /api/cutting/{id}/complete` ahora acepta `inventory_item_id` y `meters_used`, devuelve `inventory_deduction` con detalles del descuento.
+- **CAMBIO:** Código consecutivo de artículos: `INV-00001`, `INV-00002`, etc.
+
+## Sesión anterior — Iteración 9 (2026-05-28)
+- Liberar Bahía con PIN, observaciones y hasta 10 fotos
+- PIN de Completar Servicio configurable
+- Facturación con "Legalizar Pago" + ready_for_delivery
 - **NUEVO (P0):** Endpoint `/bahias/{id}/release` ahora acepta body con `completed`, `completion_pin`, `notes`, `completion_photos` (hasta 10). Si `completed=true`:
   - Valida PIN configurable (default `11111`)
   - Cambia status de la orden a `servicio_completado` (cola de Facturación)

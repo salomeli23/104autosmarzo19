@@ -129,6 +129,17 @@ export const seedAPI = {
     bahias: () => api.post('/seed/bahias'),
 };
 
+// Inventory
+export const inventoryAPI = {
+    list: (params) => api.get('/inventory', { params }),
+    create: (data) => api.post('/inventory', data),
+    update: (id, data) => api.put(`/inventory/${id}`, data),
+    delete: (id) => api.delete(`/inventory/${id}`),
+    alerts: () => api.get('/inventory/alerts'),
+    deduct: (id, params) => api.post(`/inventory/${id}/deduct`, null, { params }),
+    movements: (params) => api.get('/inventory/movements', { params }),
+};
+
 // Settings (admin)
 export const settingsAPI = {
     getBookingPin: () => api.get('/settings/booking-pin'),

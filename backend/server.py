@@ -2044,6 +2044,8 @@ class CuttingCompleteRequest(BaseModel):
     part_measurements: Optional[Dict[str, str]] = None  # {part_id: "120x60 cm"}
     ppf_vehicle_serial: Optional[str] = None
     ppf_vehicle_model: Optional[str] = None
+    inventory_item_id: Optional[str] = None  # rollo utilizado para descuento automático
+    meters_used: Optional[float] = None  # override manual (si no, se calcula desde part_measurements)
 
 
 @api_router.put("/cutting/{order_id}/complete")
@@ -2109,7 +2111,37 @@ async def complete_cutting(
     
     await db.orders.update_one({"id": order_id}, {"$set": update_fields})
     
-    # Create alert for coordinator
+    # Auto-deduct from inventory if linked
+    inventory_deduction = None
+    if p.inventory_item_id:
+        rollo = await db.inventory.find_one({"id": p.inventory_item_id})
+        if rollo and rollo.get("tipo_articulo") == "rollo":
+            # Calculate meters used
+            meters_used = p.meters_used
+            if meters_used is None:
+                meters_used = _meters_from_part_measurements(part_measurements)
+            if meters_used and meters_used > 0:
+                new_remaining = max(0, (rollo.get("metros_restantes") or 0) - meters_used)
+                await db.inventory.update_one(
+                    {"id": p.inventory_item_id},
+                    {"$set": {"metros_restantes": new_remaining, "updated_at": datetime.now(timezone.utc).isoformat()}}
+                )
+                await db.inventory_movements.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "inventory_item_id": p.inventory_item_id,
+                    "type": "deduct_auto_cutting",
+                    "metros": meters_used,
+                    "cantidad": None,
+                    "reason": f"Corte completado - Orden {order.get('order_code','')}",
+                    "order_id": order_id,
+                    "user_id": current_user["id"],
+                    "user_name": current_user.get("name") or current_user.get("email"),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+                update_fields["inventory_deducted_from"] = p.inventory_item_id
+                update_fields["inventory_meters_used"] = meters_used
+                await db.orders.update_one({"id": order_id}, {"$set": {"inventory_deducted_from": p.inventory_item_id, "inventory_meters_used": meters_used}})
+                inventory_deduction = {"item_id": p.inventory_item_id, "meters_used": meters_used, "new_remaining": new_remaining}
     await db.alerts.insert_one({
         "id": str(uuid.uuid4()),
         "type": "corte_completado",
@@ -2133,7 +2165,279 @@ async def complete_cutting(
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     
-    return {"message": "Corte completado", "status": "completado"}
+    return {"message": "Corte completado", "status": "completado", "inventory_deduction": inventory_deduction}
+
+
+# ==================== INVENTORY MODULE ====================
+ROLLO_ALERT_THRESHOLDS = {
+    # Polarizado / Ultrasecure
+    "spectra": 5,
+    "black_ceramic": 5,
+    "ceramic_i3": 3,
+    "upper_hoptik": 3,
+    "edge": 3,
+    "clear_4mil": 5,
+    "clear_7mil": 2,
+    "clear_12mil": 2,
+    "clear_1500_micras": 4,
+    # PPF
+    "xpel_gloss": 4,
+    "ppf_xpel_ultimate": 2,
+    "ppf_autoban": 4,
+    "ppf_techo": 3,
+}
+
+ROLLO_TYPE_LABELS = {
+    "spectra": "Spectra",
+    "black_ceramic": "Black Ceramic",
+    "ceramic_i3": "Ceramic i3",
+    "upper_hoptik": "Upper Hoptik",
+    "edge": "Edge",
+    "clear_4mil": "Clear 4mil",
+    "clear_7mil": "Clear 7mil",
+    "clear_12mil": "Clear 12mil",
+    "clear_1500_micras": "Clear 1500 micras",
+    "xpel_gloss": "Xpel Gloss",
+    "ppf_xpel_ultimate": "PPF Xpel Ultimate",
+    "ppf_autoban": "PPF Autoban",
+    "ppf_techo": "PPF Techo",
+}
+
+
+class InventoryItemCreate(BaseModel):
+    nombre: str  # nombre legible del articulo
+    categoria: str  # 'polarizado', 'ultrasecure', 'ppf', 'accesorio', 'material'
+    tipo_articulo: str  # 'rollo' o 'cantidad'
+    tipo_rollo: Optional[str] = None  # spectra, black_ceramic, etc. (solo para rollos)
+    factura_compra: Optional[str] = None
+    metros_iniciales: Optional[float] = None  # para rollos
+    cantidad_inicial: Optional[int] = None  # para accesorios/materiales
+    costo: float = 0.0
+    linked_service: Optional[str] = None  # Servicio que descuenta este artículo
+    fecha_ingreso: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class InventoryItemUpdate(BaseModel):
+    nombre: Optional[str] = None
+    factura_compra: Optional[str] = None
+    metros_restantes: Optional[float] = None
+    cantidad_restante: Optional[int] = None
+    costo: Optional[float] = None
+    linked_service: Optional[str] = None
+    notes: Optional[str] = None
+    active: Optional[bool] = None
+
+
+def _gen_inventory_code():
+    # Consecutive 5-digit code per category-prefix-ish via timestamp
+    import time
+    return f"INV-{int(time.time()*1000) % 100000000}"
+
+
+@api_router.post("/inventory")
+async def create_inventory_item(
+    item: InventoryItemCreate,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN]))
+):
+    """Crear un artículo de inventario (admin only)."""
+    # Validation
+    if item.tipo_articulo == "rollo":
+        if not item.tipo_rollo:
+            raise HTTPException(status_code=400, detail="tipo_rollo es requerido para rollos")
+        if item.metros_iniciales is None or item.metros_iniciales <= 0:
+            raise HTTPException(status_code=400, detail="metros_iniciales debe ser > 0 para rollos")
+    elif item.tipo_articulo == "cantidad":
+        if item.cantidad_inicial is None or item.cantidad_inicial <= 0:
+            raise HTTPException(status_code=400, detail="cantidad_inicial debe ser > 0")
+    else:
+        raise HTTPException(status_code=400, detail="tipo_articulo debe ser 'rollo' o 'cantidad'")
+    
+    # Get next consecutive code
+    last = await db.inventory.find_one({}, sort=[("created_at", -1)])
+    seq = (last.get("seq", 0) + 1) if last else 1
+    
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "seq": seq,
+        "codigo": f"INV-{seq:05d}",
+        "nombre": item.nombre,
+        "categoria": item.categoria,
+        "tipo_articulo": item.tipo_articulo,
+        "tipo_rollo": item.tipo_rollo,
+        "factura_compra": item.factura_compra,
+        "metros_iniciales": item.metros_iniciales,
+        "metros_restantes": item.metros_iniciales,
+        "cantidad_inicial": item.cantidad_inicial,
+        "cantidad_restante": item.cantidad_inicial,
+        "costo": item.costo,
+        "linked_service": item.linked_service,
+        "fecha_ingreso": item.fecha_ingreso or now_iso,
+        "notes": item.notes,
+        "active": True,
+        "created_by": current_user["id"],
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    await db.inventory.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/inventory")
+async def list_inventory(
+    categoria: Optional[str] = None,
+    tipo_articulo: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Listar inventario (todos los roles autenticados pueden leer)."""
+    query = {"active": True}
+    if categoria:
+        query["categoria"] = categoria
+    if tipo_articulo:
+        query["tipo_articulo"] = tipo_articulo
+    items = await db.inventory.find(query, {"_id": 0}).sort("seq", -1).to_list(500)
+    return items
+
+
+@api_router.put("/inventory/{item_id}")
+async def update_inventory_item(
+    item_id: str,
+    update: InventoryItemUpdate,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN]))
+):
+    """Actualizar artículo de inventario."""
+    existing = await db.inventory.find_one({"id": item_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Artículo no encontrado")
+    
+    fields = {k: v for k, v in update.dict(exclude_unset=True).items() if v is not None}
+    fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.inventory.update_one({"id": item_id}, {"$set": fields})
+    return {"message": "Artículo actualizado"}
+
+
+@api_router.delete("/inventory/{item_id}")
+async def delete_inventory_item(
+    item_id: str,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN]))
+):
+    """Soft delete (active=False)."""
+    await db.inventory.update_one(
+        {"id": item_id},
+        {"$set": {"active": False, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"message": "Artículo eliminado"}
+
+
+@api_router.get("/inventory/alerts")
+async def get_inventory_alerts(current_user: dict = Depends(get_current_user)):
+    """Devolver alertas de bajo stock por tipo de rollo según umbrales fijos."""
+    pipeline = [
+        {"$match": {"active": True, "tipo_articulo": "rollo", "tipo_rollo": {"$ne": None}, "metros_restantes": {"$gt": 0}}},
+        {"$group": {"_id": "$tipo_rollo", "count": {"$sum": 1}, "total_metros": {"$sum": "$metros_restantes"}}},
+    ]
+    counts = {}
+    async for row in db.inventory.aggregate(pipeline):
+        counts[row["_id"]] = {"count": row["count"], "total_metros": row["total_metros"]}
+    
+    alerts = []
+    for tipo, threshold in ROLLO_ALERT_THRESHOLDS.items():
+        info = counts.get(tipo, {"count": 0, "total_metros": 0})
+        if info["count"] <= threshold:
+            alerts.append({
+                "tipo_rollo": tipo,
+                "label": ROLLO_TYPE_LABELS.get(tipo, tipo),
+                "current_count": info["count"],
+                "threshold": threshold,
+                "total_metros_restantes": round(info["total_metros"], 2),
+                "severity": "critical" if info["count"] == 0 else ("high" if info["count"] <= max(1, threshold // 2) else "medium"),
+            })
+    return {"alerts": alerts, "counts_by_type": counts, "thresholds": ROLLO_ALERT_THRESHOLDS}
+
+
+@api_router.post("/inventory/{item_id}/deduct")
+async def deduct_inventory(
+    item_id: str,
+    metros: Optional[float] = None,
+    cantidad: Optional[int] = None,
+    reason: Optional[str] = None,
+    order_id: Optional[str] = None,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))
+):
+    """Descontar uso de un artículo. Para rollos pasa metros; para accesorios pasa cantidad."""
+    item = await db.inventory.find_one({"id": item_id})
+    if not item:
+        raise HTTPException(status_code=404, detail="Artículo no encontrado")
+    
+    update = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if item["tipo_articulo"] == "rollo":
+        if metros is None or metros <= 0:
+            raise HTTPException(status_code=400, detail="metros > 0 requerido")
+        new_remaining = max(0, (item.get("metros_restantes") or 0) - metros)
+        update["metros_restantes"] = new_remaining
+    else:
+        if cantidad is None or cantidad <= 0:
+            raise HTTPException(status_code=400, detail="cantidad > 0 requerida")
+        new_remaining = max(0, (item.get("cantidad_restante") or 0) - cantidad)
+        update["cantidad_restante"] = new_remaining
+    
+    await db.inventory.update_one({"id": item_id}, {"$set": update})
+    
+    # Log usage
+    await db.inventory_movements.insert_one({
+        "id": str(uuid.uuid4()),
+        "inventory_item_id": item_id,
+        "type": "deduct",
+        "metros": metros,
+        "cantidad": cantidad,
+        "reason": reason,
+        "order_id": order_id,
+        "user_id": current_user["id"],
+        "user_name": current_user.get("name") or current_user.get("email"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"message": "Descuento registrado", "remaining": update.get("metros_restantes") or update.get("cantidad_restante")}
+
+
+@api_router.get("/inventory/movements")
+async def list_inventory_movements(
+    item_id: Optional[str] = None,
+    limit: int = 100,
+    current_user: dict = Depends(get_current_user)
+):
+    """Historial de movimientos del inventario."""
+    query = {}
+    if item_id:
+        query["inventory_item_id"] = item_id
+    movements = await db.inventory_movements.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return movements
+
+
+# Auto-deduction helper (used by cutting complete)
+def _meters_from_part_measurements(part_measurements: Optional[Dict[str, str]]) -> float:
+    """Suma los metros lineales consumidos (en metros) a partir de las medidas por pieza.
+    Toma la dimensión mayor de cada AxB (en cm) y la convierte a metros.
+    """
+    if not part_measurements:
+        return 0.0
+    total_m = 0.0
+    import re
+    for v in part_measurements.values():
+        if not v or not str(v).strip():
+            continue
+        s = str(v).lower()
+        nums = re.findall(r"\d+(?:[\.,]\d+)?", s)
+        if not nums:
+            continue
+        try:
+            dims = [float(x.replace(",", ".")) for x in nums[:2]]
+            cm = max(dims) if dims else 0
+            total_m += cm / 100.0
+        except ValueError:
+            continue
+    return round(total_m, 2)
 
 # Include router and configure CORS
 app.include_router(api_router)

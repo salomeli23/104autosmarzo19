@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { cuttingAPI } from '../lib/api';
+import { cuttingAPI, inventoryAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -20,6 +20,9 @@ const CuttingView = () => {
     const [notes, setNotes] = useState('');
     const [ppfSerial, setPpfSerial] = useState('');
     const [ppfModel, setPpfModel] = useState('');
+    const [rollos, setRollos] = useState([]);
+    const [selectedRolloId, setSelectedRolloId] = useState('');
+    const [metersOverride, setMetersOverride] = useState('');
 
     // Partes del vehículo (mismo set que el check-in)
     const VEHICLE_PARTS = [
@@ -96,19 +99,33 @@ const CuttingView = () => {
         }
         
         try {
-            await cuttingAPI.complete(selectedOrder.id, {
+            const body = {
                 part_measurements: partMeasurements,
                 notes: notes || null,
                 ppf_vehicle_serial: isPPF ? ppfSerial.trim() : null,
                 ppf_vehicle_model: isPPF ? ppfModel.trim() : null,
-            });
-            toast.success('Corte completado - Listo para asignación');
+            };
+            if (selectedRolloId) {
+                body.inventory_item_id = selectedRolloId;
+                if (metersOverride && parseFloat(metersOverride) > 0) {
+                    body.meters_used = parseFloat(metersOverride);
+                }
+            }
+            const res = await cuttingAPI.complete(selectedOrder.id, body);
+            const dedu = res.data?.inventory_deduction;
+            if (dedu) {
+                toast.success(`Corte completado · ${dedu.meters_used} m descontados (quedan ${dedu.new_remaining.toFixed(2)} m)`);
+            } else {
+                toast.success('Corte completado - Listo para asignación');
+            }
             setCompleteDialog(false);
             setSelectedOrder(null);
             setPartMeasurements({});
             setNotes('');
             setPpfSerial('');
             setPpfModel('');
+            setSelectedRolloId('');
+            setMetersOverride('');
             fetchOrders();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al completar corte');
@@ -123,12 +140,33 @@ const CuttingView = () => {
         VEHICLE_PARTS.forEach(p => {
             if (selectedSet.has(p.id)) initial[p.id] = '';
         });
-        // If none was explicitly selected, leave object empty so user can enter freely
         setPartMeasurements(initial);
         setNotes('');
         setPpfSerial(order?.ppf_vehicle_serial || '');
         setPpfModel(order?.ppf_vehicle_model || '');
+        setSelectedRolloId('');
+        setMetersOverride('');
+        // Fetch available rollos (with metros_restantes > 0)
+        inventoryAPI.list({ tipo_articulo: 'rollo' })
+            .then(res => {
+                const available = (res.data || []).filter(r => (r.metros_restantes ?? 0) > 0);
+                setRollos(available);
+            })
+            .catch(() => setRollos([]));
         setCompleteDialog(true);
+    };
+
+    const computeAutoMeters = () => {
+        let total = 0;
+        Object.values(partMeasurements).forEach(v => {
+            if (!v) return;
+            const nums = String(v).match(/\d+(?:[.,]\d+)?/g) || [];
+            if (nums.length === 0) return;
+            const dims = nums.slice(0, 2).map(x => parseFloat(x.replace(',', '.')));
+            const cm = Math.max(...dims, 0);
+            total += cm / 100;
+        });
+        return Math.round(total * 100) / 100;
     };
 
     const getStatusBadge = (order) => {
@@ -536,6 +574,45 @@ const CuttingView = () => {
                                     rows={3}
                                     data-testid="cutting-notes-input"
                                 />
+                            </div>
+
+                            {/* Inventory rollo selection */}
+                            <div className="space-y-2 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
+                                <Label className="flex items-center gap-2 text-cyan-400 font-medium">
+                                    <Package className="w-4 h-4" />
+                                    Rollo utilizado (descontar del inventario)
+                                </Label>
+                                <select
+                                    className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
+                                    value={selectedRolloId}
+                                    onChange={(e) => setSelectedRolloId(e.target.value)}
+                                    data-testid="cutting-rollo-select"
+                                >
+                                    <option value="">— No descontar inventario —</option>
+                                    {rollos.map(r => (
+                                        <option key={r.id} value={r.id}>
+                                            {r.codigo} · {r.nombre} ({(r.metros_restantes ?? 0).toFixed(2)} m restantes)
+                                        </option>
+                                    ))}
+                                </select>
+                                {selectedRolloId && (
+                                    <div className="grid grid-cols-2 gap-2 items-end">
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Metros usados (auto: {computeAutoMeters()} m)</Label>
+                                            <Input
+                                                type="number"
+                                                step="0.01"
+                                                value={metersOverride}
+                                                onChange={(e) => setMetersOverride(e.target.value)}
+                                                placeholder={`${computeAutoMeters()}`}
+                                                data-testid="cutting-meters-override"
+                                            />
+                                        </div>
+                                        <p className="text-xs text-muted-foreground">
+                                            Dejar vacío para usar el cálculo automático
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
