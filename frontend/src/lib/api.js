@@ -71,6 +71,9 @@ export const ordersAPI = {
     
     // Desistimiento
     desistimiento: (orderId) => api.post(`/orders/${orderId}/desistimiento`),
+    
+    // Postventa / Garantía
+    historyByPlate: (plate) => api.get(`/orders/history-by-plate/${encodeURIComponent(plate)}`),
 };
 
 // Alerts

@@ -4,9 +4,24 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-05-29
+2026-06-01
 
-## Última Sesión (2026-05-29) — Iteración 10 (Módulo de Inventario)
+## Última Sesión (2026-06-01) — Iteración 11 (Módulo Postventa / Garantías)
+- **NUEVO (P0):** Página `/postventa` (admin/asesor/coordinador) con:
+  - **Búsqueda por placa** → muestra datos del cliente y vehículo + historial de servicios anteriores con status, fecha, hora, servicios, valor
+  - **Dialog "Agendar Postventa / Garantía"** con: select de tipo (Garantía | Postventa/Revisión), fecha, motivo libre, franja horaria, PIN
+  - Pre-rellena automáticamente datos del cliente y vehículo desde el último servicio
+- **NUEVO (P0):** Backend `GET /api/orders/history-by-plate/{plate}` devuelve datos del cliente + lista de órdenes anteriores
+- **CAMBIO:** `OrderCreate` y `Order` soportan `is_postventa`, `postventa_type`, `postventa_motivo`, `original_order_id`
+- **REGLA:** Si `is_postventa=true`:
+  - No bloquea por duplicado de placa+fecha
+  - Al completar servicio (por técnico o al liberar bahía) → status pasa **directamente a `entregado`** (salta facturación). `ready_for_delivery=true` y `delivered_at` se setean automáticamente
+  - Valor negociado = $0
+
+## Sesión anterior (2026-05-29) — Iteración 10
+- Módulo de Inventario con alertas de bajo stock por 13 tipos de rollos
+- Descuento automático del inventario al completar Corte
+- 5 endpoints CRUD + alerts + deduct + movements
 - **NUEVO (P0):** Página `/inventory` (admin/coordinador/corte) con:
   - Tarjeta de **alertas de bajo stock** por tipo de rollo (13 tipos pre-configurados con sus umbrales: Spectra ≤5, Black Ceramic ≤5, Ceramic i3 ≤3, Upper Hoptik ≤3, Edge ≤3, Clear 4mil ≤5, Clear 7mil ≤2, Clear 12mil ≤2, Clear 1500 micras ≤4, Xpel Gloss ≤4, PPF Xpel Ultimate ≤2, PPF Autoban ≤4, PPF Techo ≤3) con severidad (critical/high/medium)
   - Tabs Rollos / Accesorios-Materiales con barra de progreso de metros restantes por rollo

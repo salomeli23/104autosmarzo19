@@ -234,7 +234,12 @@ class OrderCreate(BaseModel):
     services: List[ServiceItem]
     negotiated_value: float
     notes: Optional[str] = None
-    confirmation_pin: Optional[str] = None  # PIN de confirmación para evitar duplicados
+    confirmation_pin: Optional[str] = None
+    # Postventa / Garantía
+    is_postventa: Optional[bool] = False
+    postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
+    postventa_motivo: Optional[str] = None
+    original_order_id: Optional[str] = None
 
 class OrderResponse(BaseModel):
     id: str
@@ -296,6 +301,11 @@ class OrderResponse(BaseModel):
     # Bahia data
     bahia_id: Optional[str] = None
     bahia_name: Optional[str] = None
+    # Postventa / Garantía
+    is_postventa: Optional[bool] = False
+    postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
+    postventa_motivo: Optional[str] = None
+    original_order_id: Optional[str] = None
     # Metadata
     created_by: str
     created_at: str
@@ -437,18 +447,21 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     if str(order.confirmation_pin).strip() != str(expected_pin).strip():
         raise HTTPException(status_code=400, detail="PIN de confirmación incorrecto")
     
-    # Block duplicate: same plate + same date (excluding desistimiento)
+    # Block duplicate: same plate + same date (excluding desistimiento and postventa)
+    # Postventa/Garantía sí permite múltiples órdenes para misma placa+fecha si fuera necesario
     plate_upper = order.plate.upper()
-    existing = await db.orders.find_one({
-        "plate": plate_upper,
-        "date": order.date,
-        "status": {"$nin": ["desistimiento"]}
-    })
-    if existing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Ya existe una cita para la placa {plate_upper} en la fecha {order.date} (código: {existing.get('order_code', 'N/A')})"
-        )
+    if not order.is_postventa:
+        existing = await db.orders.find_one({
+            "plate": plate_upper,
+            "date": order.date,
+            "is_postventa": {"$ne": True},
+            "status": {"$nin": ["desistimiento"]}
+        })
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Ya existe una cita para la placa {plate_upper} en la fecha {order.date} (código: {existing.get('order_code', 'N/A')})"
+            )
     
     order_id = str(uuid.uuid4())
     order_code = generate_order_code()
@@ -500,6 +513,11 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "paid_at": None,
         "delivery_photo_url": None,
         "delivered_at": None,
+        # Postventa
+        "is_postventa": bool(order.is_postventa),
+        "postventa_type": order.postventa_type if order.is_postventa else None,
+        "postventa_motivo": order.postventa_motivo if order.is_postventa else None,
+        "original_order_id": order.original_order_id if order.is_postventa else None,
         "created_by": current_user["id"],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": None
@@ -1274,32 +1292,40 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
     if order["status"] != OrderStatus.EN_PROCESO.value:
         raise HTTPException(status_code=400, detail="La orden debe estar en estado EN_PROCESO")
     
+    is_postventa = bool(order.get("is_postventa"))
+    new_status = OrderStatus.ENTREGADO.value if is_postventa else OrderStatus.SERVICIO_COMPLETADO.value
+    
     update_data = {
-        "status": OrderStatus.SERVICIO_COMPLETADO.value,
+        "status": new_status,
         "service_completed_at": datetime.now(timezone.utc).isoformat(),
         "technician_notes": data.notes,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
+    if is_postventa:
+        # Postventa/garantía no factura — se marca como entregado directamente
+        update_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
+        update_data["ready_for_delivery"] = True
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
     
     # Log history
     await log_order_history(
-        data.order_id, "SERVICIO_COMPLETADO",
-        OrderStatus.EN_PROCESO.value, OrderStatus.SERVICIO_COMPLETADO.value,
+        data.order_id, "SERVICIO_COMPLETADO_POSTVENTA" if is_postventa else "SERVICIO_COMPLETADO",
+        OrderStatus.EN_PROCESO.value, new_status,
         current_user["id"], current_user["name"],
-        {"technician_notes": data.notes}
+        {"technician_notes": data.notes, "is_postventa": is_postventa}
     )
     
-    # Alert facturacion
-    await create_alert(
-        "facturacion", AlertType.PENDIENTE_FACTURACION,
-        "Vehículo listo para facturación",
-        f"Vehículo {order['plate']} - {order['client_name']} completó servicio",
-        data.order_id
-    )
-    
-    return {"message": "Servicio completado, enviado a facturación"}
+    if not is_postventa:
+        # Alert facturacion (solo para órdenes normales)
+        await create_alert(
+            "facturacion", AlertType.PENDIENTE_FACTURACION,
+            "Vehículo listo para facturación",
+            f"Vehículo {order['plate']} - {order['client_name']} completó servicio",
+            data.order_id
+        )
+        return {"message": "Servicio completado, enviado a facturación"}
+    return {"message": "Postventa/Garantía completada y cerrada"}
 
 # Step 6: Payment (Facturacion)
 @api_router.post("/orders/payment")
@@ -1852,17 +1878,23 @@ async def release_bahia(
         
         # Update order if attached
         if current_order_id:
-            await db.orders.update_one(
-                {"id": current_order_id},
-                {"$set": {
-                    "status": OrderStatus.SERVICIO_COMPLETADO.value,
-                    "service_completed_at": datetime.now(timezone.utc).isoformat(),
-                    "service_completion_notes": payload.notes,
-                    "service_completion_photos": photos,
-                    "released_by_coordinator_id": current_user["id"],
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }}
-            )
+            current_order_for_postventa = await db.orders.find_one({"id": current_order_id}, {"_id": 0})
+            is_postventa = bool(current_order_for_postventa.get("is_postventa")) if current_order_for_postventa else False
+            target_status = OrderStatus.ENTREGADO.value if is_postventa else OrderStatus.SERVICIO_COMPLETADO.value
+            
+            set_fields = {
+                "status": target_status,
+                "service_completed_at": datetime.now(timezone.utc).isoformat(),
+                "service_completion_notes": payload.notes,
+                "service_completion_photos": photos,
+                "released_by_coordinator_id": current_user["id"],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if is_postventa:
+                set_fields["delivered_at"] = datetime.now(timezone.utc).isoformat()
+                set_fields["ready_for_delivery"] = True
+            
+            await db.orders.update_one({"id": current_order_id}, {"$set": set_fields})
             # Get order for history & email
             order = await db.orders.find_one({"id": current_order_id}, {"_id": 0})
             
@@ -2166,6 +2198,54 @@ async def complete_cutting(
     })
     
     return {"message": "Corte completado", "status": "completado", "inventory_deduction": inventory_deduction}
+
+
+@api_router.get("/orders/history-by-plate/{plate}")
+async def get_orders_by_plate(plate: str, current_user: dict = Depends(get_current_user)):
+    """Devuelve órdenes anteriores de una placa (orden por fecha descendente).
+    Usado por el módulo de Postventa para reagendar.
+    """
+    plate_upper = plate.strip().upper()
+    if not plate_upper:
+        return {"plate": "", "orders": []}
+    orders = await db.orders.find(
+        {"plate": plate_upper, "status": {"$nin": ["desistimiento"]}},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    
+    # Build summary list with key fields
+    summary = []
+    last_client = None
+    for o in orders:
+        if not last_client:
+            last_client = {
+                "client_name": o.get("client_name"),
+                "client_phone": o.get("client_phone"),
+                "client_email": o.get("client_email"),
+                "client_cedula": o.get("client_cedula"),
+                "brand": o.get("brand"),
+                "model": o.get("model"),
+                "year": o.get("year"),
+                "color": o.get("color"),
+            }
+        summary.append({
+            "id": o.get("id"),
+            "order_code": o.get("order_code"),
+            "date": o.get("date"),
+            "scheduled_time": o.get("scheduled_time"),
+            "status": o.get("status"),
+            "services": [{"description": s.get("description") or s.get("service"), "service": s.get("service")} for s in (o.get("services") or [])],
+            "final_value": o.get("final_value") or o.get("negotiated_value"),
+            "is_postventa": bool(o.get("is_postventa")),
+            "postventa_type": o.get("postventa_type"),
+        })
+    
+    return {
+        "plate": plate_upper,
+        "vehicle_data": last_client,
+        "orders": summary,
+        "total_orders": len(summary),
+    }
 
 
 # ==================== INVENTORY MODULE ====================

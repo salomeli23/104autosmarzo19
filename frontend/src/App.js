@@ -19,6 +19,7 @@ import { Notifications } from './pages/Notifications';
 import { Settings } from './pages/Settings';
 import CuttingView from './pages/CuttingView';
 import { Inventory } from './pages/Inventory';
+import { Postventa } from './pages/Postventa';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -181,6 +182,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'coordinador', 'corte']}>
                         <Inventory />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/postventa" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'asesor', 'coordinador']}>
+                        <Postventa />
                     </ProtectedRoute>
                 } 
             />
