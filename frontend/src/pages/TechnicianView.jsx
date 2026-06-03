@@ -257,7 +257,7 @@ export const TechnicianView = () => {
                         <Button 
                             onClick={handleCompleteService}
                             className="w-full brand-glow"
-                            disabled={processing}
+                            disabled={processing || !completionNotes.trim() || completionPhotos.length === 0}
                             data-testid="confirm-complete-btn"
                         >
                             <CheckCircle className="w-4 h-4 mr-2" />

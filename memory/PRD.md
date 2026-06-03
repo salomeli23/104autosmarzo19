@@ -4,9 +4,29 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-06-01
+2026-06-03
 
-## Última Sesión (2026-06-01) — Iteración 11 (Módulo Postventa / Garantías)
+## Última Sesión (2026-06-03) — Iteración 12 (Wizard Check-in+360 + Timers + Fixes)
+- **FIX P0:** `OrderResponse` ahora expone `service_completion_photos` y `service_completion_notes` para que las fotos del técnico sean visibles en cualquier GET de orden.
+- **FIX P0:** `/appointments` ya muestra las tags del Asesor (34 tags verificados). Agregado helper `slotIdForOrder` defensivo que bucketea órdenes con `time_slot` legacy ('08-12', '8:00 AM - 10:00 AM', etc.) al `franja_X` correcto usando `scheduled_time` o el primer dígito del slot.
+- **NUEVO (P1):** Fusión Check-in + Revisión 360° en un solo wizard. Nuevo componente `Inspection360Inline.jsx` con 2 sub-pasos (fotos / checklist + observaciones). Tras "Aprobar Ingreso" el flujo entra automáticamente al paso de Revisión 360°. Botón "Omitir (hacerlo después)" disponible. Cuando se completa, la orden queda en `en_revision`.
+- **NUEVO (P1):** Panel de Tiempos en cada card de la vista del Técnico (`/technician`) con relojes en vivo de Ingreso, Corte, Servicio y Bahía (tick cada 60s). Cada fila aparece sólo si el timestamp correspondiente existe.
+- **FIX UX:** Botón "Confirmar Completado" del técnico se deshabilita cuando faltan observaciones o fotos.
+- **Tests:** Backend 9/9 pytest (iter9 + regresiones iter8). Frontend: asesor-tags=34, kanban-tags=72, tiempos visibles en card en_proceso.
+
+## Sesión anterior (2026-06-01) — Iteración 11
+- Módulo Postventa / Garantías (búsqueda por placa, salto de facturación)
+- Vista Técnico con completar servicio + fotos + liberación automática de bahía
+- Porcentajes de polarizado por parte en Check-in (5%-70% + N/A)
+- Tag de asesor (`created_by_name`) propagado a citas y órdenes
+
+## Sesión anterior (2026-05-29) — Iteración 10
+- Módulo de Inventario con alertas de bajo stock por 13 tipos de rollos
+- Descuento automático del inventario al completar Corte
+
+## Sesión anterior — Iteración 9 (2026-05-28)
+- Liberar Bahía con PIN, observaciones y hasta 10 fotos
+- PIN de Completar Servicio configurable
 - **NUEVO (P0):** Página `/postventa` (admin/asesor/coordinador) con:
   - **Búsqueda por placa** → muestra datos del cliente y vehículo + historial de servicios anteriores con status, fecha, hora, servicios, valor
   - **Dialog "Agendar Postventa / Garantía"** con: select de tipo (Garantía | Postventa/Revisión), fecha, motivo libre, franja horaria, PIN
