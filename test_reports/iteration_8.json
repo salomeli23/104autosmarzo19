@@ -1,0 +1,65 @@
+{
+  "summary": "Iteration 8 backend + frontend validation. Backend: 7/7 pytest pass (creator metadata on /orders, complete-service happy path + 400 path, asesor-created visibility, postventa + history-by-plate, cutting auto-deduct, inventory alerts). Frontend: /service-orders shows 'Agendó: <nombre>' (59 hits) — feature WORKS. /appointments shows ZERO 'Asesor:' tags despite backend returning created_by_name for every order: root cause is mismatch between seed orders' time_slot (legacy '08-12') and slots config (franja_1/franja_2/franja_3). /inventory, /checkin (Panorámico + percentages reachable), /postventa, /technician all load. Discovered backend bug: OrderResponse omits service_completion_photos & service_completion_notes — photos stored but never returned to UI.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/orders/{id} (OrderResponse model)", "issue": "OrderResponse does NOT declare 'service_completion_photos' or 'service_completion_notes', so the photos persisted by POST /api/orders/complete-service are dropped from every GET. UI cannot show completion photos.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Appointments.jsx (line 420)", "issue": "acc[slot.id] = orders.filter(o => o.time_slot === slot.id) — seed/legacy orders for today have time_slot='08-12' but slots config returns ids franja_1/franja_2/franja_3, so every slot shows 'Sin citas agendadas' and the asesor-tag block (line 1213-1218) is never rendered. Backend payload IS correct (created_by_name present in 21/21 orders today). Fix path: either backfill order.time_slot values to franja_X or relax the filter (map old codes -> new ids).", "selector": "[data-testid^='asesor-tag-']", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "pytest TestOrdersExposeCreatorMetadata::test_get_orders_includes_creator_fields",
+    "pytest TestCompleteService::test_complete_service_releases_bahia_and_changes_status (status en_proceso->servicio_completado, bahia released, technician_notes persisted)",
+    "pytest TestCompleteService::test_complete_service_rejects_when_not_en_proceso (400 on agendado order)",
+    "pytest TestAsesorCreator::test_asesor_created_order_visible_with_role (created_by_role='asesor', name persisted)",
+    "pytest TestPostventa::test_create_postventa_and_history_by_plate (is_postventa=true, history-by-plate returns base+postventa)",
+    "pytest TestCuttingAutoDeduct::test_complete_cutting_deducts_meters (rollo metros_restantes decremented by meters_used=3 on PUT /cutting/{id}/complete)",
+    "pytest TestInventoryAlerts::test_alerts_endpoint_returns_severity (alerts list with severity ∈ {critical,high,medium})",
+    "/service-orders (admin): 'Agendó:' label appears 59 times across kanban cards",
+    "/inventory (admin): page loads, 'Rollo' visible, 'Nuevo' dialog opens",
+    "/checkin (admin): page reachable, polarizado labels (Panorámico/Polarizado/percentages) present",
+    "/postventa (asesor): page loads with Buscar Vehículo por Placa input + Buscar Historial button"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8_features.py",
+    "/app/test_reports/pytest/iteration8_results.xml"
+  ],
+  "action_items": [
+    "[HIGH] Add 'service_completion_photos: Optional[List[str]] = []' and 'service_completion_notes: Optional[str] = None' to OrderResponse in /app/backend/server.py (~L245-315). Otherwise the photos uploaded by técnico cannot be displayed anywhere in the UI.",
+    "[HIGH] /appointments asesor tag invisibility — root cause is time_slot mismatch on legacy/seed orders ('08-12' vs 'franja_1/2/3'). Run a one-shot backfill on existing orders, OR map legacy slot codes to franja_X inside Appointments.jsx ordersBySlot computation (line 420). The created_by_name field IS present in /api/orders payload; tag rendering code (line 1213) is correct.",
+    "[MED] /technician: could not validate the completion dialog end-to-end because no en_proceso order existed for the seeded técnico user during this run. Create a seed in_proceso order for QA before next regression. Backend complete-service flow itself is verified by pytest.",
+    "[LOW] PUT /cutting/{id}/complete order_history entry hardcodes details={'measurements': measurements, 'notes': notes} using the OUTER query-param variables, not the resolved final_measurements/final_notes (server.py L2211). Logs are wrong when JSON body is used."
+  ],
+  "critical_code_review_comments": [
+    "OrderResponse missing service_completion_photos / service_completion_notes — store-and-forget bug that silently drops up to 10 técnico photos per order.",
+    "Appointments.jsx ordersBySlot filter is brittle: any historical change in slot ids invalidates ALL prior orders' grouping. Suggest persisting a stable slot_code on the order or computing bucket from scheduled_time.",
+    "server.py still 2553 lines — flagged for split (same comment as iter7).",
+    "/cutting/{id}/complete order_history uses outer-scope 'measurements'/'notes' query vars instead of resolved final_measurements/final_notes (history records nulls when JSON body is used)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration8_features.py"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 pytest)",
+    "frontend": "83% (5/6 features verified; /appointments asesor-tag blocked by time_slot mismatch bug)"
+  },
+  "test_credentials": {
+    "admin": "admin@polarizadosya.com / admin123",
+    "asesor": "asesor@polarizadosya.com / asesor123",
+    "tecnico": "tecnico@polarizadosya.com / tecnico123",
+    "corte": "corte@polarizadosya.com / corte123",
+    "booking_pin": "00000",
+    "completion_pin": "11111"
+  },
+  "seed_data_creation": "Test orders/postventa + 1 TEST_Rollo inventory created via API during pytest run (TEST_ prefix). No teardown — main agent may clean if desired.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Today is 2026-06-03 per server (Wed). Slots returned by /api/slots/availability use ids franja_1/2/3; seed orders use time_slot='08-12'. Until backfill, /appointments asesor-tag assertion will be 0 even though backend payload is correct. /service-orders kanban DOES surface 'Agendó:' tags (verified 59 hits). When testing complete-service dialog in /technician, first drive a fresh order to en_proceso via API (or use the helper _drive_to_en_revision + assign + start-service in test_iteration8_features.py).",
+  "rca of the issue": "Appointments asesor-tag missing: orders.filter(o => o.time_slot === slot.id) returns [] because seed orders.time_slot ='08-12' while slot.id='franja_1'. Bucket empty → slotOrders.length===0 → 'Sin citas agendadas' render path, asesor-tag JSX never reached. Backend payload contains created_by_name='Admin PolarizadosYA'/'Carlos Asesor' for all 21 today orders (verified via curl). Repro: GET /api/orders?date=2026-06-03 → check time_slot values are all '08-12'; GET /api/slots/availability?date=2026-06-03 → slot.id all 'franja_X'. Fix: backfill order.time_slot mapping 08-12→franja_1 etc, or map legacy strings in Appointments.jsx ordersBySlot."
+}
