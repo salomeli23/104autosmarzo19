@@ -281,6 +281,8 @@ class OrderResponse(BaseModel):
     service_started_at: Optional[str] = None
     service_completed_at: Optional[str] = None
     technician_notes: Optional[str] = None
+    service_completion_notes: Optional[str] = None
+    service_completion_photos: List[str] = []
     # Facturacion data
     payment_method: Optional[str] = None
     payment_reference: Optional[str] = None

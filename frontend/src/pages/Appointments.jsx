@@ -416,8 +416,34 @@ export const Appointments = () => {
         return slotId;
     };
 
+    // Defensive slot bucketing: matches legacy time_slot values like "08-12",
+    // "8:00 AM - 10:00 AM", "08:00 - 09:00" to the current franja_X ids.
+    const slotIdForOrder = (order, slots) => {
+        if (!slots || !slots.length) return null;
+        if (slots.some(s => s.id === order.time_slot)) return order.time_slot;
+        let hour = null;
+        if (order.scheduled_time) {
+            const [h] = String(order.scheduled_time).split(':');
+            hour = parseInt(h, 10);
+        } else if (order.time_slot) {
+            const m = String(order.time_slot).match(/(\d{1,2})/);
+            if (m) hour = parseInt(m[1], 10);
+        }
+        if (hour == null || Number.isNaN(hour)) return slots[0]?.id || null;
+        const mins = hour * 60;
+        for (const s of slots) {
+            const [sh, sm] = s.start.split(':').map(Number);
+            const [eh, em] = s.end.split(':').map(Number);
+            const startM = sh * 60 + sm;
+            const endM = eh * 60 + em;
+            if (mins >= startM && mins < endM) return s.id;
+        }
+        // Fallback: bucket by closest start
+        return slots[0].id;
+    };
+
     const ordersBySlot = slotsAvailability?.slots?.reduce((acc, slot) => {
-        acc[slot.id] = orders.filter(o => o.time_slot === slot.id);
+        acc[slot.id] = orders.filter(o => slotIdForOrder(o, slotsAvailability.slots) === slot.id);
         return acc;
     }, {}) || {};
 

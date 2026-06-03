@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="2" time="3.545" timestamp="2026-06-03T18:32:13.184284+00:00" hostname="agent-env-f1e0b1cf-fea1-42da-bd2b-575e84bdd80b"><testcase classname="backend.tests.test_iteration9_features.TestCompletionFieldsExposed" name="test_completion_photos_and_notes_returned_after_complete_service" time="2.424" /><testcase classname="backend.tests.test_iteration9_features.TestPostventaCompletesToEntregado" name="test_postventa_complete_service_goes_to_entregado" time="1.030"><failure message="AssertionError: assign: 400 {&quot;detail&quot;:&quot;Esta orden requiere completar el Corte de Piezas antes de asignar al técnico.&quot;}&#10;assert 400 == 200&#10; +  where 400 = &lt;Response [400]&gt;.status_code">backend/tests/test_iteration9_features.py:95: in test_postventa_complete_service_goes_to_entregado
+    _checkin_assign_start(admin_token, post)
+backend/tests/test_iteration8_features.py:180: in _checkin_assign_start
+    assert r.status_code == 200, f"assign: {r.status_code} {r.text}"
+E   AssertionError: assign: 400 {"detail":"Esta orden requiere completar el Corte de Piezas antes de asignar al técnico."}
+E   assert 400 == 200
+E    +  where 400 = &lt;Response [400]&gt;.status_code</failure></testcase></testsuite></testsuites>

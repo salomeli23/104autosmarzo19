@@ -11,8 +11,37 @@ import { formatCurrency, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
 import { 
     Wrench, Play, CheckCircle, Clock, Car, User, 
-    Phone, AlertTriangle, Timer, FileText 
+    Phone, AlertTriangle, Timer, FileText, LogIn, Scissors, Warehouse
 } from 'lucide-react';
+
+// Formats elapsed time between an ISO timestamp and now as "Xh Ym"
+const formatElapsed = (isoStart, isoEnd = null) => {
+    if (!isoStart) return null;
+    const start = new Date(isoStart).getTime();
+    const end = isoEnd ? new Date(isoEnd).getTime() : Date.now();
+    const diffMs = end - start;
+    if (diffMs < 0) return '0m';
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 60) return `${mins}m`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}h ${m}m`;
+};
+
+// Small inline timer row used in technician cards
+const TimerRow = ({ icon: Icon, label, startedAt, completedAt, color = 'text-muted-foreground' }) => {
+    if (!startedAt) return null;
+    const elapsed = formatElapsed(startedAt, completedAt);
+    return (
+        <div className={`flex items-center justify-between text-xs ${color}`} data-testid={`timer-${label.toLowerCase()}`}>
+            <span className="flex items-center gap-1">
+                <Icon className="w-3 h-3" />
+                {label}
+            </span>
+            <span className="font-mono">{elapsed}{completedAt ? '' : ' (en curso)'}</span>
+        </div>
+    );
+};
 
 export const TechnicianView = () => {
     const { user } = useAuth();
@@ -47,6 +76,13 @@ export const TechnicianView = () => {
         const interval = setInterval(fetchOrders, 30000);
         return () => clearInterval(interval);
     }, [fetchOrders]);
+
+    // Live tick once per minute so elapsed times re-render
+    const [, setTick] = useState(0);
+    useEffect(() => {
+        const t = setInterval(() => setTick(v => v + 1), 60000);
+        return () => clearInterval(t);
+    }, []);
 
     const handleStartService = async (orderId) => {
         setProcessing(true);
@@ -300,7 +336,16 @@ export const TechnicianView = () => {
                                                         ))}
                                                     </div>
                                                 </div>
-                                                
+
+                                                {/* Tiempos de la orden */}
+                                                <div className="space-y-1.5 mb-4 p-2 rounded-lg bg-muted/40 border border-muted">
+                                                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 font-semibold">Tiempos</p>
+                                                    <TimerRow icon={LogIn} label="Ingreso" startedAt={order.ingreso_at} completedAt={order.inspection_at} color="text-blue-400" />
+                                                    <TimerRow icon={Scissors} label="Corte" startedAt={order.cutting_started_at} completedAt={order.cutting_completed_at} color="text-orange-400" />
+                                                    <TimerRow icon={Wrench} label="Servicio" startedAt={order.service_started_at} completedAt={order.service_completed_at} color="text-yellow-400" />
+                                                    <TimerRow icon={Warehouse} label="Bahía" startedAt={order.assigned_at} completedAt={order.service_completed_at} color="text-cyan-400" />
+                                                </div>
+
                                                 <Button 
                                                     className="w-full"
                                                     onClick={() => openCompleteDialog(order)}
@@ -361,6 +406,14 @@ export const TechnicianView = () => {
                                                         <ServiceBadge key={idx} service={typeof s === 'string' ? s : s.service} />
                                                     ))}
                                                 </div>
+                                            </div>
+
+                                            {/* Tiempos de la orden */}
+                                            <div className="space-y-1.5 mb-4 p-2 rounded-lg bg-muted/40 border border-muted">
+                                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 font-semibold">Tiempos</p>
+                                                <TimerRow icon={LogIn} label="Ingreso" startedAt={order.ingreso_at} completedAt={order.inspection_at} color="text-blue-400" />
+                                                <TimerRow icon={Scissors} label="Corte" startedAt={order.cutting_started_at} completedAt={order.cutting_completed_at} color="text-orange-400" />
+                                                <TimerRow icon={Warehouse} label="Bahía" startedAt={order.assigned_at} completedAt={null} color="text-cyan-400" />
                                             </div>
                                             
                                             <Button 

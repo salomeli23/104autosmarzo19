@@ -16,6 +16,7 @@ import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { formatCurrency } from '../lib/utils';
 import { generateOrderPDF } from '../components/OrderPDFGenerator';
+import { Inspection360Inline } from '../components/Inspection360Inline';
 import { toast } from 'sonner';
 import { 
     QrCode, Search, Car, User, Phone, FileCheck, 
@@ -353,7 +354,8 @@ export const CheckIn = () => {
                 toast.error('No se pudo generar el PDF de la orden');
             }
 
-            setStep(3);
+            // Continúa al paso de Revisión 360° dentro del mismo wizard
+            setStep('inspection');
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al procesar el ingreso');
         } finally {
@@ -1169,6 +1171,25 @@ export const CheckIn = () => {
                 </div>
             )}
 
+            {/* Step "inspection": Revisión 360° dentro del wizard */}
+            {step === 'inspection' && order && (
+                <Card className="max-w-3xl mx-auto">
+                    <CardHeader>
+                        <CardTitle className="font-heading text-xl flex items-center gap-2">
+                            <FileCheck className="w-5 h-5 text-purple-400" />
+                            Revisión 360° — {order.plate}
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <Inspection360Inline
+                            order={order}
+                            onComplete={() => setStep(3)}
+                            onSkip={() => setStep(3)}
+                        />
+                    </CardContent>
+                </Card>
+            )}
+
             {/* Step 3: Success */}
             {step === 3 && (
                 <Card className="max-w-lg mx-auto">
@@ -1177,9 +1198,10 @@ export const CheckIn = () => {
                             <div className="w-20 h-20 rounded-full bg-green-500/20 flex items-center justify-center">
                                 <CheckCircle className="w-10 h-10 text-green-500" />
                             </div>
-                            <h2 className="font-heading text-2xl">¡Ingreso Aprobado!</h2>
+                            <h2 className="font-heading text-2xl">¡Ingreso y Revisión 360° Completados!</h2>
                             <p className="text-muted-foreground">
-                                El vehículo ha sido registrado. Proceda a la revisión 360°.
+                                El vehículo está listo para Corte / Asignación. La orden quedó en estado
+                                <strong> En Revisión</strong>.
                             </p>
                             
                             {/* Download PDF Button */}
@@ -1214,10 +1236,10 @@ export const CheckIn = () => {
                                     Nuevo Check-in
                                 </Button>
                                 <Button 
-                                    onClick={() => window.location.href = '/inspections'}
+                                    onClick={() => window.location.href = '/service-orders'}
                                     className="brand-glow"
                                 >
-                                    Ir a Revisión 360°
+                                    Ver Tablero de Órdenes
                                     <ArrowRight className="w-4 h-4 ml-2" />
                                 </Button>
                             </div>

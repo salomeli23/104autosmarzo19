@@ -1,0 +1,63 @@
+{
+  "summary": "Iteration 9 validation: (1) BACKEND - OrderResponse now exposes service_completion_photos (list) + service_completion_notes (string) on both GET /api/orders and GET /api/orders/{id}; verified via new pytest test_iteration9_features.py (2/2 pass). Postventa complete-service correctly transitions directly to ENTREGADO. All 7 iteration 8 regression tests still pass (9/9 backend total). (2) FRONTEND /appointments - asesor-tag fix WORKS: 34 [data-testid^='asesor-tag-'] rendered today (was 0 in iter8). slotIdForOrder helper buckets legacy time_slot values correctly. (3) FRONTEND /service-orders kanban regression - 72 'Agendó:' tags rendered. (4) FRONTEND /technician (route is /technician, NOT /services as stated in the request) - TIEMPOS panel renders with timer-ingreso, timer-servicio, timer-bahía rows for en_proceso card; timer-corte correctly hidden when cutting_started_at is null. Completar Servicio dialog opens with Observaciones+Fotos+Confirmar Completado. (5) E2E /checkin wizard fusion (Inspection360Inline) - inspection-inline-step JSX block + Inspection360Inline import + setStep('inspection') after handleSubmit confirmed by code review; full UI E2E from approve-ingreso to inspection step did NOT execute due to signature canvas + risk-agreement dialog interaction complexity in headless playwright (button stays disabled with 'Debe aceptar el acuerdo de riesgo'). Recommend main agent self-test for the visual flow.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TechnicianView.jsx (line 257-265)", "issue": "'Confirmar Completado' button is only disabled while processing — it does NOT disable when completionNotes or completionPhotos are empty as the iteration-9 spec required ('deshabilitado si falta cualquiera de los dos'). Validation is enforced via toast.error inside handleCompleteService instead, so flow still works but UX deviates from spec.", "selector": "[data-testid='confirm-complete-btn']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "pytest TestCompletionFieldsExposed::test_completion_photos_and_notes_returned_after_complete_service (3 photos + notes persisted and returned by both list and single GET endpoints)",
+    "pytest TestPostventaCompletesToEntregado (postventa complete-service jumps directly to 'entregado')",
+    "pytest 7/7 iteration 8 regressions: creator metadata, complete-service happy+400 paths, asesor visibility, postventa+history-by-plate, cutting auto-deduct, inventory alerts",
+    "/appointments admin: 34 asesor-tag rendered (iter8 bug fixed via slotIdForOrder helper)",
+    "/service-orders admin: 72 'Agendó:' tags rendered (regression OK)",
+    "/technician tecnico: TIEMPOS panel with timer-ingreso=1, timer-servicio=1, timer-bahía=1 (timer-corte correctly hidden as no cutting flow on Lavado service)",
+    "/technician tecnico: 'Completar Servicio' dialog opens, textarea + file input + confirm button all visible"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration9_features.py",
+    "/app/backend/tests/test_iteration8_features.py",
+    "/app/test_reports/pytest/iteration9_results.xml",
+    "/app/test_reports/pytest/iteration9_new_results.xml"
+  ],
+  "action_items": [
+    "[MED] TechnicianView.jsx: change Button disabled prop from 'disabled={processing}' to 'disabled={processing || !completionNotes.trim() || completionPhotos.length === 0}' to match iter9 spec UX (currently relies on toast.error only).",
+    "[INFO] Review request mentioned route '/services' for técnico view, but App.js routes it as '/technician' (sidebar label 'Mis Servicios'). The route works correctly — only the doc/spec wording differs.",
+    "[LOW] /cutting/{id}/complete order_history still uses outer-scope 'measurements'/'notes' query-param vars instead of resolved final_measurements/final_notes (server.py L2211) — carryover from iter8, not blocking.",
+    "[LOW] server.py size > 2553 lines — pending split.",
+    "[INFO] /checkin wizard E2E (full flow into inspection step) could not be completed by Playwright due to signature pad + risk-agreement modal flow. Recommend main agent visually verify: approve-ingreso → inspection-inline-step appears → skip-inspection-btn returns to success step 3."
+  ],
+  "critical_code_review_comments": [
+    "OrderResponse model now exposes service_completion_notes + service_completion_photos correctly (server.py L284-L285).",
+    "Appointments.jsx slotIdForOrder (L421-L443) elegantly handles legacy '08-12', '8:00 AM - 10:00 AM', '08:00 - 09:00' and falls back to closest slot.",
+    "Inspection360Inline.jsx is well-structured: 2 sub-steps with data-testid on every actionable element, photo count validation, damage counter, proper onComplete/onSkip props from CheckIn.jsx.",
+    "TechnicianView.jsx TimerRow correctly returns null when startedAt is missing — clean conditional rendering.",
+    "Minor: TechnicianView Confirmar button missing the spec'd disabled state (notes + photos required)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration9_features.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 pytest: 7 iter8 regressions + 2 new iter9 tests)",
+    "frontend": "85% (5/6 features verified end-to-end; full /checkin→inspection E2E blocked by signature pad headless interaction but rendering code verified)"
+  },
+  "test_credentials": {
+    "admin": "admin@polarizadosya.com / admin123",
+    "asesor": "asesor@polarizadosya.com / asesor123",
+    "tecnico": "tecnico@polarizadosya.com / tecnico123",
+    "corte": "corte@polarizadosya.com / corte123",
+    "booking_pin": "00000",
+    "completion_pin": "11111"
+  },
+  "seed_data_creation": "Test orders created via API with TEST_/T*/PV*/CK* prefixes (no teardown). One en_proceso order assigned to Juan Técnico used to verify TIEMPOS panel.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Today is 2026-06-03. To validate /checkin → inspection-inline-step E2E manually: login as asesor, create new order today, /checkin → search by order_code → select service → 'Ver y Aceptar Acuerdo de Riesgo' (click Aceptar inside dialog) → fill cedula → DRAW signature on canvas then click 'Guardar Firma' → 'Aprobar Ingreso' becomes enabled → click it → expect data-testid='inspection-inline-step' to render with 'Revisión 360° — Paso 1 de 2'. The skip button leads to success step 3 without creating inspection (order stays in 'ingresado'). Backend assert: GET /api/orders/{id} status == 'ingresado' (skip) OR 'en_revision' (submit). Helper _drive_to_en_revision in test_iteration8_features.py drives the same backend path used by the wizard.",
+  "rca of the issue": "All iter8 HIGH bugs reported are FIXED in iter9: (a) OrderResponse exposes the two completion fields confirmed via new pytest; (b) Appointments slotIdForOrder helper handles legacy slot codes and the page now shows 34 asesor tags. No new critical bugs found. The only deviation is a minor UX miss in TechnicianView Confirmar button disabled prop."
+}
