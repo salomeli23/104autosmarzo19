@@ -218,6 +218,7 @@ class ServiceItem(BaseModel):
     price: float
     description: Optional[str] = None
     parts: Optional[List[str]] = None  # Partes del vehículo para polarizado (panoramico, luneta, etc.)
+    part_percentages: Optional[Dict[str, str]] = None  # {part_id: '35%', ...} para polarizado/ultrasecure
 
 class OrderCreate(BaseModel):
     client_name: str
@@ -308,6 +309,8 @@ class OrderResponse(BaseModel):
     original_order_id: Optional[str] = None
     # Metadata
     created_by: str
+    created_by_name: Optional[str] = None
+    created_by_role: Optional[str] = None
     created_at: str
     updated_at: Optional[str] = None
 
@@ -336,6 +339,7 @@ class AssignTechnician(BaseModel):
 class TechnicianReport(BaseModel):
     order_id: str
     notes: str
+    completion_photos: Optional[List[str]] = None  # base64 data URLs, max 10
 
 class PaymentApproval(BaseModel):
     order_id: str
@@ -519,6 +523,8 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "postventa_motivo": order.postventa_motivo if order.is_postventa else None,
         "original_order_id": order.original_order_id if order.is_postventa else None,
         "created_by": current_user["id"],
+        "created_by_name": current_user.get("name") or current_user.get("email"),
+        "created_by_role": current_user.get("role"),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": None
     }
@@ -1295,25 +1301,36 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
     is_postventa = bool(order.get("is_postventa"))
     new_status = OrderStatus.ENTREGADO.value if is_postventa else OrderStatus.SERVICIO_COMPLETADO.value
     
+    photos = (data.completion_photos or [])[:10]
+    
     update_data = {
         "status": new_status,
         "service_completed_at": datetime.now(timezone.utc).isoformat(),
         "technician_notes": data.notes,
+        "service_completion_notes": data.notes,
+        "service_completion_photos": photos,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     if is_postventa:
-        # Postventa/garantía no factura — se marca como entregado directamente
         update_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
         update_data["ready_for_delivery"] = True
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
     
+    # Auto-release bahía assigned to this order (technician completes → bahia is freed automatically)
+    bahia_id = order.get("bahia_id")
+    if bahia_id:
+        await db.bahias.update_one(
+            {"id": bahia_id},
+            {"$set": {"current_order_id": None, "assigned_at": None}}
+        )
+    
     # Log history
     await log_order_history(
-        data.order_id, "SERVICIO_COMPLETADO_POSTVENTA" if is_postventa else "SERVICIO_COMPLETADO",
+        data.order_id, "SERVICIO_COMPLETADO_POSTVENTA" if is_postventa else "SERVICIO_COMPLETADO_TECNICO",
         OrderStatus.EN_PROCESO.value, new_status,
         current_user["id"], current_user["name"],
-        {"technician_notes": data.notes, "is_postventa": is_postventa}
+        {"technician_notes": data.notes, "is_postventa": is_postventa, "photos_count": len(photos), "bahia_released": bahia_id}
     )
     
     if not is_postventa:

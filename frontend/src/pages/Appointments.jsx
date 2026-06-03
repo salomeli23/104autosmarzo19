@@ -14,7 +14,7 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
 import { CAR_BRANDS, CAR_MODELS, formatCurrency, isHoliday, COLOMBIA_HOLIDAYS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle, MessageCircle, Mail, Send } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle, MessageCircle, Mail, Send, UserCog } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -1210,6 +1210,12 @@ export const Appointments = () => {
                                                                         {order.brand && ` - ${order.brand}`}
                                                                         {order.model && ` ${order.model}`}
                                                                     </p>
+                                                                    {order.created_by_name && (
+                                                                        <p className="text-xs text-purple-400 flex items-center gap-1 mt-0.5" data-testid={`asesor-tag-${order.id}`}>
+                                                                            <UserCog className="w-3 h-3" />
+                                                                            Asesor: {order.created_by_name}
+                                                                        </p>
+                                                                    )}
                                                                 </div>
                                                                 <div className="flex items-center gap-2 shrink-0">
                                                                     <div className="hidden sm:flex gap-1">

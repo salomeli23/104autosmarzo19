@@ -339,6 +339,14 @@ export const ServiceOrders = () => {
                                                     ))}
                                                 </div>
 
+                                                {/* Asesor que agendó */}
+                                                {order.created_by_name && (
+                                                    <div className="flex items-center gap-1 text-xs text-purple-400">
+                                                        <User className="w-3 h-3" />
+                                                        <span>Agendó: {order.created_by_name}</span>
+                                                    </div>
+                                                )}
+
                                                 {/* Technician */}
                                                 {order.assigned_technician_name ? (
                                                     <div className="flex items-center gap-2 text-sm">

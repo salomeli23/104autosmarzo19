@@ -21,6 +21,7 @@ export const TechnicianView = () => {
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [completionNotes, setCompletionNotes] = useState('');
+    const [completionPhotos, setCompletionPhotos] = useState([]);
     const [processing, setProcessing] = useState(false);
 
     const fetchOrders = useCallback(async () => {
@@ -65,17 +66,23 @@ export const TechnicianView = () => {
             toast.error('Agrega observaciones del trabajo realizado');
             return;
         }
+        if (completionPhotos.length === 0) {
+            toast.error('Sube al menos una foto del servicio terminado');
+            return;
+        }
 
         setProcessing(true);
         try {
             await ordersAPI.completeService({
                 order_id: selectedOrder.id,
-                notes: completionNotes
+                notes: completionNotes,
+                completion_photos: completionPhotos,
             });
-            toast.success('Servicio completado');
+            toast.success('Servicio completado · Bahía liberada');
             setDialogOpen(false);
             setSelectedOrder(null);
             setCompletionNotes('');
+            setCompletionPhotos([]);
             fetchOrders();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al completar servicio');
@@ -84,9 +91,23 @@ export const TechnicianView = () => {
         }
     };
 
+    const handlePhotoCapture = (e) => {
+        const files = Array.from(e.target.files || []);
+        if (completionPhotos.length + files.length > 10) {
+            toast.error('Máximo 10 fotos');
+            return;
+        }
+        files.forEach(f => {
+            const reader = new FileReader();
+            reader.onload = (ev) => setCompletionPhotos(prev => [...prev, ev.target.result]);
+            reader.readAsDataURL(f);
+        });
+    };
+
     const openCompleteDialog = (order) => {
         setSelectedOrder(order);
         setCompletionNotes('');
+        setCompletionPhotos([]);
         setDialogOpen(true);
     };
 
@@ -163,6 +184,40 @@ export const TechnicianView = () => {
                                 data-testid="completion-notes"
                             />
                         </div>
+                        
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium flex items-center gap-2">
+                                <FileText className="w-4 h-4" />
+                                Fotos del Servicio Terminado * ({completionPhotos.length}/10)
+                            </label>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                onChange={handlePhotoCapture}
+                                disabled={completionPhotos.length >= 10}
+                                className="w-full text-sm"
+                                data-testid="completion-photo-input"
+                            />
+                            {completionPhotos.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mt-2">
+                                    {completionPhotos.map((p, i) => (
+                                        <div key={i} className="relative w-16 h-16 rounded overflow-hidden border">
+                                            <img src={p} alt={`f${i}`} className="w-full h-full object-cover" />
+                                            <button
+                                                type="button"
+                                                onClick={() => setCompletionPhotos(prev => prev.filter((_, idx) => idx !== i))}
+                                                className="absolute top-0 right-0 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-bl"
+                                            >×</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                                Al confirmar, la bahía se libera automáticamente y la orden pasa a Facturación.
+                            </p>
+                        </div>
+                        
                         <Button 
                             onClick={handleCompleteService}
                             className="w-full brand-glow"

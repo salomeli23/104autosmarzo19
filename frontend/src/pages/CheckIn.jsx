@@ -154,13 +154,24 @@ export const CheckIn = () => {
         { id: 'panoramico', name: 'Panorámico' },
         { id: 'vidrio_copiloto', name: 'Vidrio Copiloto' },
         { id: 'vidrio_piloto', name: 'Vidrio Piloto' },
-        { id: 'vidrio_trasero', name: 'Vidrio Trasero' },
+        { id: 'vidrio_trasero_piloto', name: 'Vidrio Trasero Piloto' },
         { id: 'vidrio_trasero_copiloto', name: 'Vidrio Trasero Copiloto' },
+        { id: 'vidrio_trasero', name: 'Vidrio Trasero (Panorámico Trasero)' },
         { id: 'trasero', name: 'Trasero' },
         { id: 'luneta', name: 'Luneta' },
         { id: 'sunroof', name: 'Sunroof' },
         { id: 'custodias', name: 'Custodias' },
     ];
+    
+    // Porcentajes de polarizado disponibles
+    const TINT_PERCENTAGES = ['5%', '7%', '10%', '12%', '15%', '20%', '30%', '35%', '50%', '70%'];
+    
+    // Returns true if service is polarizado/ultrasecure (requires percentage per part)
+    const serviceRequiresPercentage = (serviceId) => {
+        const lower = (serviceId || '').toLowerCase();
+        return lower.includes('polarizado') || lower.includes('ultrasecure') ||
+               ['nanooptik', 'huperoptik', 'black_ceramic', 'ultraoptik', 'ceramic_i3', 'spectra', 'edge'].some(k => lower.includes(k));
+    };
 
     // Check if service requires parts selection
     const serviceRequiresParts = (serviceId) => {
@@ -313,7 +324,8 @@ export const CheckIn = () => {
                 service: svc.serviceId,
                 price: svc.price,
                 description: `${svc.category} - ${svc.serviceName}`,
-                parts: svc.parts || []  // Include selected vehicle parts
+                parts: svc.parts || [],
+                part_percentages: svc.part_percentages || {},
             }));
 
             await ordersAPI.approveIngreso({
@@ -893,38 +905,71 @@ export const CheckIn = () => {
                                                     <div className="mt-3 pt-3 border-t border-border/50">
                                                         <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
                                                             <Car className="w-3 h-3" />
-                                                            Selecciona las partes del vehículo:
+                                                            Selecciona las partes del vehículo
+                                                            {serviceRequiresPercentage(svc.serviceId) && (
+                                                                <span className="text-amber-400">· Indica el % por parte</span>
+                                                            )}:
                                                         </p>
-                                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                                        <div className="space-y-2">
                                                             {VEHICLE_PARTS.map((part) => {
                                                                 const isPartSelected = svc.parts?.includes(part.id);
+                                                                const showPct = serviceRequiresPercentage(svc.serviceId);
+                                                                const pctValue = svc.part_percentages?.[part.id] || (isPartSelected ? '' : 'N/A');
                                                                 return (
                                                                     <div
                                                                         key={part.id}
-                                                                        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+                                                                        className={`flex items-center gap-2 p-2 rounded transition-colors ${
                                                                             isPartSelected 
                                                                                 ? 'bg-cyan-500/20 border border-cyan-500/40' 
-                                                                                : 'bg-muted/30 hover:bg-muted/50 border border-transparent'
+                                                                                : 'bg-muted/30 border border-transparent'
                                                                         }`}
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            handlePartToggle(svc.serviceId, part.id);
-                                                                        }}
                                                                     >
-                                                                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
-                                                                            isPartSelected 
-                                                                                ? 'bg-cyan-500 border-cyan-500' 
-                                                                                : 'border-muted-foreground/50'
-                                                                        }`}>
-                                                                            {isPartSelected && (
-                                                                                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                                                                </svg>
-                                                                            )}
+                                                                        <div
+                                                                            className="flex items-center gap-2 flex-1 cursor-pointer"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handlePartToggle(svc.serviceId, part.id);
+                                                                            }}
+                                                                        >
+                                                                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                                                                                isPartSelected 
+                                                                                    ? 'bg-cyan-500 border-cyan-500' 
+                                                                                    : 'border-muted-foreground/50'
+                                                                            }`}>
+                                                                                {isPartSelected && (
+                                                                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                                                                    </svg>
+                                                                                )}
+                                                                            </div>
+                                                                            <span className="text-xs select-none">{part.name}</span>
                                                                         </div>
-                                                                        <span className="text-xs select-none">
-                                                                            {part.name}
-                                                                        </span>
+                                                                        {showPct && (
+                                                                            <select
+                                                                                className="text-xs px-2 py-1 rounded border border-input bg-background"
+                                                                                value={pctValue}
+                                                                                onChange={(e) => {
+                                                                                    const val = e.target.value;
+                                                                                    setSelectedServices(prev => prev.map(s => {
+                                                                                        if (s.serviceId !== svc.serviceId) return s;
+                                                                                        const newPct = { ...(s.part_percentages || {}) };
+                                                                                        if (val === 'N/A') {
+                                                                                            delete newPct[part.id];
+                                                                                        } else {
+                                                                                            newPct[part.id] = val;
+                                                                                        }
+                                                                                        return { ...s, part_percentages: newPct };
+                                                                                    }));
+                                                                                }}
+                                                                                disabled={!isPartSelected}
+                                                                                data-testid={`pct-${svc.serviceId}-${part.id}`}
+                                                                            >
+                                                                                <option value="N/A">N/A</option>
+                                                                                {TINT_PERCENTAGES.map(p => (
+                                                                                    <option key={p} value={p}>{p}</option>
+                                                                                ))}
+                                                                            </select>
+                                                                        )}
                                                                     </div>
                                                                 );
                                                             })}
