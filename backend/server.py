@@ -7,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone, timedelta
 import jwt
@@ -299,6 +299,7 @@ class OrderResponse(BaseModel):
     cutting_measurements: Optional[str] = None
     cutting_notes: Optional[str] = None
     cutting_part_measurements: Optional[Dict[str, str]] = None  # {part_id: "120x60 cm"}
+    cutting_part_materials: Optional[Dict[str, Dict[str, Any]]] = None  # {part_id: {tipo_rollo, inventory_item_id}}
     ppf_vehicle_serial: Optional[str] = None
     ppf_vehicle_model: Optional[str] = None
     # Bahia data
@@ -2201,8 +2202,11 @@ class CuttingCompleteRequest(BaseModel):
     part_measurements: Optional[Dict[str, str]] = None  # {part_id: "120x60 cm"}
     ppf_vehicle_serial: Optional[str] = None
     ppf_vehicle_model: Optional[str] = None
-    inventory_item_id: Optional[str] = None  # rollo utilizado para descuento automático
+    inventory_item_id: Optional[str] = None  # rollo utilizado para descuento automático (modo agregado)
     meters_used: Optional[float] = None  # override manual (si no, se calcula desde part_measurements)
+    # Descuento granular: por pieza, qué rollo usar
+    # {part_id: {"tipo_rollo": "spectra", "inventory_item_id": "INV-001"}}
+    part_materials: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 @api_router.put("/cutting/{order_id}/complete")
@@ -2260,6 +2264,7 @@ async def complete_cutting(
         "cutting_measurements": final_measurements,
         "cutting_notes": final_notes,
         "cutting_part_measurements": part_measurements or None,
+        "cutting_part_materials": p.part_materials or None,
     }
     if ppf_vehicle_serial is not None:
         update_fields["ppf_vehicle_serial"] = ppf_vehicle_serial
@@ -2268,37 +2273,73 @@ async def complete_cutting(
     
     await db.orders.update_one({"id": order_id}, {"$set": update_fields})
     
-    # Auto-deduct from inventory if linked
+    # Auto-deduct from inventory
+    # Modo granular (part_materials) tiene prioridad sobre inventory_item_id agregado
     inventory_deduction = None
-    if p.inventory_item_id:
-        rollo = await db.inventory.find_one({"id": p.inventory_item_id})
+    deductions_per_rollo = {}  # {inventory_item_id: meters_used}
+
+    if p.part_materials:
+        # Agrupar metros por inventory_item_id basado en cada pieza
+        for part_id, mat in (p.part_materials or {}).items():
+            inv_id = (mat or {}).get("inventory_item_id")
+            if not inv_id:
+                continue
+            measurement = (part_measurements or {}).get(part_id) or ""
+            meters = _meters_from_part_measurements({part_id: measurement})
+            if meters and meters > 0:
+                deductions_per_rollo[inv_id] = deductions_per_rollo.get(inv_id, 0) + meters
+    elif p.inventory_item_id:
+        # Modo legacy (un solo rollo)
+        meters_used = p.meters_used
+        if meters_used is None:
+            meters_used = _meters_from_part_measurements(part_measurements)
+        if meters_used and meters_used > 0:
+            deductions_per_rollo[p.inventory_item_id] = meters_used
+
+    deduction_results = []
+    for inv_id, meters_used in deductions_per_rollo.items():
+        rollo = await db.inventory.find_one({"id": inv_id})
         if rollo and rollo.get("tipo_articulo") == "rollo":
-            # Calculate meters used
-            meters_used = p.meters_used
-            if meters_used is None:
-                meters_used = _meters_from_part_measurements(part_measurements)
-            if meters_used and meters_used > 0:
-                new_remaining = max(0, (rollo.get("metros_restantes") or 0) - meters_used)
-                await db.inventory.update_one(
-                    {"id": p.inventory_item_id},
-                    {"$set": {"metros_restantes": new_remaining, "updated_at": datetime.now(timezone.utc).isoformat()}}
-                )
-                await db.inventory_movements.insert_one({
-                    "id": str(uuid.uuid4()),
-                    "inventory_item_id": p.inventory_item_id,
-                    "type": "deduct_auto_cutting",
-                    "metros": meters_used,
-                    "cantidad": None,
-                    "reason": f"Corte completado - Orden {order.get('order_code','')}",
-                    "order_id": order_id,
-                    "user_id": current_user["id"],
-                    "user_name": current_user.get("name") or current_user.get("email"),
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                })
-                update_fields["inventory_deducted_from"] = p.inventory_item_id
-                update_fields["inventory_meters_used"] = meters_used
-                await db.orders.update_one({"id": order_id}, {"$set": {"inventory_deducted_from": p.inventory_item_id, "inventory_meters_used": meters_used}})
-                inventory_deduction = {"item_id": p.inventory_item_id, "meters_used": meters_used, "new_remaining": new_remaining}
+            new_remaining = max(0, (rollo.get("metros_restantes") or 0) - meters_used)
+            await db.inventory.update_one(
+                {"id": inv_id},
+                {"$set": {"metros_restantes": new_remaining, "updated_at": datetime.now(timezone.utc).isoformat()}}
+            )
+            await db.inventory_movements.insert_one({
+                "id": str(uuid.uuid4()),
+                "inventory_item_id": inv_id,
+                "type": "deduct_auto_cutting",
+                "metros": round(meters_used, 2),
+                "cantidad": None,
+                "reason": f"Corte completado - Orden {order.get('order_code','')}",
+                "order_id": order_id,
+                "user_id": current_user["id"],
+                "user_name": current_user.get("name") or current_user.get("email"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            deduction_results.append({
+                "item_id": inv_id,
+                "rollo_codigo": rollo.get("codigo"),
+                "rollo_nombre": rollo.get("nombre"),
+                "tipo_rollo": rollo.get("tipo_rollo"),
+                "meters_used": round(meters_used, 2),
+                "new_remaining": round(new_remaining, 2),
+            })
+
+    if deduction_results:
+        # legacy single-rollo fields kept for backward compatibility
+        first = deduction_results[0]
+        await db.orders.update_one(
+            {"id": order_id},
+            {"$set": {
+                "inventory_deducted_from": first["item_id"],
+                "inventory_meters_used": first["meters_used"],
+                "inventory_deductions": deduction_results,
+            }}
+        )
+        inventory_deduction = (
+            deduction_results[0] if len(deduction_results) == 1 else {"multi": deduction_results}
+        )
     await db.alerts.insert_one({
         "id": str(uuid.uuid4()),
         "type": "corte_completado",

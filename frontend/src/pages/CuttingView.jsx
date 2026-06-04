@@ -23,6 +23,36 @@ const CuttingView = () => {
     const [rollos, setRollos] = useState([]);
     const [selectedRolloId, setSelectedRolloId] = useState('');
     const [metersOverride, setMetersOverride] = useState('');
+    // Material y rollo POR PIEZA: { part_id: { tipo_rollo, inventory_item_id } }
+    const [partMaterials, setPartMaterials] = useState({});
+
+    // Lookup del porcentaje elegido por el cliente en el check-in para esta parte
+    const getPartPercentage = (order, partId) => {
+        const services = order?.cutting_services || order?.services || [];
+        for (const svc of services) {
+            const pct = (svc.part_percentages || {})[partId];
+            if (pct) return pct;
+        }
+        return null;
+    };
+
+    // Tipos de rollo disponibles (alineado con Inventory.jsx)
+    const ROLLO_TYPES = [
+        { value: 'spectra', label: 'Spectra' },
+        { value: 'black_ceramic', label: 'Black Ceramic' },
+        { value: 'ceramic_i3', label: 'Ceramic i3' },
+        { value: 'upper_hoptik', label: 'Upper Hoptik' },
+        { value: 'edge', label: 'Edge' },
+        { value: 'clear_4mil', label: 'Clear 4mil' },
+        { value: 'clear_7mil', label: 'Clear 7mil' },
+        { value: 'clear_12mil', label: 'Clear 12mil' },
+        { value: 'clear_1500_micras', label: 'Clear 1500 micras' },
+        { value: 'xpel_gloss', label: 'Xpel Gloss' },
+        { value: 'ppf_xpel_ultimate', label: 'PPF Xpel Ultimate' },
+        { value: 'ppf_autoban', label: 'PPF Autoban' },
+        { value: 'ppf_techo', label: 'PPF Techo' },
+    ];
+    const labelForTipoRollo = (tipo) => ROLLO_TYPES.find(t => t.value === tipo)?.label || tipo;
 
     // Partes del vehículo (mismo set que el check-in)
     const VEHICLE_PARTS = [
@@ -105,7 +135,20 @@ const CuttingView = () => {
                 ppf_vehicle_serial: isPPF ? ppfSerial.trim() : null,
                 ppf_vehicle_model: isPPF ? ppfModel.trim() : null,
             };
-            if (selectedRolloId) {
+            // Modo granular por pieza (material + marca/rollo)
+            const cleanedMaterials = {};
+            Object.entries(partMaterials).forEach(([pid, m]) => {
+                if (m && (m.tipo_rollo || m.inventory_item_id)) {
+                    cleanedMaterials[pid] = {
+                        tipo_rollo: m.tipo_rollo || null,
+                        inventory_item_id: m.inventory_item_id || null,
+                    };
+                }
+            });
+            if (Object.keys(cleanedMaterials).length > 0) {
+                body.part_materials = cleanedMaterials;
+            } else if (selectedRolloId) {
+                // Modo legacy agregado
                 body.inventory_item_id = selectedRolloId;
                 if (metersOverride && parseFloat(metersOverride) > 0) {
                     body.meters_used = parseFloat(metersOverride);
@@ -114,13 +157,19 @@ const CuttingView = () => {
             const res = await cuttingAPI.complete(selectedOrder.id, body);
             const dedu = res.data?.inventory_deduction;
             if (dedu) {
-                toast.success(`Corte completado · ${dedu.meters_used} m descontados (quedan ${dedu.new_remaining.toFixed(2)} m)`);
+                if (dedu.multi) {
+                    const parts = dedu.multi.map(d => `${d.rollo_codigo || d.tipo_rollo || d.item_id}: ${d.meters_used}m (quedan ${d.new_remaining}m)`).join(' · ');
+                    toast.success(`Corte completado · ${parts}`);
+                } else {
+                    toast.success(`Corte completado · ${dedu.meters_used} m descontados (quedan ${dedu.new_remaining.toFixed(2)} m)`);
+                }
             } else {
                 toast.success('Corte completado - Listo para asignación');
             }
             setCompleteDialog(false);
             setSelectedOrder(null);
             setPartMeasurements({});
+            setPartMaterials({});
             setNotes('');
             setPpfSerial('');
             setPpfModel('');
@@ -141,6 +190,7 @@ const CuttingView = () => {
             if (selectedSet.has(p.id)) initial[p.id] = '';
         });
         setPartMeasurements(initial);
+        setPartMaterials({});
         setNotes('');
         setPpfSerial(order?.ppf_vehicle_serial || '');
         setPpfModel(order?.ppf_vehicle_model || '');
@@ -528,32 +578,106 @@ const CuttingView = () => {
                                 </div>
                             )}
 
-                            {/* Medidas por parte */}
+                            {/* Medidas por pieza */}
                             <div className="space-y-3">
                                 <Label className="flex items-center gap-2 font-medium">
                                     <Ruler className="w-4 h-4" />
-                                    Medidas por pieza (en centímetros)
+                                    Medidas, porcentaje y material por pieza
                                 </Label>
                                 <p className="text-xs text-muted-foreground -mt-1">
-                                    Ingresa la medida de cada pieza cortada (ej: 120x60).
+                                    Cada pieza muestra el porcentaje elegido por el cliente en el check-in.
+                                    Selecciona el material (tipo de rollo) y el rollo específico del stock para descontar automáticamente.
                                 </p>
                                 <div className="grid sm:grid-cols-2 gap-3">
                                     {VEHICLE_PARTS.map((part) => {
                                         const wasSelected = orderSelectedParts(selectedOrder).has(part.id);
+                                        const pct = getPartPercentage(selectedOrder, part.id);
+                                        const material = partMaterials[part.id]?.tipo_rollo || '';
+                                        const rolloId = partMaterials[part.id]?.inventory_item_id || '';
+                                        // Filtrar rollos por material seleccionado
+                                        const filteredRollos = material
+                                            ? rollos.filter(r => r.tipo_rollo === material)
+                                            : rollos;
+                                        const selectedRollo = rollos.find(r => r.id === rolloId);
                                         return (
-                                            <div key={part.id} className={`space-y-1 p-2 rounded ${wasSelected ? 'bg-cyan-500/5 border border-cyan-500/20' : 'bg-muted/30'}`}>
-                                                <Label htmlFor={`pm-${part.id}`} className="text-xs flex items-center gap-1">
-                                                    {wasSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
-                                                    {part.label}
-                                                </Label>
+                                            <div
+                                                key={part.id}
+                                                className={`space-y-2 p-3 rounded-lg ${wasSelected ? 'bg-cyan-500/5 border border-cyan-500/30' : 'bg-muted/30 border border-border'}`}
+                                                data-testid={`part-block-${part.id}`}
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <Label htmlFor={`pm-${part.id}`} className="text-sm font-medium flex items-center gap-1.5">
+                                                        {wasSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+                                                        {part.label}
+                                                    </Label>
+                                                    {pct ? (
+                                                        <span
+                                                            className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
+                                                            data-testid={`part-pct-${part.id}`}
+                                                        >
+                                                            {pct}
+                                                        </span>
+                                                    ) : wasSelected ? (
+                                                        <span className="text-[10px] text-muted-foreground">sin %</span>
+                                                    ) : null}
+                                                </div>
                                                 <Input
                                                     id={`pm-${part.id}`}
                                                     value={partMeasurements[part.id] ?? ''}
                                                     onChange={(e) => setPartMeasurements(prev => ({ ...prev, [part.id]: e.target.value }))}
-                                                    placeholder="Ej: 120x60 cm"
+                                                    placeholder="Medida (ej: 120x60 cm)"
                                                     className="text-sm h-8"
                                                     data-testid={`part-measurement-${part.id}`}
                                                 />
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <select
+                                                        className="px-2 py-1.5 rounded border border-input bg-background text-xs"
+                                                        value={material}
+                                                        onChange={(e) => {
+                                                            const newTipo = e.target.value;
+                                                            setPartMaterials(prev => ({
+                                                                ...prev,
+                                                                [part.id]: {
+                                                                    tipo_rollo: newTipo || null,
+                                                                    // reset rollo si no matchea el nuevo material
+                                                                    inventory_item_id: rollos.find(r => r.id === prev[part.id]?.inventory_item_id && r.tipo_rollo === newTipo)?.id || null,
+                                                                }
+                                                            }));
+                                                        }}
+                                                        data-testid={`part-material-${part.id}`}
+                                                    >
+                                                        <option value="">Material…</option>
+                                                        {ROLLO_TYPES.map(t => (
+                                                            <option key={t.value} value={t.value}>{t.label}</option>
+                                                        ))}
+                                                    </select>
+                                                    <select
+                                                        className="px-2 py-1.5 rounded border border-input bg-background text-xs"
+                                                        value={rolloId}
+                                                        onChange={(e) => setPartMaterials(prev => ({
+                                                            ...prev,
+                                                            [part.id]: {
+                                                                ...(prev[part.id] || {}),
+                                                                inventory_item_id: e.target.value || null,
+                                                            }
+                                                        }))}
+                                                        disabled={!material}
+                                                        data-testid={`part-rollo-${part.id}`}
+                                                    >
+                                                        <option value="">Marca / Rollo…</option>
+                                                        {filteredRollos.map(r => (
+                                                            <option key={r.id} value={r.id}>
+                                                                {r.codigo} · {r.nombre} ({(r.metros_restantes ?? 0).toFixed(2)}m)
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                {selectedRollo && (
+                                                    <p className="text-[11px] text-cyan-400 flex items-center gap-1" data-testid={`part-rollo-info-${part.id}`}>
+                                                        <Package className="w-3 h-3" />
+                                                        {labelForTipoRollo(selectedRollo.tipo_rollo)} · {selectedRollo.codigo} · quedan {(selectedRollo.metros_restantes ?? 0).toFixed(2)}m
+                                                    </p>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -576,11 +700,12 @@ const CuttingView = () => {
                                 />
                             </div>
 
-                            {/* Inventory rollo selection */}
+                            {/* Rollo agregado (alternativa - solo si NO se asignó por pieza) */}
+                            {Object.values(partMaterials).every(m => !m?.inventory_item_id) && (
                             <div className="space-y-2 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
                                 <Label className="flex items-center gap-2 text-cyan-400 font-medium">
                                     <Package className="w-4 h-4" />
-                                    Rollo utilizado (descontar del inventario)
+                                    Rollo único para todo el corte (opcional, si no se especificó por pieza)
                                 </Label>
                                 <select
                                     className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
@@ -614,6 +739,7 @@ const CuttingView = () => {
                                     </div>
                                 )}
                             </div>
+                            )}
                         </div>
                     )}
                     <DialogFooter>

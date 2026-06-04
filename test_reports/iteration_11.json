@@ -1,0 +1,65 @@
+{
+  "summary": "Iteration 11 validation: PolarizadosYA cutting flow now supports granular per-part material + rollo selection with multi-rollo inventory deduction. (1) BACKEND new pytest test_iteration11_features.py = 4/4 PASS validating: (a) two parts on two different rollos -> response contains inventory_deduction.multi with 2 entries, each rollo deducted independently (1.5m + 1.0m from 50m start), 2 inventory_movements rows; (b) two parts on the SAME rollo -> meters SUMMED into ONE deduction (1.2 + 0.8 = 2.0m), single inventory_movement; (c) order.cutting_part_materials persists and is returned by GET /api/orders/{id} (OrderResponse exposes the field); (d) legacy aggregated mode (inventory_item_id without part_materials) STILL works -> sums all part_measurements meters and deducts from single rollo. (2) FULL REGRESSION: pytest iter8 + iter9 + iter10 + iter11 = 21/21 PASS in 22.12s. (3) FRONTEND verified via browser automation (corte role @ /cutting): 'Completar Corte' dialog opens, renders exactly 9 part-block-<id> entries with 9 part-measurement-<id> inputs, 9 part-material-<id> selects (ROLLO_TYPES with 13 options each), 9 part-rollo-<id> selects (initially disabled until material is chosen). Selecting material=spectra in part-material-panoramico correctly filtered part-rollo-panoramico to 14 spectra rollos showing 'INV-XXXXX · <nombre> (<metros>m)' label. Selecting a rollo rendered part-rollo-info-panoramico with text 'Spectra · INV-00018 · quedan 29.00m'. (4) Badge logic part-pct-<id>: code-reviewed L613-619 CuttingView.jsx; getPartPercentage(order, partId) looks up cutting_services[].part_percentages[partId]. The legacy ASD456 order with no part_percentages correctly showed 'sin %' label (badge not rendered). NOTE: a newly created order via /api/orders with part_percentages on a 'Polarizado 3M Crystalline' service did NOT appear in /api/cutting/pending even after being driven to en_corte status — server.py L2143 cutting_services filter list does not match this service name; this is a pre-existing issue, NOT introduced by iter11. ASD456 (Polarizado/Ultrasecure - Nanooptik) is the only order matching the filter.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/cutting/pending", "issue": "Filter at server.py L2143 (cutting_services list at L2118) does not match service names like 'Polarizado 3M Crystalline'. New polarizado orders may not appear in cutting queue. Only orders with names containing tokens like 'ultrasecure'/'polarizado'/'ppf' (depending on the cutting_services list contents) are surfaced. Pre-existing — not iter11 scope, but blocks creating fresh test orders via the new check-in -> en_corte flow for E2E validation of the part-pct badge."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "pytest iter11 TestPartMaterialsMultiRollo::test_two_parts_two_different_rollos_deducts_each (inventory_deduction.multi with 2 rollos, 1.5m + 1.0m deducted, 2 movements)",
+    "pytest iter11 TestPartMaterialsMultiRollo::test_two_parts_same_rollo_sums_meters_single_movement (1.2 + 0.8 = 2.0m summed into ONE deduction, 1 movement)",
+    "pytest iter11 TestPartMaterialsPersistence::test_order_cutting_part_materials_persisted_and_returned (GET /orders/{id} returns cutting_part_materials)",
+    "pytest iter11 TestLegacyAggregatedInventory::test_legacy_inventory_item_id_without_part_materials_still_works (legacy aggregated mode = 2.5m deducted)",
+    "pytest iter8+iter9+iter10 regression (17/17 PASS) + iter11 (4/4 PASS) = 21/21",
+    "FRONTEND /cutting (corte role): Completar Corte dialog renders 9 part-block-<id> entries with measurement input + material select + rollo select",
+    "FRONTEND material filter works: selecting 'spectra' on part-material-panoramico filters part-rollo-panoramico to spectra-only options (verified 14 spectra rollos)",
+    "FRONTEND option label format: 'INV-XXXXX · <nombre> (<X.XX>m)' confirmed",
+    "FRONTEND part-rollo-info-<id> renders 'Spectra · INV-00018 · quedan 29.00m' after selecting a rollo",
+    "FRONTEND 'sin %' fallback shown for orders without part_percentages (ASD456 in en_corte, no part_percentages)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11_features.py",
+    "/app/test_reports/pytest/iteration11_results.xml",
+    "/app/test_reports/pytest/iteration11_full_results.xml"
+  ],
+  "action_items": [
+    "[NONE iter11-blocking] All iter11 features are correctly implemented and validated.",
+    "[LOW pre-existing] /api/cutting/pending service-name filter (server.py L2118-2143) does not match 'Polarizado 3M Crystalline'. Either expand the cutting_services list to include token 'polarizado' (broad match) or use a substring check that catches '3m'/'crystalline'/'polarizado'. Outside iter11 scope; report for future cleanup."
+  ],
+  "critical_code_review_comments": [
+    "server.py L2199-2209: CuttingCompleteRequest.part_materials is well-typed as Dict[str, Dict[str, Any]] with backward-compat fields (inventory_item_id, meters_used) kept.",
+    "server.py L2281-2297: deductions_per_rollo aggregation is correct — uses {inv_id: meters} dict that sums on same key (covers 'two parts same rollo' case in a clean way).",
+    "server.py L2288: _meters_from_part_measurements({part_id: measurement}) is called per-part, ensuring each part's max-dimension/100 contribution is added to the matching rollo (not the full sum).",
+    "server.py L2340-2342: inventory_deduction returns single object for 1 rollo and {multi: [...]} for >1 — clear distinction for frontend.",
+    "server.py L300-302: OrderResponse correctly exposes cutting_part_materials field. Note: cutting_part_materials is updated EVEN IF deductions_per_rollo is empty (L2267), so the field always reflects the user's selection.",
+    "CuttingView.jsx L40-54: ROLLO_TYPES list is hardcoded — should ideally be derived from /api/inventory or a backend constant to avoid drift. Minor maintainability concern.",
+    "CuttingView.jsx L643: when material changes, the conditional reset for inventory_item_id uses `prev[part.id]?.inventory_item_id` correctly — but the reset finds existing match in `rollos` with `r.tipo_rollo === newTipo`; since the inventory_item_id is reset only if the prior rollo doesn't match the new tipo, this is a subtle but correct re-selection.",
+    "CuttingView.jsx L601: selectedRollo lookup uses rollos.find(r => r.id === rolloId) — good. part-rollo-info-<id> with data-testid is present (L676).",
+    "DialogContent warning ('Missing Description or aria-describedby') appears in console — non-blocking accessibility hint from Radix; main agent may add DialogDescription if desired."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11_features.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 pytest pass: 7 iter8 + 2 iter9 + 8 iter10 + 4 iter11)",
+    "frontend": "100% (9 part-blocks + material filter + rollo info rendering + 'sin %' fallback all verified)"
+  },
+  "test_credentials": {
+    "admin": "admin@polarizadosya.com / admin123",
+    "corte": "corte@polarizadosya.com / corte123",
+    "asesor": "asesor@polarizadosya.com / asesor123",
+    "tecnico": "tecnico@polarizadosya.com / tecnico123",
+    "booking_pin": "00000"
+  },
+  "seed_data_creation": "Created via pytest: 3 TEST_i11* rollos in /api/inventory (Spectra, BlackCeramic, Same Rollo, Persist, Ceramic_i3 Legacy). 4 orders driven to en_corte and completed. No teardown — TEST_i11 prefix used for traceability.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Today 2026-06-04. Iter11 backend granular cutting deduction is 100% green. Reusable helpers in test_iteration11_features.py: _create_rollo, _drive_to_en_corte (creates polarizado order, drives to en_corte with pre-assigned tech), _get_inventory_item, _get_movements_for_order. FE: part-block-<id>, part-measurement-<id>, part-material-<id>, part-rollo-<id>, part-rollo-info-<id>, part-pct-<id> are all wired and present (verified via DOM inspection). The part-pct-<id> badge appears ONLY when getPartPercentage returns a non-empty value (cutting_services[].part_percentages[partId]); since 'Polarizado 3M Crystalline' is not in cutting_services filter list, freshly created polarizado orders won't surface in /cutting/pending — to E2E-test the badge, either (a) use a service name containing 'ultrasecure' or matching the filter at server.py L2118, or (b) extend the filter to include polarizado-3m variants.",
+  "rca of the issue": "No iter11 issue. The only observation is a pre-existing service-name filter at /api/cutting/pending that limits which polarizado orders surface. Iter11 features (part_materials Dict input, multi-rollo deduction with summation, inventory_deduction.multi response, cutting_part_materials persistence, legacy backward-compat) are all correctly implemented and exhaustively validated."
+}
