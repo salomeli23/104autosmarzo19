@@ -591,7 +591,7 @@ const CuttingView = () => {
                             <div className="space-y-3">
                                 <Label className="flex items-center gap-2 font-medium">
                                     <Ruler className="w-4 h-4" />
-                                    Medidas, porcentaje y material por pieza
+                                    Medida lineal (cm), porcentaje y material por pieza
                                 </Label>
                                 <p className="text-xs text-muted-foreground -mt-1">
                                     Cada pieza muestra el porcentaje elegido por el cliente en el check-in.
@@ -604,22 +604,14 @@ const CuttingView = () => {
                                         const material = partMaterials[part.id]?.tipo_rollo || '';
                                         const rolloId = partMaterials[part.id]?.inventory_item_id || '';
                                         const isAprov = !!partMaterials[part.id]?.is_aprovechamiento;
-                                        // Dimensiones independientes (1-350 cm)
-                                        const largo = partDims[part.id]?.largo || '';
-                                        const ancho = partDims[part.id]?.ancho || '';
-                                        const updateDim = (field, value) => {
-                                            setPartDims(prev => {
-                                                const next = { ...(prev[part.id] || {}), [field]: value };
-                                                const newDims = { ...prev, [part.id]: next };
-                                                // Sync partMeasurements para enviar al backend
-                                                setPartMeasurements(prevM => ({
-                                                    ...prevM,
-                                                    [part.id]: next.largo && next.ancho
-                                                        ? `${next.largo}x${next.ancho} cm`
-                                                        : (next.largo ? `${next.largo} cm` : (next.ancho ? `x${next.ancho} cm` : '')),
-                                                }));
-                                                return newDims;
-                                            });
+                                        // Medida lineal única (1-350 cm)
+                                        const medida = partDims[part.id]?.medida || '';
+                                        const updateDim = (value) => {
+                                            setPartDims(prev => ({ ...prev, [part.id]: { medida: value } }));
+                                            setPartMeasurements(prev => ({
+                                                ...prev,
+                                                [part.id]: value ? `${value} cm` : '',
+                                            }));
                                         };
                                         // Filtrar rollos por material seleccionado
                                         const filteredRollos = material
@@ -648,31 +640,18 @@ const CuttingView = () => {
                                                         <span className="text-[10px] text-muted-foreground">sin %</span>
                                                     ) : null}
                                                 </div>
-                                                {/* Selects Largo / Ancho (1-350 cm) */}
-                                                <div className="grid grid-cols-2 gap-1.5">
-                                                    <select
-                                                        className="px-2 py-1.5 rounded border border-input bg-background text-xs"
-                                                        value={largo}
-                                                        onChange={(e) => updateDim('largo', e.target.value)}
-                                                        data-testid={`part-largo-${part.id}`}
-                                                    >
-                                                        <option value="">Largo cm…</option>
-                                                        {Array.from({ length: 350 }, (_, i) => i + 1).map(n => (
-                                                            <option key={n} value={n}>{n} cm</option>
-                                                        ))}
-                                                    </select>
-                                                    <select
-                                                        className="px-2 py-1.5 rounded border border-input bg-background text-xs"
-                                                        value={ancho}
-                                                        onChange={(e) => updateDim('ancho', e.target.value)}
-                                                        data-testid={`part-ancho-${part.id}`}
-                                                    >
-                                                        <option value="">Ancho cm…</option>
-                                                        {Array.from({ length: 350 }, (_, i) => i + 1).map(n => (
-                                                            <option key={n} value={n}>{n} cm</option>
-                                                        ))}
-                                                    </select>
-                                                </div>
+                                                {/* Medida lineal única (1-350 cm) */}
+                                                <select
+                                                    className="w-full px-2 py-1.5 rounded border border-input bg-background text-sm"
+                                                    value={medida}
+                                                    onChange={(e) => updateDim(e.target.value)}
+                                                    data-testid={`part-medida-${part.id}`}
+                                                >
+                                                    <option value="">Medida lineal (cm)…</option>
+                                                    {Array.from({ length: 350 }, (_, i) => i + 1).map(n => (
+                                                        <option key={n} value={n}>{n} cm</option>
+                                                    ))}
+                                                </select>
                                                 {/* Material y rollo */}
                                                 <div className="grid grid-cols-2 gap-1.5">
                                                     <select
