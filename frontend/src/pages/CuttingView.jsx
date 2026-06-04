@@ -135,13 +135,14 @@ const CuttingView = () => {
                 ppf_vehicle_serial: isPPF ? ppfSerial.trim() : null,
                 ppf_vehicle_model: isPPF ? ppfModel.trim() : null,
             };
-            // Modo granular por pieza (material + marca/rollo)
+            // Modo granular por pieza (material + marca/rollo + aprovechamiento)
             const cleanedMaterials = {};
             Object.entries(partMaterials).forEach(([pid, m]) => {
-                if (m && (m.tipo_rollo || m.inventory_item_id)) {
+                if (m && (m.tipo_rollo || m.inventory_item_id || m.is_aprovechamiento)) {
                     cleanedMaterials[pid] = {
                         tipo_rollo: m.tipo_rollo || null,
                         inventory_item_id: m.inventory_item_id || null,
+                        is_aprovechamiento: !!m.is_aprovechamiento,
                     };
                 }
             });
@@ -156,6 +157,7 @@ const CuttingView = () => {
             }
             const res = await cuttingAPI.complete(selectedOrder.id, body);
             const dedu = res.data?.inventory_deduction;
+            const aprovs = res.data?.aprovechamientos || [];
             if (dedu) {
                 if (dedu.multi) {
                     const parts = dedu.multi.map(d => `${d.rollo_codigo || d.tipo_rollo || d.item_id}: ${d.meters_used}m (quedan ${d.new_remaining}m)`).join(' · ');
@@ -165,6 +167,9 @@ const CuttingView = () => {
                 }
             } else {
                 toast.success('Corte completado - Listo para asignación');
+            }
+            if (aprovs.length > 0) {
+                toast.info(`♻ ${aprovs.length} pieza(s) registradas como aprovechamiento (no descontadas del stock)`);
             }
             setCompleteDialog(false);
             setSelectedOrder(null);
@@ -594,6 +599,16 @@ const CuttingView = () => {
                                         const pct = getPartPercentage(selectedOrder, part.id);
                                         const material = partMaterials[part.id]?.tipo_rollo || '';
                                         const rolloId = partMaterials[part.id]?.inventory_item_id || '';
+                                        const isAprov = !!partMaterials[part.id]?.is_aprovechamiento;
+                                        // Parse current measurement (e.g. "120x60") into largo/ancho
+                                        const measureRaw = partMeasurements[part.id] ?? '';
+                                        const measureMatch = String(measureRaw).match(/^(\d+)\s*x\s*(\d+)/i);
+                                        const largo = measureMatch ? measureMatch[1] : '';
+                                        const ancho = measureMatch ? measureMatch[2] : '';
+                                        const updateMeasure = (newLargo, newAncho) => {
+                                            const next = newLargo && newAncho ? `${newLargo}x${newAncho} cm` : (newLargo ? `${newLargo} cm` : '');
+                                            setPartMeasurements(prev => ({ ...prev, [part.id]: next }));
+                                        };
                                         // Filtrar rollos por material seleccionado
                                         const filteredRollos = material
                                             ? rollos.filter(r => r.tipo_rollo === material)
@@ -602,11 +617,11 @@ const CuttingView = () => {
                                         return (
                                             <div
                                                 key={part.id}
-                                                className={`space-y-2 p-3 rounded-lg ${wasSelected ? 'bg-cyan-500/5 border border-cyan-500/30' : 'bg-muted/30 border border-border'}`}
+                                                className={`space-y-2 p-3 rounded-lg ${isAprov ? 'bg-purple-500/5 border border-purple-500/40' : wasSelected ? 'bg-cyan-500/5 border border-cyan-500/30' : 'bg-muted/30 border border-border'}`}
                                                 data-testid={`part-block-${part.id}`}
                                             >
                                                 <div className="flex items-center justify-between gap-2">
-                                                    <Label htmlFor={`pm-${part.id}`} className="text-sm font-medium flex items-center gap-1.5">
+                                                    <Label className="text-sm font-medium flex items-center gap-1.5">
                                                         {wasSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
                                                         {part.label}
                                                     </Label>
@@ -621,14 +636,32 @@ const CuttingView = () => {
                                                         <span className="text-[10px] text-muted-foreground">sin %</span>
                                                     ) : null}
                                                 </div>
-                                                <Input
-                                                    id={`pm-${part.id}`}
-                                                    value={partMeasurements[part.id] ?? ''}
-                                                    onChange={(e) => setPartMeasurements(prev => ({ ...prev, [part.id]: e.target.value }))}
-                                                    placeholder="Medida (ej: 120x60 cm)"
-                                                    className="text-sm h-8"
-                                                    data-testid={`part-measurement-${part.id}`}
-                                                />
+                                                {/* Selects Largo / Ancho (1-350 cm) */}
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <select
+                                                        className="px-2 py-1.5 rounded border border-input bg-background text-xs"
+                                                        value={largo}
+                                                        onChange={(e) => updateMeasure(e.target.value, ancho)}
+                                                        data-testid={`part-largo-${part.id}`}
+                                                    >
+                                                        <option value="">Largo cm…</option>
+                                                        {Array.from({ length: 350 }, (_, i) => i + 1).map(n => (
+                                                            <option key={n} value={n}>{n} cm</option>
+                                                        ))}
+                                                    </select>
+                                                    <select
+                                                        className="px-2 py-1.5 rounded border border-input bg-background text-xs"
+                                                        value={ancho}
+                                                        onChange={(e) => updateMeasure(largo, e.target.value)}
+                                                        data-testid={`part-ancho-${part.id}`}
+                                                    >
+                                                        <option value="">Ancho cm…</option>
+                                                        {Array.from({ length: 350 }, (_, i) => i + 1).map(n => (
+                                                            <option key={n} value={n}>{n} cm</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                {/* Material y rollo */}
                                                 <div className="grid grid-cols-2 gap-1.5">
                                                     <select
                                                         className="px-2 py-1.5 rounded border border-input bg-background text-xs"
@@ -638,8 +671,8 @@ const CuttingView = () => {
                                                             setPartMaterials(prev => ({
                                                                 ...prev,
                                                                 [part.id]: {
+                                                                    ...(prev[part.id] || {}),
                                                                     tipo_rollo: newTipo || null,
-                                                                    // reset rollo si no matchea el nuevo material
                                                                     inventory_item_id: rollos.find(r => r.id === prev[part.id]?.inventory_item_id && r.tipo_rollo === newTipo)?.id || null,
                                                                 }
                                                             }));
@@ -672,10 +705,37 @@ const CuttingView = () => {
                                                         ))}
                                                     </select>
                                                 </div>
-                                                {selectedRollo && (
+                                                {/* Checkbox Aprovechamiento */}
+                                                <label
+                                                    className={`flex items-center gap-2 cursor-pointer select-none p-1.5 rounded transition-colors ${isAprov ? 'bg-purple-500/15' : 'hover:bg-muted/40'}`}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isAprov}
+                                                        onChange={(e) => setPartMaterials(prev => ({
+                                                            ...prev,
+                                                            [part.id]: {
+                                                                ...(prev[part.id] || {}),
+                                                                is_aprovechamiento: e.target.checked,
+                                                            }
+                                                        }))}
+                                                        className="w-4 h-4 accent-purple-500"
+                                                        data-testid={`part-aprov-${part.id}`}
+                                                    />
+                                                    <span className={`text-xs font-medium ${isAprov ? 'text-purple-300' : 'text-muted-foreground'}`}>
+                                                        ♻ Aprovechamiento (no descuenta del stock)
+                                                    </span>
+                                                </label>
+                                                {selectedRollo && !isAprov && (
                                                     <p className="text-[11px] text-cyan-400 flex items-center gap-1" data-testid={`part-rollo-info-${part.id}`}>
                                                         <Package className="w-3 h-3" />
                                                         {labelForTipoRollo(selectedRollo.tipo_rollo)} · {selectedRollo.codigo} · quedan {(selectedRollo.metros_restantes ?? 0).toFixed(2)}m
+                                                    </p>
+                                                )}
+                                                {isAprov && (
+                                                    <p className="text-[11px] text-purple-400 flex items-center gap-1" data-testid={`part-aprov-info-${part.id}`}>
+                                                        <Package className="w-3 h-3" />
+                                                        Registrado en base de aprovechamientos (no se descuenta del rollo)
                                                     </p>
                                                 )}
                                             </div>

@@ -2119,7 +2119,7 @@ async def get_cutting_pending(current_user: dict = Depends(require_roles([UserRo
         "nanooptik", "black_ceramic_autobahn", "ultraoptik_aswf", 
         "ceramic_i3_autobahn", "ceramic_i3_plus_autobahn", "huperoptik",
         "ultrasecure", "ppf_matte", "ppf_brillante", "matte", "brillante",
-        "proteccion_ppf", "wrap"
+        "proteccion_ppf", "wrap", "polarizado", "3m", "crystalline", "mixto"
     ]
     
     # Find orders that finished 360 inspection (en_revision) or are currently in cutting
@@ -2146,6 +2146,7 @@ async def get_cutting_pending(current_user: dict = Depends(require_roles([UserRo
                 cutting_service_names.append({
                     "name": svc.get("description") or svc.get("service") or "Servicio",
                     "parts": svc.get("parts", []),
+                    "part_percentages": svc.get("part_percentages") or {},
                     "price": svc.get("price", 0)
                 })
         
@@ -2205,7 +2206,7 @@ class CuttingCompleteRequest(BaseModel):
     inventory_item_id: Optional[str] = None  # rollo utilizado para descuento automático (modo agregado)
     meters_used: Optional[float] = None  # override manual (si no, se calcula desde part_measurements)
     # Descuento granular: por pieza, qué rollo usar
-    # {part_id: {"tipo_rollo": "spectra", "inventory_item_id": "INV-001"}}
+    # {part_id: {"tipo_rollo": "spectra", "inventory_item_id": "INV-001", "is_aprovechamiento": bool}}
     part_materials: Optional[Dict[str, Dict[str, Any]]] = None
 
 
@@ -2277,15 +2278,47 @@ async def complete_cutting(
     # Modo granular (part_materials) tiene prioridad sobre inventory_item_id agregado
     inventory_deduction = None
     deductions_per_rollo = {}  # {inventory_item_id: meters_used}
+    aprovechamientos_created = []  # piezas marcadas como aprovechamiento (no descuentan stock)
 
     if p.part_materials:
         # Agrupar metros por inventory_item_id basado en cada pieza
         for part_id, mat in (p.part_materials or {}).items():
-            inv_id = (mat or {}).get("inventory_item_id")
-            if not inv_id:
-                continue
+            mat = mat or {}
             measurement = (part_measurements or {}).get(part_id) or ""
             meters = _meters_from_part_measurements({part_id: measurement})
+
+            # Si es aprovechamiento, registrar en colección aprovechamientos
+            # y NO descontar del stock del rollo
+            if mat.get("is_aprovechamiento"):
+                aprov_doc = {
+                    "id": str(uuid.uuid4()),
+                    "order_id": order_id,
+                    "order_code": order.get("order_code"),
+                    "part_id": part_id,
+                    "measurement": measurement,
+                    "meters": round(meters or 0, 2),
+                    "tipo_rollo": mat.get("tipo_rollo"),
+                    "source_inventory_item_id": mat.get("inventory_item_id"),
+                    "plate": order.get("plate"),
+                    "client_name": order.get("client_name"),
+                    "user_id": current_user["id"],
+                    "user_name": current_user.get("name") or current_user.get("email"),
+                    "status": "consumido",  # se consumió en este corte
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                await db.aprovechamientos.insert_one(aprov_doc)
+                aprov_doc.pop("_id", None)
+                aprovechamientos_created.append({
+                    "part_id": part_id,
+                    "measurement": measurement,
+                    "meters": aprov_doc["meters"],
+                    "tipo_rollo": mat.get("tipo_rollo"),
+                })
+                continue
+
+            inv_id = mat.get("inventory_item_id")
+            if not inv_id:
+                continue
             if meters and meters > 0:
                 deductions_per_rollo[inv_id] = deductions_per_rollo.get(inv_id, 0) + meters
     elif p.inventory_item_id:
@@ -2363,7 +2396,19 @@ async def complete_cutting(
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     
-    return {"message": "Corte completado", "status": "completado", "inventory_deduction": inventory_deduction}
+    return {
+        "message": "Corte completado",
+        "status": "completado",
+        "inventory_deduction": inventory_deduction,
+        "aprovechamientos": aprovechamientos_created,
+    }
+
+
+@api_router.get("/aprovechamientos")
+async def list_aprovechamientos(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    """Lista los aprovechamientos registrados (retazos consumidos durante cortes)."""
+    items = await db.aprovechamientos.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
 
 
 @api_router.get("/orders/history-by-plate/{plate}")

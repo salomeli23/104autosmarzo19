@@ -1,0 +1,68 @@
+{
+  "summary": "Iter 12 review: Aprovechamientos backend feature 100% green (10/10 new pytest tests + 21/21 regression = 31/31). Backend: /cutting/{id}/complete handles is_aprovechamiento=true correctly (no stock deduction, doc in db.aprovechamientos, response.aprovechamientos populated); mixed parts (aprov + normal) deduct only the non-aprov part; GET /api/aprovechamientos returns list sorted DESC by created_at with required fields and no _id leak; /api/cutting/pending now includes part_percentages per cutting_service (empty {} when none); extended filter matches polarizado/3m/crystalline/mixto services. FRONTEND /cutting Completar Corte: dialog renders 9 part-largo-<id> + 9 part-ancho-<id> + 9 part-aprov-<id>; largo/ancho options span 1..350 (verified first=1, last=350, total=351 incl. empty placeholder); checkbox part-aprov-<id> toggles purple background + 'Registrado en base de aprovechamientos' info text; part-pct badge present in code (verified earlier in iter11) but not rendered on legacy seed orders (no part_percentages set). FRONTEND BUG FOUND: largo/ancho selects reset to empty after selection because the parse regex /^(\\d+)\\s*x\\s*(\\d+)/ only matches when BOTH dimensions are present in partMeasurements; selecting only largo stores '120 cm' which doesn't reparse → both selects reset to '' on next render; same for ancho-only. Even sequential largo→ancho selection fails because the second onChange's closure sees the post-reset empty largo. UX BROKEN. Recommend storing largo/ancho as separate fields in state OR loosening regex to capture partial values.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "CuttingView.jsx - Completar Corte dialog (part-largo-<id> / part-ancho-<id>)",
+        "issue": "Largo/Ancho selects RESET to empty after the user picks a value. Root cause at L604-611: const measureMatch = String(measureRaw).match(/^(\\d+)\\s*x\\s*(\\d+)/i); only matches '120x60' shape. When user picks only largo, updateMeasure stores '120 cm' (partial branch) — on next render the regex returns null → largo='' AND ancho='' → controlled select displays placeholder. Sequential selection ALSO fails: after picking largo (state='120 cm'), the next render shows largo=''; when user picks ancho the closure sees newLargo='' so updateMeasure stores ''. Net effect: it is impossible to set a complete measurement via the UI. CRITICAL UX BLOCKER for the iter12 feature.",
+        "selector": "[data-testid='part-largo-<id>'] / [data-testid='part-ancho-<id>']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "pytest iter12 TestAprovechamientos::test_part_aprovechamiento_skips_stock_and_creates_aprov (no deduction, 0 movements, aprov doc with meters=1.5)",
+    "pytest iter12 TestAprovechamientos::test_mixed_aprov_and_normal_same_rollo (1.0m deducted, 1.5m aprov, 1 movement)",
+    "pytest iter12 TestAprovechamientosListEndpoint::test_get_aprovechamientos_returns_list_sorted_desc (DESC order verified)",
+    "pytest iter12 TestAprovechamientosListEndpoint::test_get_aprovechamientos_admin_role (admin access OK)",
+    "pytest iter12 TestCuttingPendingPartPercentages::test_cutting_pending_includes_part_percentages (35%/20% returned)",
+    "pytest iter12 TestCuttingPendingPartPercentages::test_cutting_pending_empty_part_percentages_present (field always present as dict)",
+    "pytest iter12 TestExtendedCuttingFilter [Polarizado 3M Crystalline / Polarizado Premium / 3M Crystalline 70 / Servicio mixto SUV] (all 4 surface in /cutting/pending)",
+    "REGRESSION: iter8(7)+iter9(2)+iter10(8)+iter11(4)+iter12(10) = 31/31 PASS in 82.20s",
+    "FRONTEND: 9 part-largo + 9 part-ancho + 9 part-aprov rendered correctly",
+    "FRONTEND: largo/ancho options range 1..350 cm (option count = 351 incl. empty placeholder; first=1, last=350)",
+    "FRONTEND: part-aprov-<id> checkbox toggling applies purple background AND renders part-aprov-info-<id> with text 'Registrado en base de aprovechamientos (no se descuenta del rollo)'"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12_features.py",
+    "/app/test_reports/pytest/iteration12_results.xml",
+    "/app/test_reports/pytest/iteration12_full_results.xml"
+  ],
+  "action_items": [
+    "FIX FRONTEND BUG: CuttingView.jsx L604-611 + L608-611 — replace single 'partMeasurements[part.id]' regex parse with independent storage for largo/ancho. Suggested fix: keep two parallel state slices (e.g. partLargo[part.id] / partAncho[part.id]) and derive the combined string only when both present, OR loosen the regex to capture partials e.g. /^(\\d+)?\\s*x?\\s*(\\d+)?/ AND store partial strings like '120x cm'/'x60 cm' so they re-parse. Without this fix users cannot enter measurements through the new UI.",
+    "(Optional) Add DialogDescription to the Completar Corte dialog to suppress the Radix accessibility warning ('Missing Description or aria-describedby={undefined}')."
+  ],
+  "critical_code_review_comments": [
+    "server.py L2118-2123: cutting_services list now correctly includes 'polarizado','3m','crystalline','mixto' tokens; substring match logic at L2143 covers svc_id and svc_desc — robust.",
+    "server.py L2149: part_percentages now included in cutting_services payload with default {}.",
+    "server.py L2283-2317: aprovechamientos branch correctly SKIPS stock deduction via `continue` after inserting doc; aprov_doc.pop('_id', None) prevents Mongo ObjectId leak in response. Cleanly preserves the iter11 deductions_per_rollo path for non-aprov parts on the same rollo.",
+    "server.py L2399-2404: response includes both inventory_deduction AND aprovechamientos — frontend has full context for toasts.",
+    "server.py L2407-2411: GET /api/aprovechamientos sorts DESC and excludes _id. Limited to admin/corte/coordinador (consistent with cutting endpoints).",
+    "CuttingView.jsx L604-611: BUG ROOT CAUSE described above. The render-time regex parse of a combined string is fragile; partial selections are silently dropped on re-render.",
+    "CuttingView.jsx L608-611: updateMeasure(newLargo, newAncho) builds string from current closure values — closure captures the post-reset '' for the non-changed dimension, so even sequential largo->ancho fails.",
+    "CuttingView.jsx L640-662: rendering 350 <option> nodes per select is fine but doubles 9 parts × 2 selects = 18×350 = 6300 DOM options. Minor perf concern only.",
+    "CuttingView.jsx L709-728: aprovechamiento checkbox + purple state styling is well-implemented and matches spec."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12_features.py (new, 10 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (31/31 pytest pass: 7 iter8 + 2 iter9 + 8 iter10 + 4 iter11 + 10 iter12)",
+    "frontend": "70% — largo/ancho UI elements PRESENT and options correct, aprovechamiento toggle WORKS, but measurement entry is BROKEN due to regex parse bug"
+  },
+  "test_credentials": {
+    "admin": "admin@polarizadosya.com / admin123",
+    "corte": "corte@polarizadosya.com / corte123",
+    "asesor": "asesor@polarizadosya.com / asesor123",
+    "coordinador": "coordinador@polarizadosya.com / coord123",
+    "booking_pin": "00000"
+  },
+  "seed_data_creation": "Via pytest: TEST_i12 rollos in /api/inventory + several T12* polarizado orders driven to en_corte and completed (aprov + mixed + listing).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Today 2026-06-04. Iter12 backend = 31/31 green. The ONE outstanding issue is a UX-breaking frontend bug in CuttingView.jsx where partial largo OR ancho selection resets both selects to empty (regex /^(\\d+)\\s*x\\s*(\\d+)/ only matches complete dimensions). Reproduce: open /cutting as corte role, click any 'Completar Corte', pick part-largo-panoramico=120 then check the select.value — it will be '' again. Fix scope: store largo/ancho independently or relax the regex. After fix, retest by simulating a complete measurement entry, then verify partMeasurements payload reaches backend on submit. Reusable helpers in test_iteration12_features.py: _create_rollo, _drive_to_en_corte (with optional part_percentages and service_name).",
+  "rca of the issue": "Frontend bug: CuttingView.jsx derives largo/ancho on every render from a single combined string via /^(\\d+)\\s*x\\s*(\\d+)/. Partial values produced by updateMeasure ('120 cm' or '' for ancho-only) do NOT match this regex, so the derived largo/ancho are both '' on re-render. Controlled <select value={largo}> then snaps back to the empty option, wiping the user's choice. Sequential largo->ancho also fails because the second onChange's closure has already captured the post-reset largo=''. Mitigation: (a) keep two independent state maps partLargoMap[part.id]/partAnchoMap[part.id]; or (b) store partial strings that the regex can parse ('120x' / 'x60'); or (c) keep array of [largo, ancho] in partMeasurements[part.id]."
+}
