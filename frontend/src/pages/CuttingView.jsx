@@ -23,8 +23,10 @@ const CuttingView = () => {
     const [rollos, setRollos] = useState([]);
     const [selectedRolloId, setSelectedRolloId] = useState('');
     const [metersOverride, setMetersOverride] = useState('');
-    // Material y rollo POR PIEZA: { part_id: { tipo_rollo, inventory_item_id } }
+    // Material y rollo POR PIEZA: { part_id: { tipo_rollo, inventory_item_id, is_aprovechamiento } }
     const [partMaterials, setPartMaterials] = useState({});
+    // Dimensiones independientes por pieza: { part_id: { largo: '120', ancho: '60' } }
+    const [partDims, setPartDims] = useState({});
 
     // Lookup del porcentaje elegido por el cliente en el check-in para esta parte
     const getPartPercentage = (order, partId) => {
@@ -175,6 +177,7 @@ const CuttingView = () => {
             setSelectedOrder(null);
             setPartMeasurements({});
             setPartMaterials({});
+            setPartDims({});
             setNotes('');
             setPpfSerial('');
             setPpfModel('');
@@ -196,6 +199,7 @@ const CuttingView = () => {
         });
         setPartMeasurements(initial);
         setPartMaterials({});
+        setPartDims({});
         setNotes('');
         setPpfSerial(order?.ppf_vehicle_serial || '');
         setPpfModel(order?.ppf_vehicle_model || '');
@@ -600,14 +604,22 @@ const CuttingView = () => {
                                         const material = partMaterials[part.id]?.tipo_rollo || '';
                                         const rolloId = partMaterials[part.id]?.inventory_item_id || '';
                                         const isAprov = !!partMaterials[part.id]?.is_aprovechamiento;
-                                        // Parse current measurement (e.g. "120x60") into largo/ancho
-                                        const measureRaw = partMeasurements[part.id] ?? '';
-                                        const measureMatch = String(measureRaw).match(/^(\d+)\s*x\s*(\d+)/i);
-                                        const largo = measureMatch ? measureMatch[1] : '';
-                                        const ancho = measureMatch ? measureMatch[2] : '';
-                                        const updateMeasure = (newLargo, newAncho) => {
-                                            const next = newLargo && newAncho ? `${newLargo}x${newAncho} cm` : (newLargo ? `${newLargo} cm` : '');
-                                            setPartMeasurements(prev => ({ ...prev, [part.id]: next }));
+                                        // Dimensiones independientes (1-350 cm)
+                                        const largo = partDims[part.id]?.largo || '';
+                                        const ancho = partDims[part.id]?.ancho || '';
+                                        const updateDim = (field, value) => {
+                                            setPartDims(prev => {
+                                                const next = { ...(prev[part.id] || {}), [field]: value };
+                                                const newDims = { ...prev, [part.id]: next };
+                                                // Sync partMeasurements para enviar al backend
+                                                setPartMeasurements(prevM => ({
+                                                    ...prevM,
+                                                    [part.id]: next.largo && next.ancho
+                                                        ? `${next.largo}x${next.ancho} cm`
+                                                        : (next.largo ? `${next.largo} cm` : (next.ancho ? `x${next.ancho} cm` : '')),
+                                                }));
+                                                return newDims;
+                                            });
                                         };
                                         // Filtrar rollos por material seleccionado
                                         const filteredRollos = material
@@ -641,7 +653,7 @@ const CuttingView = () => {
                                                     <select
                                                         className="px-2 py-1.5 rounded border border-input bg-background text-xs"
                                                         value={largo}
-                                                        onChange={(e) => updateMeasure(e.target.value, ancho)}
+                                                        onChange={(e) => updateDim('largo', e.target.value)}
                                                         data-testid={`part-largo-${part.id}`}
                                                     >
                                                         <option value="">Largo cm…</option>
@@ -652,7 +664,7 @@ const CuttingView = () => {
                                                     <select
                                                         className="px-2 py-1.5 rounded border border-input bg-background text-xs"
                                                         value={ancho}
-                                                        onChange={(e) => updateMeasure(largo, e.target.value)}
+                                                        onChange={(e) => updateDim('ancho', e.target.value)}
                                                         data-testid={`part-ancho-${part.id}`}
                                                     >
                                                         <option value="">Ancho cm…</option>

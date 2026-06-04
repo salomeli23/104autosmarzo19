@@ -4,9 +4,20 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-06-04
+2026-06-04 (PM later)
 
-## Última Sesión (2026-06-04 PM) — Iteración 14 (Completar Corte con porcentaje + material + marca por pieza)
+## Última Sesión (2026-06-04 PM-2) — Iteración 15 (Selects 1-350cm, Aprovechamientos, Fix porcentajes)
+- **FIX P0 (bug visible):** `/api/cutting/pending` no incluía `part_percentages` al construir `cutting_services` → ahora SÍ se incluye, los porcentajes elegidos en check-in aparecen como badges (data-testid `part-pct-<id>`) en cada pieza al completar corte.
+- **NUEVO (P0):** Medidas con selects **Largo (cm)** y **Ancho (cm)** ambos 1-350 cm en lugar del input de texto. Estado independiente `partDims` por pieza para evitar resets.
+- **NUEVO (P0):** Checkbox **♻ Aprovechamiento** por pieza. Si está marcado:
+  - NO se descuenta del stock del rollo
+  - Se guarda registro en colección `db.aprovechamientos` (order_id, part_id, measurement, meters, tipo_rollo, source_inventory_item_id, plate, client_name, user, status, created_at)
+  - Visual: fondo morado en el bloque + texto "Registrado en base de aprovechamientos"
+- **NUEVO (P1):** Filtro de `/api/cutting/pending` ampliado con 'polarizado', '3m', 'crystalline', 'mixto' (issue pre-existente identificado en iter11).
+- **NUEVO endpoint:** `GET /api/aprovechamientos` (admin/corte/coordinador) lista los aprovechamientos registrados ordenados DESC.
+- **Tests:** 31/31 pytest (10 iter12 nuevos + 21 regresiones). Backend 100%, frontend bug detectado y corregido (selects 1-350 ahora persisten).
+
+## Sesión anterior (2026-06-04 PM) — Iteración 14 (Completar Corte con porcentaje + material + marca por pieza)
 - **NUEVO (P0):** Dialog "Completar Corte" rediseñado. Cada pieza muestra:
   - **Badge de porcentaje** elegido por el cliente en el check-in (lookup en `cutting_services[].part_percentages[part_id]`). data-testid `part-pct-<id>`.
   - **Select Material** (tipo de rollo: Spectra, Black Ceramic, Ceramic i3, Huperoptik, Clear, PPF Xpel/Autoban/Techo, etc.). data-testid `part-material-<id>`.
