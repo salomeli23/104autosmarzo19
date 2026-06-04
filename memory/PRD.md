@@ -6,7 +6,19 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-06-04
 
-## Última Sesión (2026-06-04) — Iteración 13 (Autos por Asignar + PlateBadge + Foto Perfil)
+## Última Sesión (2026-06-04 PM) — Iteración 14 (Completar Corte con porcentaje + material + marca por pieza)
+- **NUEVO (P0):** Dialog "Completar Corte" rediseñado. Cada pieza muestra:
+  - **Badge de porcentaje** elegido por el cliente en el check-in (lookup en `cutting_services[].part_percentages[part_id]`). data-testid `part-pct-<id>`.
+  - **Select Material** (tipo de rollo: Spectra, Black Ceramic, Ceramic i3, Huperoptik, Clear, PPF Xpel/Autoban/Techo, etc.). data-testid `part-material-<id>`.
+  - **Select Marca/Rollo** filtrado por material, mostrando código + nombre + metros restantes (ej "INV-00018 · Spectra Premium (29.00m)"). data-testid `part-rollo-<id>`.
+  - Mini-info bajo cada bloque: "Spectra · INV-00018 · quedan 29.00m". data-testid `part-rollo-info-<id>`.
+- **NUEVO (P0):** Backend acepta `part_materials = {part_id: {tipo_rollo, inventory_item_id}}` en `PUT /api/cutting/{id}/complete` y descuenta los metros de cada rollo según las medidas de las piezas asignadas. Si dos piezas usan el mismo rollo, los metros se SUMAN en un solo movimiento.
+- **NUEVO (P0):** Respuesta del endpoint trae `inventory_deduction.multi = [{item_id, rollo_codigo, rollo_nombre, tipo_rollo, meters_used, new_remaining}]` cuando hay más de un rollo descontado.
+- **PERSISTENCIA:** `order.cutting_part_materials` se guarda y se expone en `OrderResponse`.
+- **COMPATIBILIDAD:** Modo legacy (un solo `inventory_item_id` agregado) sigue funcionando si no se envía `part_materials`.
+- **Tests:** 21/21 pytest (4 iter11 + 17 regresiones). Frontend con 9 part-blocks + filtros de material + info live de metros restantes verificados.
+
+## Sesión anterior (2026-06-04) — Iteración 13 (Autos por Asignar + PlateBadge + Foto Perfil)
 - **NUEVO (P0):** Página `/auto-asignar` (admin, coordinador) — drag & drop de órdenes en `en_revision` desde columna "Cola sin asignar" a columnas por técnico. Dialog pide tiempo promedio en minutos. Persiste `pre_assigned_technician_id/name/service_time_minutes/pre_assigned_at` SIN cambiar status. UI con dnd-kit + indicadores: "Ingresó hace X" y "Asignado hace Y · Z min est."
 - **NUEVO (P0):** Endpoints `GET /api/tech-queue/pending`, `GET /api/tech-queue/by-technician`, `POST /api/tech-queue/pre-assign`, `POST /api/orders/{id}/clear-pre-assignment`.
 - **REGLA P0:** `PUT /api/cutting/{id}/start` ahora rechaza con 400 si la orden no tiene `pre_assigned_technician_id` ni `assigned_technician_id`. **No se puede iniciar corte sin técnico asignado.**
