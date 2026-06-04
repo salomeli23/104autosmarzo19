@@ -4,15 +4,24 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-06-03
+2026-06-04
 
-## Última Sesión (2026-06-03) — Iteración 12 (Wizard Check-in+360 + Timers + Fixes)
-- **FIX P0:** `OrderResponse` ahora expone `service_completion_photos` y `service_completion_notes` para que las fotos del técnico sean visibles en cualquier GET de orden.
-- **FIX P0:** `/appointments` ya muestra las tags del Asesor (34 tags verificados). Agregado helper `slotIdForOrder` defensivo que bucketea órdenes con `time_slot` legacy ('08-12', '8:00 AM - 10:00 AM', etc.) al `franja_X` correcto usando `scheduled_time` o el primer dígito del slot.
-- **NUEVO (P1):** Fusión Check-in + Revisión 360° en un solo wizard. Nuevo componente `Inspection360Inline.jsx` con 2 sub-pasos (fotos / checklist + observaciones). Tras "Aprobar Ingreso" el flujo entra automáticamente al paso de Revisión 360°. Botón "Omitir (hacerlo después)" disponible. Cuando se completa, la orden queda en `en_revision`.
-- **NUEVO (P1):** Panel de Tiempos en cada card de la vista del Técnico (`/technician`) con relojes en vivo de Ingreso, Corte, Servicio y Bahía (tick cada 60s). Cada fila aparece sólo si el timestamp correspondiente existe.
-- **FIX UX:** Botón "Confirmar Completado" del técnico se deshabilita cuando faltan observaciones o fotos.
-- **Tests:** Backend 9/9 pytest (iter9 + regresiones iter8). Frontend: asesor-tags=34, kanban-tags=72, tiempos visibles en card en_proceso.
+## Última Sesión (2026-06-04) — Iteración 13 (Autos por Asignar + PlateBadge + Foto Perfil)
+- **NUEVO (P0):** Página `/auto-asignar` (admin, coordinador) — drag & drop de órdenes en `en_revision` desde columna "Cola sin asignar" a columnas por técnico. Dialog pide tiempo promedio en minutos. Persiste `pre_assigned_technician_id/name/service_time_minutes/pre_assigned_at` SIN cambiar status. UI con dnd-kit + indicadores: "Ingresó hace X" y "Asignado hace Y · Z min est."
+- **NUEVO (P0):** Endpoints `GET /api/tech-queue/pending`, `GET /api/tech-queue/by-technician`, `POST /api/tech-queue/pre-assign`, `POST /api/orders/{id}/clear-pre-assignment`.
+- **REGLA P0:** `PUT /api/cutting/{id}/start` ahora rechaza con 400 si la orden no tiene `pre_assigned_technician_id` ni `assigned_technician_id`. **No se puede iniciar corte sin técnico asignado.**
+- **NUEVO (P0):** Foto frontal del vehículo OBLIGATORIA en Check-in. Campo `profile_photo_url` validado por backend en `/orders/ingreso-approval` (400 si falta). Fallback: si no se setea en check-in, la primera foto de la Revisión 360° se copia automáticamente.
+- **NUEVO (P0):** Componente `PlateBadge` (amarillo, letra negra, font-mono, prominente) reemplaza la placa en /appointments, /service-orders, /technician, /auto-asignar, dialogos.
+- **NUEVO (P0):** Componente `CarAvatar` muestra `profile_photo_url` como mini-avatar (o icono de auto si falta) en /appointments, /service-orders, /technician, /auto-asignar.
+- **NUEVO (P0):** Botón "Enviar X foto(s) al cliente por email" (data-testid `send-inspection-photos-btn`) en el step de éxito del wizard Check-in+360.
+- **MENÚ:** Removido item "Revisión 360°". Agregado "Autos por Asignar". "Asignar Técnico" renombrado a "Asignar Bahía" (apunta a /assign).
+- **Tests:** 17/17 pytest (8 iter10 nuevos + 9 regresiones). Frontend: 18 plate-badges en /auto-asignar, 37 en /appointments, 111 en /service-orders. Menú validado.
+
+## Sesión anterior (2026-06-03) — Iteración 12 (Wizard Check-in+360 + Timers)
+- Fusión Check-in + Revisión 360° en un solo wizard (componente Inspection360Inline)
+- Panel de Tiempos en cards del Técnico con relojes en vivo
+- Fix: tags del asesor visibles en /appointments (helper slotIdForOrder)
+- Fix: OrderResponse expone service_completion_photos/notes
 
 ## Sesión anterior (2026-06-01) — Iteración 11
 - Módulo Postventa / Garantías (búsqueda por placa, salto de facturación)
