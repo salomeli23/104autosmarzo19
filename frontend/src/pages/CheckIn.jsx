@@ -44,6 +44,9 @@ export const CheckIn = () => {
     
     const [signature, setSignature] = useState(null);
     const [cedulaNumber, setCedulaNumber] = useState('');
+    const [profilePhoto, setProfilePhoto] = useState(null);  // foto frontal del vehículo
+    const [inspectionPhotosCount, setInspectionPhotosCount] = useState(0);
+    const [sendingPhotos, setSendingPhotos] = useState(false);
     
     // Risk Agreement Modal
     const [showRiskAgreement, setShowRiskAgreement] = useState(false);
@@ -313,6 +316,10 @@ export const CheckIn = () => {
             toast.error('El número de cédula es requerido');
             return;
         }
+        if (!profilePhoto) {
+            toast.error('La foto frontal del vehículo es requerida');
+            return;
+        }
         if (!riskAgreementAccepted) {
             toast.error('Debe aceptar el acuerdo de riesgo de servicio');
             setShowRiskAgreement(true);
@@ -336,6 +343,7 @@ export const CheckIn = () => {
                 signature_url: signature,
                 cedula_number: cedulaNumber,
                 risk_agreement_accepted: riskAgreementAccepted,
+                profile_photo_url: profilePhoto,
             });
 
             toast.success('Ingreso aprobado exitosamente');
@@ -363,6 +371,21 @@ export const CheckIn = () => {
         }
     };
 
+    // Send inspection photos to client by email
+    const handleSendPhotosEmail = async () => {
+        if (!order?.id) return;
+        setSendingPhotos(true);
+        try {
+            const res = await ordersAPI.sendInspectionPhotos(order.id);
+            const count = res.data?.recipients?.length || 0;
+            toast.success(`Fotos enviadas a ${count} destinatario(s)`);
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error al enviar las fotos por correo');
+        } finally {
+            setSendingPhotos(false);
+        }
+    };
+
     // Reset form
     const resetForm = () => {
         setStep(1);
@@ -371,6 +394,9 @@ export const CheckIn = () => {
         setSelectedServices([]);
         setSignature(null);
         setCedulaNumber('');
+        setProfilePhoto(null);
+        setInspectionPhotosCount(0);
+        setSendingPhotos(false);
         setWaitingInfo(null);
         setRiskAgreementAccepted(false);
         setCustomServiceName('');
@@ -1118,6 +1144,57 @@ export const CheckIn = () => {
                         </CardContent>
                     </Card>
 
+                    {/* Foto Frontal del Vehículo */}
+                    <Card className="card-hover lg:col-span-2 border-yellow-500/40">
+                        <CardHeader>
+                            <CardTitle className="font-heading text-lg flex items-center gap-2">
+                                <Car className="w-5 h-5 text-yellow-400" />
+                                Foto Frontal del Vehículo *
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="flex flex-col sm:flex-row items-start gap-4">
+                                <div className="flex-shrink-0">
+                                    {profilePhoto ? (
+                                        <div className="relative w-40 h-32 rounded-lg overflow-hidden border-2 border-yellow-500/50">
+                                            <img src={profilePhoto} alt="Frontal vehículo" className="w-full h-full object-cover" />
+                                            <button
+                                                type="button"
+                                                onClick={() => setProfilePhoto(null)}
+                                                className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs"
+                                                data-testid="remove-profile-photo-btn"
+                                            >×</button>
+                                        </div>
+                                    ) : (
+                                        <div className="w-40 h-32 rounded-lg border-2 border-dashed border-yellow-500/40 flex items-center justify-center bg-yellow-500/5">
+                                            <Car className="w-10 h-10 text-yellow-500/50" />
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex-1 space-y-2">
+                                    <p className="text-sm text-muted-foreground">
+                                        Captura una foto frontal nítida del vehículo. Se usará como
+                                        foto de perfil en toda la solicitud (citas, técnico, kanban, postventa).
+                                    </p>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        capture="environment"
+                                        onChange={(e) => {
+                                            const file = e.target.files?.[0];
+                                            if (!file) return;
+                                            const reader = new FileReader();
+                                            reader.onload = (ev) => setProfilePhoto(ev.target.result);
+                                            reader.readAsDataURL(file);
+                                        }}
+                                        className="w-full text-sm"
+                                        data-testid="profile-photo-input"
+                                    />
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+
                     {/* Cedula and Signature */}
                     <Card className="card-hover">
                         <CardHeader>
@@ -1183,8 +1260,14 @@ export const CheckIn = () => {
                     <CardContent>
                         <Inspection360Inline
                             order={order}
-                            onComplete={() => setStep(3)}
-                            onSkip={() => setStep(3)}
+                            onComplete={(saved) => {
+                                setInspectionPhotosCount(saved?.photos_count || 0);
+                                setStep(3);
+                            }}
+                            onSkip={() => {
+                                setInspectionPhotosCount(0);
+                                setStep(3);
+                            }}
                         />
                     </CardContent>
                 </Card>
@@ -1203,6 +1286,24 @@ export const CheckIn = () => {
                                 El vehículo está listo para Corte / Asignación. La orden quedó en estado
                                 <strong> En Revisión</strong>.
                             </p>
+
+                            {/* Enviar fotos por email al cliente */}
+                            {inspectionPhotosCount > 0 && (
+                                <Button
+                                    variant="outline"
+                                    className="mt-2 border-purple-500/50 text-purple-400 hover:bg-purple-500/10"
+                                    onClick={handleSendPhotosEmail}
+                                    disabled={sendingPhotos}
+                                    data-testid="send-inspection-photos-btn"
+                                >
+                                    {sendingPhotos ? (
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-400 mr-2" />
+                                    ) : (
+                                        <FileText className="w-4 h-4 mr-2" />
+                                    )}
+                                    Enviar {inspectionPhotosCount} foto(s) al cliente por email
+                                </Button>
+                            )}
                             
                             {/* Download PDF Button */}
                             <Button 

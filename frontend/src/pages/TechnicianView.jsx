@@ -7,6 +7,8 @@ import { Textarea } from '../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
+import { PlateBadge } from '../components/PlateBadge';
+import { CarAvatar } from '../components/CarAvatar';
 import { formatCurrency, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
 import { 
@@ -181,10 +183,10 @@ export const TechnicianView = () => {
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="font-heading text-xl">Completar Servicio</DialogTitle>
-                        <DialogDescription>
-                            {selectedOrder && (
-                                <span className="font-mono">{selectedOrder.plate}</span>
-                            )}
+                        <DialogDescription asChild>
+                            {selectedOrder ? (
+                                <div className="pt-1"><PlateBadge plate={selectedOrder.plate} size="md" /></div>
+                            ) : <span />}
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
@@ -192,9 +194,7 @@ export const TechnicianView = () => {
                             <Card className="bg-muted/50">
                                 <CardContent className="p-4">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
-                                            <Car className="w-5 h-5 text-primary" />
-                                        </div>
+                                        <CarAvatar photoUrl={selectedOrder.profile_photo_url} size={48} />
                                         <div>
                                             <p className="font-medium">{selectedOrder.client_name}</p>
                                             <div className="flex gap-1 mt-1">
@@ -297,20 +297,18 @@ export const TechnicianView = () => {
                                             data-testid={`order-${order.id}`}
                                         >
                                             <CardContent className="p-4">
-                                                <div className="flex items-start justify-between mb-3">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-12 h-12 rounded-lg bg-yellow-500/20 flex items-center justify-center">
-                                                            <Wrench className="w-6 h-6 text-yellow-500" />
-                                                        </div>
-                                                        <div>
-                                                            <p className="font-mono font-bold text-lg">{order.plate}</p>
-                                                            <p className="text-sm text-muted-foreground">
+                                                <div className="flex items-start justify-between mb-3 gap-2">
+                                                    <div className="flex items-center gap-3 min-w-0">
+                                                        <CarAvatar photoUrl={order.profile_photo_url} size={48} />
+                                                        <div className="min-w-0">
+                                                            <PlateBadge plate={order.plate} size="lg" />
+                                                            <p className="text-sm text-muted-foreground mt-1 truncate">
                                                                 {order.brand} {order.model}
                                                             </p>
                                                         </div>
                                                     </div>
                                                     {timeInfo && (
-                                                        <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
+                                                        <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs shrink-0 ${
                                                             timeInfo.expired 
                                                                 ? 'bg-red-500/20 text-red-500' 
                                                                 : 'bg-yellow-500/20 text-yellow-500'
@@ -374,19 +372,17 @@ export const TechnicianView = () => {
                                 {assignedOrders.map(order => (
                                     <Card key={order.id} className="card-hover border-blue-500/30" data-testid={`order-${order.id}`}>
                                         <CardContent className="p-4">
-                                            <div className="flex items-start justify-between mb-3">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-12 h-12 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                                                        <Car className="w-6 h-6 text-blue-500" />
-                                                    </div>
-                                                    <div>
-                                                        <p className="font-mono font-bold text-lg">{order.plate}</p>
-                                                        <p className="text-sm text-muted-foreground">
+                                            <div className="flex items-start justify-between mb-3 gap-2">
+                                                <div className="flex items-center gap-3 min-w-0">
+                                                    <CarAvatar photoUrl={order.profile_photo_url} size={48} />
+                                                    <div className="min-w-0">
+                                                        <PlateBadge plate={order.plate} size="lg" />
+                                                        <p className="text-sm text-muted-foreground mt-1 truncate">
                                                             {order.brand} {order.model}
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-primary/20 text-primary text-xs">
+                                                <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-primary/20 text-primary text-xs shrink-0">
                                                     <Timer className="w-3 h-3" />
                                                     {order.service_time_minutes} min
                                                 </div>

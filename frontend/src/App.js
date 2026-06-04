@@ -20,6 +20,7 @@ import { Settings } from './pages/Settings';
 import CuttingView from './pages/CuttingView';
 import { Inventory } from './pages/Inventory';
 import { Postventa } from './pages/Postventa';
+import { AutoAsignar } from './pages/AutoAsignar';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -190,6 +191,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'asesor', 'coordinador']}>
                         <Postventa />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/auto-asignar" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'coordinador']}>
+                        <AutoAsignar />
                     </ProtectedRoute>
                 } 
             />

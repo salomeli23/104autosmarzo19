@@ -59,6 +59,12 @@ export const ordersAPI = {
     // Step 4: Assignment (Coordinator)
     assignTechnician: (data) => api.post('/orders/assign', data),
     
+    // Pre-asignación de técnico (Autos por Asignar - antes de Corte)
+    getPendingTechAssignment: () => api.get('/tech-queue/pending'),
+    getOrdersByTechnician: () => api.get('/tech-queue/by-technician'),
+    preAssignTechnician: (data) => api.post('/tech-queue/pre-assign', data),
+    clearPreAssignment: (orderId) => api.post(`/orders/${orderId}/clear-pre-assignment`),
+    
     // Step 5: Service (Technician)
     startService: (orderId) => api.post(`/orders/${orderId}/start-service`),
     completeService: (data) => api.post('/orders/complete-service', data),

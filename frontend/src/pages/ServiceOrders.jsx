@@ -13,6 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { StatusBadge } from '../components/StatusBadge';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
+import { PlateBadge } from '../components/PlateBadge';
+import { CarAvatar } from '../components/CarAvatar';
 import { ORDER_STATUS_LABELS as STATUS_LABELS, SERVICE_LABELS, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
 import { Plus, Wrench, Car, User, Clock, ArrowRight, Play, CheckCircle2 } from 'lucide-react';
@@ -308,25 +310,32 @@ export const ServiceOrders = () => {
                                         >
                                             <CardContent className="p-4 space-y-3">
                                                 {/* Header */}
-                                                <div className="flex items-start justify-between">
-                                                    <div>
-                                                        <p className="font-mono text-sm font-bold">
-                                                            #{order.id.slice(0, 8).toUpperCase()}
-                                                        </p>
-                                                        <p className="text-xs text-muted-foreground">
-                                                            {formatDateTime(order.created_at)}
-                                                        </p>
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <CarAvatar photoUrl={order.profile_photo_url} size={40} />
+                                                        <div>
+                                                            <p className="font-mono text-sm font-bold">
+                                                                #{order.id.slice(0, 8).toUpperCase()}
+                                                            </p>
+                                                            <p className="text-xs text-muted-foreground">
+                                                                {formatDateTime(order.created_at)}
+                                                            </p>
+                                                        </div>
                                                     </div>
                                                 </div>
+
+                                                {/* Plate */}
+                                                {order.plate && (
+                                                    <PlateBadge plate={order.plate} size="md" />
+                                                )}
 
                                                 {/* Vehicle */}
                                                 {order.vehicle && (
                                                     <div className="flex items-center gap-2 p-2 rounded bg-muted/50">
                                                         <Car className="w-4 h-4 text-primary" />
                                                         <div className="text-sm">
-                                                            <span className="font-mono">{order.vehicle.plate}</span>
                                                             <span className="text-muted-foreground">
-                                                                {' - '}{order.vehicle.brand}
+                                                                {order.vehicle.brand}
                                                             </span>
                                                         </div>
                                                     </div>

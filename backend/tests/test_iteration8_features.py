@@ -123,7 +123,7 @@ def _drive_to_en_revision(admin_token, order):
         headers=_hdr(admin_token), timeout=15,
     )
     assert r.status_code == 200, f"checkin: {r.status_code} {r.text}"
-    # 2) ingreso-approval -> INGRESADO
+    # 2) ingreso-approval -> INGRESADO  (profile_photo_url required since iter10)
     r = requests.post(
         f"{API}/orders/ingreso-approval",
         json={
@@ -133,6 +133,7 @@ def _drive_to_en_revision(admin_token, order):
             "signature_url": "data:image/png;base64,TEST",
             "cedula_number": order.get("client_cedula") or "1000000000",
             "risk_agreement_accepted": True,
+            "profile_photo_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/Pchi0gAAAABJRU5ErkJggg==",
         },
         headers=_hdr(admin_token), timeout=15,
     )
@@ -335,6 +336,18 @@ class TestCuttingAutoDeduct:
 
         # Drive to en_revision (checkin + ingreso-approval + inspection)
         _drive_to_en_revision(admin_token, order)
+        # Pre-assign technician (required since iter10 for cutting start)
+        r = requests.get(f"{API}/users", headers=_hdr(admin_token), timeout=15)
+        assert r.status_code == 200
+        techs = [u for u in r.json() if u.get("role") == "tecnico"]
+        assert techs
+        tech_id = techs[0]["id"]
+        r = requests.post(
+            f"{API}/tech-queue/pre-assign",
+            json={"order_id": order_id, "technician_id": tech_id, "service_time_minutes": 60},
+            headers=_hdr(admin_token), timeout=15,
+        )
+        assert r.status_code == 200, f"pre-assign: {r.status_code} {r.text}"
         # Now start cutting -> en_corte
         r = requests.put(
             f"{API}/cutting/{order_id}/start",

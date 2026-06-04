@@ -304,6 +304,12 @@ class OrderResponse(BaseModel):
     # Bahia data
     bahia_id: Optional[str] = None
     bahia_name: Optional[str] = None
+    # Vehicle profile photo (taken at check-in)
+    profile_photo_url: Optional[str] = None
+    # Pre-assignment (Autos por Asignar): técnico asignado antes de corte
+    pre_assigned_technician_id: Optional[str] = None
+    pre_assigned_technician_name: Optional[str] = None
+    pre_assigned_at: Optional[str] = None
     # Postventa / Garantía
     is_postventa: Optional[bool] = False
     postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
@@ -326,6 +332,7 @@ class IngresoApproval(BaseModel):
     signature_url: str
     cedula_number: str
     risk_agreement_accepted: bool = False
+    profile_photo_url: Optional[str] = None  # foto frontal del vehículo (requerida en /checkin)
 
 class InspectionData(BaseModel):
     order_id: str
@@ -1122,6 +1129,8 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         raise HTTPException(status_code=400, detail="El número de cédula es requerido")
     if not data.risk_agreement_accepted:
         raise HTTPException(status_code=400, detail="El acuerdo de riesgo debe ser aceptado")
+    if not data.profile_photo_url:
+        raise HTTPException(status_code=400, detail="La foto frontal del vehículo es requerida")
     
     update_data = {
         "services": [s.model_dump() for s in data.services],
@@ -1129,6 +1138,7 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         "signature_url": data.signature_url,
         "client_cedula": data.cedula_number,
         "risk_agreement_accepted": data.risk_agreement_accepted,
+        "profile_photo_url": data.profile_photo_url,
         "status": OrderStatus.INGRESADO.value,
         "ingreso_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
@@ -1172,6 +1182,9 @@ async def save_inspection(data: InspectionData, current_user: dict = Depends(req
         "inspection_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
+    # Si no hay profile_photo_url y se subieron fotos, usar la primera como foto de perfil
+    if not order.get("profile_photo_url") and data.photos:
+        update_data["profile_photo_url"] = data.photos[0]
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
     
@@ -1192,6 +1205,94 @@ async def save_inspection(data: InspectionData, current_user: dict = Depends(req
     )
     
     return {"message": "Inspección guardada exitosamente"}
+
+# ============================================================
+# Pre-Asignación de Técnico (Autos por Asignar) — antes de Corte
+# ============================================================
+
+class PreAssignTechnician(BaseModel):
+    order_id: str
+    technician_id: str
+    service_time_minutes: int
+
+@api_router.get("/tech-queue/pending")
+async def get_pending_tech_assignment(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Listado de autos en cola para pre-asignar técnico (en_revision sin técnico)."""
+    cursor = db.orders.find(
+        {
+            "status": {"$in": ["en_revision", "en_corte"]},
+            "$or": [
+                {"pre_assigned_technician_id": {"$exists": False}},
+                {"pre_assigned_technician_id": None},
+            ],
+            "assigned_technician_id": {"$in": [None]},
+        },
+        {"_id": 0}
+    ).sort("ingreso_at", 1)
+    return [OrderResponse(**o) async for o in cursor]
+
+@api_router.get("/tech-queue/by-technician")
+async def get_orders_by_technician(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Autos ya pre-asignados a cada técnico (en_revision/en_corte, aún sin pasar a asignado)."""
+    cursor = db.orders.find(
+        {
+            "status": {"$in": ["en_revision", "en_corte"]},
+            "pre_assigned_technician_id": {"$ne": None},
+            "assigned_technician_id": {"$in": [None]},
+        },
+        {"_id": 0}
+    )
+    return [OrderResponse(**o) async for o in cursor]
+
+@api_router.post("/tech-queue/pre-assign")
+async def pre_assign_technician(data: PreAssignTechnician, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Pre-asignar técnico a una orden ANTES del corte. No cambia status."""
+    order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order["status"] not in ("en_revision", "en_corte"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"La orden debe estar en Revisión 360° o En Corte. Estado actual: {order['status']}"
+        )
+    technician = await db.users.find_one({"id": data.technician_id, "role": "tecnico"}, {"_id": 0})
+    if not technician:
+        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+
+    await db.orders.update_one(
+        {"id": data.order_id},
+        {"$set": {
+            "pre_assigned_technician_id": data.technician_id,
+            "pre_assigned_technician_name": technician["name"],
+            "service_time_minutes": data.service_time_minutes,
+            "pre_assigned_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    await log_order_history(
+        data.order_id, "TECNICO_PRE_ASIGNADO",
+        order["status"], order["status"],
+        current_user["id"], current_user["name"],
+        {"technician_name": technician["name"], "service_time_minutes": data.service_time_minutes}
+    )
+    return {"message": "Técnico pre-asignado correctamente"}
+
+@api_router.post("/orders/{order_id}/clear-pre-assignment")
+async def clear_pre_assignment(order_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Limpiar pre-asignación (mover orden de vuelta a la cola)."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "pre_assigned_technician_id": None,
+            "pre_assigned_technician_name": None,
+            "pre_assigned_at": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    return {"message": "Pre-asignación removida"}
 
 # Step 4: Assignment (Coordinator)
 @api_router.post("/orders/assign")
@@ -2064,6 +2165,11 @@ async def start_cutting(order_id: str, current_user: dict = Depends(require_role
         raise HTTPException(
             status_code=400,
             detail=f"La orden debe estar en Revisión 360° completada para iniciar corte. Estado actual: {order.get('status')}"
+        )
+    if not order.get("pre_assigned_technician_id") and not order.get("assigned_technician_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Esta orden no tiene técnico asignado. Asígnela primero en 'Autos por Asignar'."
         )
     
     await db.orders.update_one(

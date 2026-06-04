@@ -12,6 +12,8 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '..
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
+import { PlateBadge } from '../components/PlateBadge';
+import { CarAvatar } from '../components/CarAvatar';
 import { CAR_BRANDS, CAR_MODELS, formatCurrency, isHoliday, COLOMBIA_HOLIDAYS } from '../lib/utils';
 import { toast } from 'sonner';
 import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle, MessageCircle, Mail, Send, UserCog } from 'lucide-react';
@@ -467,7 +469,7 @@ export const Appointments = () => {
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <Car className="w-4 h-4 text-muted-foreground" />
-                                    <span className="font-mono">{createdOrder.plate}</span>
+                                    <PlateBadge plate={createdOrder.plate} size="md" />
                                     <span className="text-muted-foreground">
                                         - {createdOrder.brand} {createdOrder.model}
                                     </span>
@@ -1214,17 +1216,19 @@ export const Appointments = () => {
                                                         {slotOrders.map((order) => (
                                                             <div 
                                                                 key={order.id}
-                                                                className="flex items-center justify-between p-2 rounded bg-muted/30 hover:bg-muted/50 transition-colors"
+                                                                className="flex items-center justify-between p-2 rounded bg-muted/30 hover:bg-muted/50 transition-colors gap-2"
                                                                 data-testid={`order-card-${order.order_code}`}
                                                             >
+                                                                <CarAvatar photoUrl={order.profile_photo_url} size={40} />
                                                                 <div className="flex-1 min-w-0">
-                                                                    <div className="flex items-center gap-2">
+                                                                    <div className="flex items-center gap-2 flex-wrap">
                                                                         {/* Hora específica */}
                                                                         {order.scheduled_time && (
                                                                             <span className="text-sm font-mono font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded">
                                                                                 {order.scheduled_time}
                                                                             </span>
                                                                         )}
+                                                                        <PlateBadge plate={order.plate} size="md" />
                                                                         <p className="font-medium truncate">{order.client_name}</p>
                                                                         <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
                                                                             <QrCode className="w-3 h-3" />
@@ -1232,9 +1236,7 @@ export const Appointments = () => {
                                                                         </span>
                                                                     </div>
                                                                     <p className="text-sm text-muted-foreground">
-                                                                        <span className="font-mono">{order.plate}</span>
-                                                                        {order.brand && ` - ${order.brand}`}
-                                                                        {order.model && ` ${order.model}`}
+                                                                        {order.brand} {order.model}
                                                                     </p>
                                                                     {order.created_by_name && (
                                                                         <p className="text-xs text-purple-400 flex items-center gap-1 mt-0.5" data-testid={`asesor-tag-${order.id}`}>
