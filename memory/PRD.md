@@ -4,9 +4,23 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
-2026-06-04 (PM later)
+2026-06-10
 
-## Última Sesión (2026-06-04 PM-2) — Iteración 15 (Selects 1-350cm, Aprovechamientos, Fix porcentajes)
+## Última Sesión (2026-06-10) — Iteración 16 (Consejo de Corte + Sedes/Sucursales)
+
+### Consejo de Corte (auto-rellena medidas por serie)
+- **Backend**: CRUD `/api/car-series` (brand, model, version, part_measurements={part_id:cm}, notes) + `/api/car-series/suggest?brand=&model=` con regex case-insensitive parcial.
+- **Frontend**: Sección "Series de Autos" en `/settings` con dialog de CRUD y campos por las 10 piezas. En `/cutting` > Completar Corte aparece bloque amarillo "💡 Consejo de Corte" con select de series sugeridas según `order.brand+model` y botón "Aplicar medidas" que auto-rellena los selects de medida.
+
+### Sedes / Sucursales + Inventario por sede
+- **Backend**: CRUD `/api/sedes` (admin only), `POST /api/inventory/{id}/transfer-sede` (admin/corte/coord) que persiste el movimiento en `inventory_movements`, `PUT /api/users/{id}/sede` para vincular usuarios a sede. Campo `sede_id`/`sede_nombre` agregado a `db.inventory` y `db.users`.
+- **Frontend**: Sección "Sedes/Sucursales" en `/settings` con CRUD + lista de asignación rápida de sede por usuario. En `/inventory`: campo Sede en el form de crear rollo + botón "Mover sede" (icono Move) que abre dialog con select de sede destino. Cada item muestra etiqueta `sede_nombre` si está asignada.
+
+### Tests
+- **48/48 pytest** (17 nuevos iter13 + 31 regresiones). Frontend 100% verificado: CRUD sedes + car series + asignación usuarios; create rollo con sede + transferir entre sedes; consejo de corte aplica medidas a partir de serie sugerida.
+- Reporte: `/app/test_reports/iteration_13.json`.
+
+## Sesión anterior (2026-06-04 PM-2) — Iteración 15 (Selects 1-350cm, Aprovechamientos, Fix porcentajes)
 - **FIX P0 (bug visible):** `/api/cutting/pending` no incluía `part_percentages` al construir `cutting_services` → ahora SÍ se incluye, los porcentajes elegidos en check-in aparecen como badges (data-testid `part-pct-<id>`) en cada pieza al completar corte.
 - **NUEVO (P0):** Medidas con selects **Largo (cm)** y **Ancho (cm)** ambos 1-350 cm en lugar del input de texto. Estado independiente `partDims` por pieza para evitar resets.
 - **NUEVO (P0):** Checkbox **♻ Aprovechamiento** por pieza. Si está marcado:
