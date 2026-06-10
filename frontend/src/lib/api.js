@@ -196,4 +196,27 @@ export const quotesAPI = {
     approve: (id) => api.post(`/orders/${id}/start-service`),
 };
 
+// Sedes / Sucursales
+export const sedesAPI = {
+    list: () => api.get('/sedes'),
+    create: (data) => api.post('/sedes', data),
+    update: (id, data) => api.put(`/sedes/${id}`, data),
+    delete: (id) => api.delete(`/sedes/${id}`),
+};
+
+// Car Series (Consejo de Corte)
+export const carSeriesAPI = {
+    list: () => api.get('/car-series'),
+    create: (data) => api.post('/car-series', data),
+    update: (id, data) => api.put(`/car-series/${id}`, data),
+    delete: (id) => api.delete(`/car-series/${id}`),
+    suggest: (brand, model) => api.get('/car-series/suggest', { params: { brand, model } }),
+};
+
+// Inventario: transferir entre sedes / asignar sede a usuario
+export const sedeAssignmentAPI = {
+    transferInventory: (itemId, data) => api.post(`/inventory/${itemId}/transfer-sede`, data),
+    setUserSede: (userId, sedeId) => api.put(`/users/${userId}/sede`, { sede_id: sedeId }),
+};
+
 export default api;

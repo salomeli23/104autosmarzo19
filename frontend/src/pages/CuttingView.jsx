@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { cuttingAPI, inventoryAPI } from '../lib/api';
+import { cuttingAPI, inventoryAPI, carSeriesAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -8,7 +8,7 @@ import { Textarea } from '../components/ui/textarea';
 import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { toast } from 'sonner';
-import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package } from 'lucide-react';
+import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package, Lightbulb } from 'lucide-react';
 import { LiveTimer } from '../components/LiveTimer';
 
 const CuttingView = () => {
@@ -27,6 +27,46 @@ const CuttingView = () => {
     const [partMaterials, setPartMaterials] = useState({});
     // Dimensiones independientes por pieza: { part_id: { largo: '120', ancho: '60' } }
     const [partDims, setPartDims] = useState({});
+    // Consejo de Corte: sugerencias de series basadas en marca+modelo de la orden
+    const [seriesSuggestions, setSeriesSuggestions] = useState([]);
+    const [selectedSeriesId, setSelectedSeriesId] = useState('');
+
+    // Cargar series sugeridas cuando se abre el dialog
+    const loadSeriesSuggestions = useCallback(async (order) => {
+        if (!order?.brand && !order?.model) {
+            setSeriesSuggestions([]);
+            return;
+        }
+        try {
+            const res = await carSeriesAPI.suggest(order.brand || '', order.model || '');
+            setSeriesSuggestions(res.data || []);
+        } catch (err) {
+            setSeriesSuggestions([]);
+        }
+    }, []);
+
+    // Aplicar medidas de una serie a partDims y partMeasurements
+    const applySeries = (seriesId) => {
+        const serie = seriesSuggestions.find(s => s.id === seriesId);
+        if (!serie) return;
+        const meas = serie.part_measurements || {};
+        setPartDims(prev => {
+            const next = { ...prev };
+            Object.entries(meas).forEach(([pid, cm]) => {
+                if (cm) next[pid] = { medida: String(Math.round(cm)) };
+            });
+            return next;
+        });
+        setPartMeasurements(prev => {
+            const next = { ...prev };
+            Object.entries(meas).forEach(([pid, cm]) => {
+                if (cm) next[pid] = `${Math.round(cm)} cm`;
+            });
+            return next;
+        });
+        setSelectedSeriesId(seriesId);
+        toast.success(`Medidas aplicadas de ${serie.brand} ${serie.model}${serie.version ? ' ' + serie.version : ''}`);
+    };
 
     // Lookup del porcentaje elegido por el cliente en el check-in para esta parte
     const getPartPercentage = (order, partId) => {
@@ -200,7 +240,9 @@ const CuttingView = () => {
         setPartMeasurements(initial);
         setPartMaterials({});
         setPartDims({});
+        setSelectedSeriesId('');
         setNotes('');
+        loadSeriesSuggestions(order);
         setPpfSerial(order?.ppf_vehicle_serial || '');
         setPpfModel(order?.ppf_vehicle_model || '');
         setSelectedRolloId('');
@@ -586,6 +628,49 @@ const CuttingView = () => {
                                     </div>
                                 </div>
                             )}
+
+                            {/* Consejo de Corte: auto-rellenar medidas por serie */}
+                            <div className="space-y-2 p-3 rounded-lg border border-yellow-500/40 bg-yellow-500/5" data-testid="consejo-corte-block">
+                                <Label className="flex items-center gap-2 font-medium text-yellow-400">
+                                    <Lightbulb className="w-4 h-4" />
+                                    Consejo de Corte
+                                </Label>
+                                <p className="text-xs text-muted-foreground -mt-1">
+                                    {seriesSuggestions.length > 0
+                                        ? `Series sugeridas según ${selectedOrder?.brand || ''} ${selectedOrder?.model || ''}. Aplica para auto-rellenar las medidas.`
+                                        : `No hay series cargadas para ${selectedOrder?.brand || 'esta marca'} ${selectedOrder?.model || ''}. Agrégalas en Configuración › Series de Autos.`}
+                                </p>
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                    <select
+                                        className="flex-1 px-2 py-1.5 rounded border border-input bg-background text-sm"
+                                        value={selectedSeriesId}
+                                        onChange={(e) => setSelectedSeriesId(e.target.value)}
+                                        disabled={seriesSuggestions.length === 0}
+                                        data-testid="consejo-corte-select"
+                                    >
+                                        <option value="">Escoge una serie…</option>
+                                        {seriesSuggestions.map(s => (
+                                            <option key={s.id} value={s.id}>
+                                                {s.brand} {s.model}{s.version ? ' · ' + s.version : ''}
+                                                {' ('}
+                                                {Object.keys(s.part_measurements || {}).length} piezas)
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={!selectedSeriesId}
+                                        onClick={() => applySeries(selectedSeriesId)}
+                                        className="border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
+                                        data-testid="consejo-corte-apply-btn"
+                                    >
+                                        <Lightbulb className="w-4 h-4 mr-1" />
+                                        Aplicar medidas
+                                    </Button>
+                                </div>
+                            </div>
 
                             {/* Medidas por pieza */}
                             <div className="space-y-3">

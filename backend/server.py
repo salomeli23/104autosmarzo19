@@ -20,6 +20,7 @@ import base64
 from io import BytesIO
 import asyncio
 import resend
+import re
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -447,6 +448,171 @@ async def get_technicians(current_user: dict = Depends(get_current_user)):
         id=u["id"], email=u["email"], name=u["name"],
         role=UserRole(u["role"]), phone=u.get("phone"), created_at=u["created_at"]
     ) for u in users]
+
+
+# ==================== SEDES (Sucursales) ====================
+class Sede(BaseModel):
+    nombre: str
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+
+@api_router.get("/sedes")
+async def list_sedes(current_user: dict = Depends(get_current_user)):
+    items = await db.sedes.find({}, {"_id": 0}).sort("nombre", 1).to_list(500)
+    return items
+
+@api_router.post("/sedes")
+async def create_sede(data: Sede, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    if not data.nombre.strip():
+        raise HTTPException(status_code=400, detail="El nombre es requerido")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": data.nombre.strip(),
+        "direccion": data.direccion,
+        "telefono": data.telefono,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.sedes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/sedes/{sede_id}")
+async def update_sede(sede_id: str, data: Sede, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    update = {"nombre": data.nombre.strip(), "direccion": data.direccion, "telefono": data.telefono}
+    res = await db.sedes.update_one({"id": sede_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Sede no encontrada")
+    return {"message": "Sede actualizada"}
+
+@api_router.delete("/sedes/{sede_id}")
+async def delete_sede(sede_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    res = await db.sedes.delete_one({"id": sede_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Sede no encontrada")
+    return {"message": "Sede eliminada"}
+
+
+# ==================== CAR SERIES (Consejo de Corte) ====================
+class CarSeries(BaseModel):
+    brand: str
+    model: str
+    version: Optional[str] = None
+    # {part_id: medida_cm}
+    part_measurements: Dict[str, float] = {}
+    notes: Optional[str] = None
+
+@api_router.get("/car-series")
+async def list_car_series(current_user: dict = Depends(get_current_user)):
+    items = await db.car_series.find({}, {"_id": 0}).sort([("brand", 1), ("model", 1)]).to_list(1000)
+    return items
+
+@api_router.post("/car-series")
+async def create_car_series(data: CarSeries, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
+    if not data.brand.strip() or not data.model.strip():
+        raise HTTPException(status_code=400, detail="Marca y modelo son requeridos")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "brand": data.brand.strip(),
+        "model": data.model.strip(),
+        "version": (data.version or "").strip() or None,
+        "part_measurements": data.part_measurements or {},
+        "notes": data.notes,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.car_series.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/car-series/{series_id}")
+async def update_car_series(series_id: str, data: CarSeries, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
+    update = {
+        "brand": data.brand.strip(),
+        "model": data.model.strip(),
+        "version": (data.version or "").strip() or None,
+        "part_measurements": data.part_measurements or {},
+        "notes": data.notes,
+    }
+    res = await db.car_series.update_one({"id": series_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Serie no encontrada")
+    return {"message": "Serie actualizada"}
+
+@api_router.delete("/car-series/{series_id}")
+async def delete_car_series(series_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
+    res = await db.car_series.delete_one({"id": series_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Serie no encontrada")
+    return {"message": "Serie eliminada"}
+
+@api_router.get("/car-series/suggest")
+async def suggest_car_series(brand: Optional[str] = None, model: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """Auto-sugerencia: devuelve series que coinciden con brand+model (case-insensitive, contains)."""
+    query = {}
+    if brand:
+        query["brand"] = {"$regex": re.escape(brand.strip()), "$options": "i"}
+    if model:
+        query["model"] = {"$regex": re.escape(model.strip()), "$options": "i"}
+    items = await db.car_series.find(query, {"_id": 0}).limit(20).to_list(20)
+    return items
+
+
+# ==================== INVENTORY: TRANSFERIR ENTRE SEDES ====================
+class TransferSede(BaseModel):
+    target_sede_id: str
+    reason: Optional[str] = None
+
+@api_router.post("/inventory/{item_id}/transfer-sede")
+async def transfer_inventory_sede(item_id: str, data: TransferSede, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    item = await db.inventory.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Artículo no encontrado")
+    target_sede = await db.sedes.find_one({"id": data.target_sede_id}, {"_id": 0})
+    if not target_sede:
+        raise HTTPException(status_code=404, detail="Sede destino no encontrada")
+    prev_sede_id = item.get("sede_id")
+    if prev_sede_id == data.target_sede_id:
+        raise HTTPException(status_code=400, detail="El artículo ya está en esa sede")
+    await db.inventory.update_one(
+        {"id": item_id},
+        {"$set": {"sede_id": data.target_sede_id, "sede_nombre": target_sede["nombre"], "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    await db.inventory_movements.insert_one({
+        "id": str(uuid.uuid4()),
+        "inventory_item_id": item_id,
+        "type": "transfer_sede",
+        "metros": None,
+        "cantidad": None,
+        "from_sede_id": prev_sede_id,
+        "to_sede_id": data.target_sede_id,
+        "to_sede_nombre": target_sede["nombre"],
+        "reason": data.reason or "Movimiento entre sedes",
+        "user_id": current_user["id"],
+        "user_name": current_user.get("name") or current_user.get("email"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"message": "Artículo transferido", "to_sede": target_sede["nombre"]}
+
+
+# ==================== USERS: SEDE ASSIGNMENT ====================
+class UserSedeUpdate(BaseModel):
+    sede_id: Optional[str] = None
+
+@api_router.put("/users/{user_id}/sede")
+async def update_user_sede(user_id: str, data: UserSedeUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    sede_name = None
+    if data.sede_id:
+        sede = await db.sedes.find_one({"id": data.sede_id}, {"_id": 0})
+        if not sede:
+            raise HTTPException(status_code=404, detail="Sede no encontrada")
+        sede_name = sede["nombre"]
+    res = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"sede_id": data.sede_id, "sede_nombre": sede_name}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return {"message": "Sede del usuario actualizada", "sede_nombre": sede_name}
+
 
 # ==================== ORDERS ENDPOINTS ====================
 @api_router.post("/orders", response_model=OrderResponse)
@@ -2505,6 +2671,7 @@ class InventoryItemCreate(BaseModel):
     cantidad_inicial: Optional[int] = None  # para accesorios/materiales
     costo: float = 0.0
     linked_service: Optional[str] = None  # Servicio que descuenta este artículo
+    sede_id: Optional[str] = None  # Sede a la que pertenece el artículo
     fecha_ingreso: Optional[str] = None
     notes: Optional[str] = None
 
@@ -2548,6 +2715,14 @@ async def create_inventory_item(
     last = await db.inventory.find_one({}, sort=[("created_at", -1)])
     seq = (last.get("seq", 0) + 1) if last else 1
     
+    # Resolve sede name if sede_id provided
+    sede_nombre = None
+    if item.sede_id:
+        sede = await db.sedes.find_one({"id": item.sede_id}, {"_id": 0})
+        if not sede:
+            raise HTTPException(status_code=404, detail="Sede no encontrada")
+        sede_nombre = sede["nombre"]
+    
     now_iso = datetime.now(timezone.utc).isoformat()
     doc = {
         "id": str(uuid.uuid4()),
@@ -2564,6 +2739,8 @@ async def create_inventory_item(
         "cantidad_restante": item.cantidad_inicial,
         "costo": item.costo,
         "linked_service": item.linked_service,
+        "sede_id": item.sede_id,
+        "sede_nombre": sede_nombre,
         "fecha_ingreso": item.fecha_ingreso or now_iso,
         "notes": item.notes,
         "active": True,

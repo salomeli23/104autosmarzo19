@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { inventoryAPI } from '../lib/api';
+import { inventoryAPI, sedesAPI, sedeAssignmentAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { formatCurrency, SERVICE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Package, AlertTriangle, Plus, Trash2, Boxes, Wrench, Layers, Edit, Tag } from 'lucide-react';
+import { Package, AlertTriangle, Plus, Trash2, Boxes, Wrench, Layers, Edit, Tag, MapPin, Move } from 'lucide-react';
 
 const ROLLO_TYPES = [
     { value: 'spectra', label: 'Spectra' },
@@ -59,19 +59,25 @@ export const Inventory = () => {
         cantidad_inicial: '',
         costo: '',
         linked_service: '',
+        sede_id: '',
         notes: '',
     };
     const [form, setForm] = useState(emptyForm);
+    const [sedes, setSedes] = useState([]);
+    const [transferDialog, setTransferDialog] = useState(null);  // { item }
+    const [transferTargetSede, setTransferTargetSede] = useState('');
 
     const fetchAll = useCallback(async () => {
         try {
             setLoading(true);
-            const [itemsRes, alertsRes] = await Promise.all([
+            const [itemsRes, alertsRes, sedesRes] = await Promise.all([
                 inventoryAPI.list(),
                 inventoryAPI.alerts(),
+                sedesAPI.list(),
             ]);
             setItems(itemsRes.data || []);
             setAlerts(alertsRes.data?.alerts || []);
+            setSedes(sedesRes.data || []);
         } catch (e) {
             console.error(e);
             toast.error('Error cargando inventario');
@@ -81,6 +87,26 @@ export const Inventory = () => {
     }, []);
 
     useEffect(() => { fetchAll(); }, [fetchAll]);
+
+    const openTransfer = (item) => {
+        setTransferDialog({ item });
+        setTransferTargetSede('');
+    };
+
+    const handleTransfer = async () => {
+        if (!transferTargetSede) {
+            toast.error('Selecciona la sede destino');
+            return;
+        }
+        try {
+            const res = await sedeAssignmentAPI.transferInventory(transferDialog.item.id, { target_sede_id: transferTargetSede });
+            toast.success(`Movido a ${res.data?.to_sede}`);
+            setTransferDialog(null);
+            fetchAll();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error al transferir');
+        }
+    };
 
     const openNew = () => {
         setEditingId(null);
@@ -133,6 +159,7 @@ export const Inventory = () => {
                     cantidad_inicial: form.tipo_articulo === 'cantidad' ? parseInt(form.cantidad_inicial || 0, 10) : null,
                     costo: parseFloat(form.costo || 0),
                     linked_service: form.linked_service || null,
+                    sede_id: form.sede_id || null,
                     notes: form.notes || null,
                 };
                 await inventoryAPI.create(payload);
@@ -258,6 +285,9 @@ export const Inventory = () => {
                                                     </p>
                                                 </div>
                                                 <div className="flex gap-1">
+                                                    <Button variant="ghost" size="sm" onClick={() => openTransfer(item)} title="Mover a sede" data-testid={`move-${item.codigo}`}>
+                                                        <Move className="w-4 h-4 text-cyan-400" />
+                                                    </Button>
                                                     <Button variant="ghost" size="sm" onClick={() => openEdit(item)} data-testid={`edit-${item.codigo}`}>
                                                         <Edit className="w-4 h-4" />
                                                     </Button>
@@ -276,6 +306,12 @@ export const Inventory = () => {
                                                 </div>
                                             </div>
                                             <div className="text-xs text-muted-foreground space-y-0.5">
+                                                {item.sede_nombre && (
+                                                    <p className="flex items-center gap-1 text-cyan-400">
+                                                        <MapPin className="w-3 h-3" />
+                                                        {item.sede_nombre}
+                                                    </p>
+                                                )}
                                                 {item.factura_compra && <p>Factura: {item.factura_compra}</p>}
                                                 {item.costo > 0 && <p>Costo: {formatCurrency(item.costo)}</p>}
                                                 {item.linked_service && (
@@ -313,6 +349,9 @@ export const Inventory = () => {
                                                 <p className="text-xs text-muted-foreground">{item.categoria}</p>
                                             </div>
                                             <div className="flex gap-1">
+                                                <Button variant="ghost" size="sm" onClick={() => openTransfer(item)} title="Mover a sede">
+                                                    <Move className="w-4 h-4 text-cyan-400" />
+                                                </Button>
                                                 <Button variant="ghost" size="sm" onClick={() => openEdit(item)}>
                                                     <Edit className="w-4 h-4" />
                                                 </Button>
@@ -326,6 +365,12 @@ export const Inventory = () => {
                                             <span className="font-mono font-medium">{item.cantidad_restante ?? 0} / {item.cantidad_inicial ?? 0}</span>
                                         </div>
                                         <div className="text-xs text-muted-foreground space-y-0.5">
+                                            {item.sede_nombre && (
+                                                <p className="flex items-center gap-1 text-cyan-400">
+                                                    <MapPin className="w-3 h-3" />
+                                                    {item.sede_nombre}
+                                                </p>
+                                            )}
                                             {item.factura_compra && <p>Factura: {item.factura_compra}</p>}
                                             {item.costo > 0 && <p>Costo: {formatCurrency(item.costo)}</p>}
                                         </div>
@@ -439,6 +484,17 @@ export const Inventory = () => {
                         </div>
 
                         <div className="space-y-1">
+                            <Label className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Sede</Label>
+                            <Select value={form.sede_id || '__none__'} onValueChange={(v) => setForm(f => ({ ...f, sede_id: v === '__none__' ? '' : v }))}>
+                                <SelectTrigger data-testid="form-sede"><SelectValue placeholder="(Sin sede asignada)" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none__">(Sin sede)</SelectItem>
+                                    {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="space-y-1">
                             <Label>Notas</Label>
                             <textarea
                                 className="w-full min-h-[60px] px-3 py-2 rounded-md border border-input bg-background text-sm"
@@ -451,6 +507,47 @@ export const Inventory = () => {
                         <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Cancelar</Button>
                         <Button onClick={handleSave} disabled={saving} data-testid="save-inventory-btn">
                             {saving ? 'Guardando...' : (editingId ? 'Actualizar' : 'Registrar')}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Transferir entre sedes */}
+            <Dialog open={!!transferDialog} onOpenChange={(o) => !o && setTransferDialog(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Move className="w-5 h-5 text-cyan-400" />
+                            Mover artículo a otra sede
+                        </DialogTitle>
+                    </DialogHeader>
+                    {transferDialog && (
+                        <div className="space-y-3">
+                            <div className="p-3 rounded bg-muted/50">
+                                <p className="font-mono text-xs text-muted-foreground">{transferDialog.item.codigo}</p>
+                                <p className="font-medium">{transferDialog.item.nombre}</p>
+                                <p className="text-xs flex items-center gap-1 mt-1">
+                                    <MapPin className="w-3 h-3" />
+                                    Sede actual: <span className="font-medium">{transferDialog.item.sede_nombre || '— sin sede —'}</span>
+                                </p>
+                            </div>
+                            <div className="space-y-1">
+                                <Label>Sede destino</Label>
+                                <Select value={transferTargetSede} onValueChange={setTransferTargetSede}>
+                                    <SelectTrigger data-testid="transfer-target-sede"><SelectValue placeholder="Selecciona sede destino" /></SelectTrigger>
+                                    <SelectContent>
+                                        {sedes
+                                            .filter(s => s.id !== transferDialog.item.sede_id)
+                                            .map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setTransferDialog(null)}>Cancelar</Button>
+                        <Button onClick={handleTransfer} disabled={!transferTargetSede} data-testid="confirm-transfer-btn">
+                            <Move className="w-4 h-4 mr-1" /> Transferir
                         </Button>
                     </DialogFooter>
                 </DialogContent>

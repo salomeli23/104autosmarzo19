@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { ROLE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
 import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { SedesSection, CarSeriesSection } from '../components/SettingsSections';
 
 export const Settings = () => {
     const { user } = useAuth();
@@ -378,6 +379,9 @@ export const Settings = () => {
                     </div>
                 </CardContent>
             </Card>
+
+            <SedesSection />
+            <CarSeriesSection />
         </div>
     );
 };
