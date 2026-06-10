@@ -14,7 +14,7 @@ import { QRDisplay } from '../components/QRDisplay';
 import { SignaturePad } from '../components/SignaturePad';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
-import { formatCurrency } from '../lib/utils';
+import { formatCurrency, VEHICLE_PARTS } from '../lib/utils';
 import { generateOrderPDF } from '../components/OrderPDFGenerator';
 import { Inspection360Inline } from '../components/Inspection360Inline';
 import { toast } from 'sonner';
@@ -154,18 +154,7 @@ export const CheckIn = () => {
     ];
     
     // Partes del vehículo disponibles para polarizado
-    const VEHICLE_PARTS = [
-        { id: 'panoramico', name: 'Panorámico' },
-        { id: 'vidrio_copiloto', name: 'Vidrio Copiloto' },
-        { id: 'vidrio_piloto', name: 'Vidrio Piloto' },
-        { id: 'vidrio_trasero_piloto', name: 'Vidrio Trasero Piloto' },
-        { id: 'vidrio_trasero_copiloto', name: 'Vidrio Trasero Copiloto' },
-        { id: 'vidrio_trasero', name: 'Vidrio Trasero (Panorámico Trasero)' },
-        { id: 'trasero', name: 'Trasero' },
-        { id: 'luneta', name: 'Luneta' },
-        { id: 'sunroof', name: 'Sunroof' },
-        { id: 'custodias', name: 'Custodias' },
-    ];
+    // VEHICLE_PARTS importado desde lib/utils.js (single source of truth)
     
     // Porcentajes de polarizado disponibles
     const TINT_PERCENTAGES = ['5%', '7%', '10%', '12%', '15%', '20%', '30%', '35%', '50%', '70%'];

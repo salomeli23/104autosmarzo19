@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { sedesAPI, carSeriesAPI, sedeAssignmentAPI, usersAPI } from '../lib/api';
+import { VEHICLE_PARTS } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -8,19 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { toast } from 'sonner';
 import { MapPin, Car, Plus, Trash2, Edit, Building, User as UserIcon } from 'lucide-react';
-
-const VEHICLE_PARTS = [
-    { id: 'panoramico', label: 'Panorámico' },
-    { id: 'vidrio_copiloto', label: 'Vidrio Copiloto' },
-    { id: 'vidrio_piloto', label: 'Vidrio Piloto' },
-    { id: 'vidrio_trasero', label: 'Vidrio Trasero' },
-    { id: 'vidrio_trasero_copiloto', label: 'Vidrio Trasero Copiloto' },
-    { id: 'trasero', label: 'Trasero' },
-    { id: 'capo', label: 'Capó' },
-    { id: 'techo', label: 'Techo' },
-    { id: 'estriberas', label: 'Estriberas' },
-    { id: 'paragolpe', label: 'Paragolpe' },
-];
 
 // =================== SEDES ===================
 export const SedesSection = () => {

@@ -217,6 +217,23 @@ export const VEHICLE_STATUS_LABELS = {
     finalizado: 'Finalizado',
 };
 
+
+// VEHICLE_PARTS: piezas estándar usadas en Check-in, Corte y Consejo de Corte (Series).
+// Single source of truth para garantizar que las series creadas en /settings
+// se vinculen correctamente con los inputs del cortador.
+export const VEHICLE_PARTS = [
+    { id: 'panoramico', label: 'Panorámico', name: 'Panorámico' },
+    { id: 'vidrio_copiloto', label: 'Vidrio Copiloto', name: 'Vidrio Copiloto' },
+    { id: 'vidrio_piloto', label: 'Vidrio Piloto', name: 'Vidrio Piloto' },
+    { id: 'vidrio_trasero_piloto', label: 'Vidrio Trasero Piloto', name: 'Vidrio Trasero Piloto' },
+    { id: 'vidrio_trasero_copiloto', label: 'Vidrio Trasero Copiloto', name: 'Vidrio Trasero Copiloto' },
+    { id: 'vidrio_trasero', label: 'Vidrio Trasero (Panorámico Trasero)', name: 'Vidrio Trasero (Panorámico Trasero)' },
+    { id: 'trasero', label: 'Trasero', name: 'Trasero' },
+    { id: 'luneta', label: 'Luneta', name: 'Luneta' },
+    { id: 'sunroof', label: 'Sunroof', name: 'Sunroof' },
+    { id: 'custodias', label: 'Custodias', name: 'Custodias' },
+];
+
 export const INSPECTION_AREAS = [
     { id: 'capot', name: 'Capot' },
     { id: 'parabrisas', name: 'Parabrisas' },

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { cuttingAPI, inventoryAPI, carSeriesAPI } from '../lib/api';
+import { VEHICLE_PARTS } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -97,18 +98,6 @@ const CuttingView = () => {
     const labelForTipoRollo = (tipo) => ROLLO_TYPES.find(t => t.value === tipo)?.label || tipo;
 
     // Partes del vehículo (mismo set que el check-in)
-    const VEHICLE_PARTS = [
-        { id: 'panoramico', label: 'Panorámico' },
-        { id: 'vidrio_copiloto', label: 'Vidrio Copiloto' },
-        { id: 'vidrio_piloto', label: 'Vidrio Piloto' },
-        { id: 'vidrio_trasero', label: 'Vidrio Trasero' },
-        { id: 'vidrio_trasero_copiloto', label: 'Vidrio Trasero Copiloto' },
-        { id: 'trasero', label: 'Trasero' },
-        { id: 'luneta', label: 'Luneta' },
-        { id: 'sunroof', label: 'Sunroof' },
-        { id: 'custodias', label: 'Custodias' },
-    ];
-
     const orderHasPPF = (order) => {
         const services = order?.cutting_services || order?.services || [];
         return services.some(s => {
