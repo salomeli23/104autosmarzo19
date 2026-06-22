@@ -1129,18 +1129,17 @@ async def calculate_scheduled_time(date_str: str, slot_id: str):
     start_total_min = start_hour * 60 + start_min
     end_total_min = end_hour * 60 + end_min
     
-    INTERVAL_MIN = 15
+    INTERVAL_MIN = 1  # Citas separadas de 1 en 1 minuto (modo agendamiento ágil)
+    LEAD_MIN = 1      # La cita debe estar al menos 1 minuto en el futuro
     
     # Determine earliest acceptable minute (relative to day)
     earliest_min = start_total_min
     now_colombia = get_colombia_time()
     today_str = now_colombia.strftime("%Y-%m-%d")
     if date_str == today_str:
-        current_total_min = now_colombia.hour * 60 + now_colombia.minute
+        current_total_min = now_colombia.hour * 60 + now_colombia.minute + LEAD_MIN
         if current_total_min > start_total_min:
-            offset = current_total_min - start_total_min
-            steps = math.ceil(offset / INTERVAL_MIN)
-            earliest_min = start_total_min + steps * INTERVAL_MIN
+            earliest_min = current_total_min
     
     # Get all scheduled_time values already used in this slot
     cursor = db.orders.find(
