@@ -308,6 +308,8 @@ class OrderResponse(BaseModel):
     bahia_name: Optional[str] = None
     # Vehicle profile photo (taken at check-in)
     profile_photo_url: Optional[str] = None
+    payment_method: Optional[str] = None
+    requires_invoice: Optional[bool] = None
     # Pre-assignment (Autos por Asignar): técnico asignado antes de corte
     pre_assigned_technician_id: Optional[str] = None
     pre_assigned_technician_name: Optional[str] = None
@@ -335,6 +337,8 @@ class IngresoApproval(BaseModel):
     cedula_number: str
     risk_agreement_accepted: bool = False
     profile_photo_url: Optional[str] = None  # foto frontal del vehículo (requerida en /checkin)
+    payment_method: Optional[str] = None  # 'efectivo' | 'tarjeta' | 'transferencia'
+    requires_invoice: bool = False  # si True, se añadió IVA 19%
 
 class InspectionData(BaseModel):
     order_id: str
@@ -1305,6 +1309,8 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         "client_cedula": data.cedula_number,
         "risk_agreement_accepted": data.risk_agreement_accepted,
         "profile_photo_url": data.profile_photo_url,
+        "payment_method": data.payment_method,
+        "requires_invoice": bool(data.requires_invoice),
         "status": OrderStatus.INGRESADO.value,
         "ingreso_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()

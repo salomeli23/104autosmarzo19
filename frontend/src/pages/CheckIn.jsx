@@ -47,6 +47,8 @@ export const CheckIn = () => {
     const [profilePhoto, setProfilePhoto] = useState(null);  // foto frontal del vehículo
     const [inspectionPhotosCount, setInspectionPhotosCount] = useState(0);
     const [sendingPhotos, setSendingPhotos] = useState(false);
+    const [paymentMethod, setPaymentMethod] = useState('efectivo'); // efectivo | tarjeta | transferencia
+    const [requiresInvoice, setRequiresInvoice] = useState(false);
     
     // Risk Agreement Modal
     const [showRiskAgreement, setShowRiskAgreement] = useState(false);
@@ -244,10 +246,16 @@ export const CheckIn = () => {
         setSelectedServices(prev => prev.filter(s => s.serviceId !== serviceId));
     };
 
-    // Calculate total
-    const calculateTotal = () => {
-        return selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
+    // Calculate total (con recargo por tarjeta 5% y IVA 19% si aplica factura)
+    const calculateBreakdown = () => {
+        const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
+        const cardSurcharge = paymentMethod === 'tarjeta' ? Math.round(subtotal * 0.05) : 0;
+        const baseTax = subtotal + cardSurcharge;
+        const iva = requiresInvoice ? Math.round(baseTax * 0.19) : 0;
+        const total = baseTax + iva;
+        return { subtotal, cardSurcharge, iva, total };
     };
+    const calculateTotal = () => calculateBreakdown().total;
 
     // Check if any selected service is polarizado/ultrasecure
     const hasPolarizadoService = () => {
@@ -333,6 +341,8 @@ export const CheckIn = () => {
                 cedula_number: cedulaNumber,
                 risk_agreement_accepted: riskAgreementAccepted,
                 profile_photo_url: profilePhoto,
+                payment_method: paymentMethod,
+                requires_invoice: requiresInvoice,
             });
 
             toast.success('Ingreso aprobado exitosamente');
@@ -386,6 +396,8 @@ export const CheckIn = () => {
         setProfilePhoto(null);
         setInspectionPhotosCount(0);
         setSendingPhotos(false);
+        setPaymentMethod('efectivo');
+        setRequiresInvoice(false);
         setWaitingInfo(null);
         setRiskAgreementAccepted(false);
         setCustomServiceName('');
@@ -1090,13 +1102,77 @@ export const CheckIn = () => {
                                 </div>
                             </div>
 
-                            {/* Total */}
-                            <div className="p-4 rounded-lg bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/30">
-                                <div className="flex justify-between items-center">
-                                    <span className="font-medium">Total:</span>
-                                    <span className="text-2xl font-bold text-primary">{formatCurrency(calculateTotal())}</span>
+                            {/* Forma de pago + Factura electrónica */}
+                            <div className="grid sm:grid-cols-2 gap-3">
+                                <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-2" data-testid="payment-method-block">
+                                    <Label className="text-sm font-medium">Forma de pago *</Label>
+                                    <div className="grid grid-cols-3 gap-1">
+                                        {[
+                                            { value: 'efectivo', label: 'Efectivo' },
+                                            { value: 'tarjeta', label: 'Tarjeta +5%' },
+                                            { value: 'transferencia', label: 'Transferencia' },
+                                        ].map(m => (
+                                            <button
+                                                type="button"
+                                                key={m.value}
+                                                onClick={() => setPaymentMethod(m.value)}
+                                                className={`text-xs px-2 py-2 rounded border transition-colors ${
+                                                    paymentMethod === m.value
+                                                        ? 'bg-cyan-500/20 border-cyan-500/60 text-cyan-300 font-medium'
+                                                        : 'border-input hover:border-cyan-500/40 text-muted-foreground'
+                                                }`}
+                                                data-testid={`payment-method-${m.value}`}
+                                            >
+                                                {m.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-2" data-testid="invoice-block">
+                                    <Label className="text-sm font-medium">Factura electrónica *</Label>
+                                    <label className={`flex items-center gap-2 cursor-pointer p-2 rounded transition-colors ${requiresInvoice ? 'bg-yellow-500/10 border border-yellow-500/40' : 'hover:bg-muted/50'}`}>
+                                        <input
+                                            type="checkbox"
+                                            checked={requiresInvoice}
+                                            onChange={(e) => setRequiresInvoice(e.target.checked)}
+                                            className="w-4 h-4 accent-yellow-500"
+                                            data-testid="requires-invoice-checkbox"
+                                        />
+                                        <span className="text-xs">
+                                            {requiresInvoice ? 'Sí — se añadirá 19% de IVA' : 'No requiere factura'}
+                                        </span>
+                                    </label>
                                 </div>
                             </div>
+
+                            {/* Total con desglose */}
+                            {(() => {
+                                const bk = calculateBreakdown();
+                                return (
+                                    <div className="p-4 rounded-lg bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/30 space-y-1" data-testid="total-breakdown">
+                                        <div className="flex justify-between text-sm text-muted-foreground">
+                                            <span>Subtotal servicios</span>
+                                            <span className="font-mono">{formatCurrency(bk.subtotal)}</span>
+                                        </div>
+                                        {bk.cardSurcharge > 0 && (
+                                            <div className="flex justify-between text-sm text-cyan-300">
+                                                <span>Recargo tarjeta (5%)</span>
+                                                <span className="font-mono">+{formatCurrency(bk.cardSurcharge)}</span>
+                                            </div>
+                                        )}
+                                        {bk.iva > 0 && (
+                                            <div className="flex justify-between text-sm text-yellow-300">
+                                                <span>IVA (19%)</span>
+                                                <span className="font-mono">+{formatCurrency(bk.iva)}</span>
+                                            </div>
+                                        )}
+                                        <div className="flex justify-between items-center pt-2 border-t border-cyan-500/20">
+                                            <span className="font-medium">Total:</span>
+                                            <span className="text-2xl font-bold text-primary" data-testid="total-value">{formatCurrency(bk.total)}</span>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </CardContent>
                     </Card>
 
