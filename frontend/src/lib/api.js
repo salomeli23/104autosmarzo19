@@ -213,6 +213,14 @@ export const carSeriesAPI = {
     suggest: (brand, model) => api.get('/car-series/suggest', { params: { brand, model } }),
 };
 
+// Service Extras (Sunroof y otros costos adicionales)
+export const serviceExtrasAPI = {
+    list: () => api.get('/service-extras'),
+    create: (data) => api.post('/service-extras', data),
+    update: (id, data) => api.put(`/service-extras/${id}`, data),
+    delete: (id) => api.delete(`/service-extras/${id}`),
+};
+
 // Inventario: transferir entre sedes / asignar sede a usuario
 export const sedeAssignmentAPI = {
     transferInventory: (itemId, data) => api.post(`/inventory/${itemId}/transfer-sede`, data),

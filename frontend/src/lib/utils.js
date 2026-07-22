@@ -228,8 +228,7 @@ export const VEHICLE_PARTS = [
     { id: 'vidrio_trasero_piloto', label: 'Vidrio Trasero Piloto', name: 'Vidrio Trasero Piloto' },
     { id: 'vidrio_trasero_copiloto', label: 'Vidrio Trasero Copiloto', name: 'Vidrio Trasero Copiloto' },
     { id: 'vidrio_trasero', label: 'Vidrio Trasero (Panorámico Trasero)', name: 'Vidrio Trasero (Panorámico Trasero)' },
-    { id: 'trasero', label: 'Trasero', name: 'Trasero' },
-    { id: 'luneta', label: 'Luneta', name: 'Luneta' },
+    { id: 'luneta', label: 'Luneta / Trasero', name: 'Luneta / Trasero' },
     { id: 'sunroof', label: 'Sunroof', name: 'Sunroof' },
     { id: 'custodias', label: 'Custodias', name: 'Custodias' },
 ];

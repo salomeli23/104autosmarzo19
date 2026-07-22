@@ -38,7 +38,7 @@ import {
     Warehouse,
 } from 'lucide-react';
 
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_techgarage-app/artifacts/8kw8x7h6_Captura%20de%20Pantalla%202026-01-30%20a%20la%28s%29%2011.36.02%20a.%C2%A0m..png";
+const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
 
 const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion', 'corte'] },

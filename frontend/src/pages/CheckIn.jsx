@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { ordersAPI, servicesAPI } from '../lib/api';
+import { ordersAPI, servicesAPI, serviceExtrasAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -246,14 +246,51 @@ export const CheckIn = () => {
         setSelectedServices(prev => prev.filter(s => s.serviceId !== serviceId));
     };
 
+    // Extras de servicio (Sunroof y otros) cargados desde /settings
+    const [serviceExtras, setServiceExtras] = useState([]);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await serviceExtrasAPI.list();
+                setServiceExtras(res.data || []);
+            } catch (err) {
+                setServiceExtras([]);
+            }
+        })();
+    }, []);
+
+    // Devuelve los extras que aplican según las partes seleccionadas en los servicios
+    const applicableExtras = () => {
+        const activeExtras = serviceExtras.filter(e => e.active);
+        const triggeredIds = new Set();
+        selectedServices.forEach(svc => {
+            (svc.parts || []).forEach(p => triggeredIds.add(p));
+        });
+        return activeExtras.filter(e => e.trigger_part && triggeredIds.has(e.trigger_part));
+    };
+
+    // Detecta si algún servicio seleccionado es PPF
+    const isPPFService = (svc) => {
+        const id = (svc.serviceId || '').toLowerCase();
+        const cat = (svc.category || '').toLowerCase();
+        const desc = (svc.description || '').toLowerCase();
+        return id.includes('ppf') || cat.includes('ppf') || desc.includes('ppf');
+    };
+
+    const hasPPFService = () => selectedServices.some(isPPFService);
+
     // Calculate total (con recargo por tarjeta 5% y IVA 19% si aplica factura)
     const calculateBreakdown = () => {
         const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
-        const cardSurcharge = paymentMethod === 'tarjeta' ? Math.round(subtotal * 0.05) : 0;
-        const baseTax = subtotal + cardSurcharge;
+        const extras = applicableExtras();
+        const extrasSum = extras.reduce((s, e) => s + (e.price || 0), 0);
+        const baseSurcharge = subtotal + extrasSum;
+        const cardSurcharge = paymentMethod === 'tarjeta' ? Math.round(baseSurcharge * 0.05) : 0;
+        const baseTax = baseSurcharge + cardSurcharge;
         const iva = requiresInvoice ? Math.round(baseTax * 0.19) : 0;
         const total = baseTax + iva;
-        return { subtotal, cardSurcharge, iva, total };
+        return { subtotal, extras, extrasSum, cardSurcharge, iva, total };
     };
     const calculateTotal = () => calculateBreakdown().total;
 
@@ -325,12 +362,18 @@ export const CheckIn = () => {
 
         setLoading(true);
         try {
+            const bk = calculateBreakdown();
             const servicesData = selectedServices.map(svc => ({
                 service: svc.serviceId,
                 price: svc.price,
                 description: `${svc.category} - ${svc.serviceName}`,
                 parts: svc.parts || [],
                 part_percentages: svc.part_percentages || {},
+                ppf_scope: svc.ppf_scope || null,
+                ppf_parts_description: svc.ppf_parts_description || null,
+                extras: isPPFService(svc) || svc.parts?.some(p => bk.extras.find(e => e.trigger_part === p))
+                    ? bk.extras.filter(e => svc.parts?.includes(e.trigger_part)).map(e => ({ id: e.id, nombre: e.nombre, price: e.price }))
+                    : null,
             }));
 
             await ordersAPI.approveIngreso({
@@ -929,6 +972,47 @@ export const CheckIn = () => {
                                                         </Button>
                                                     </div>
                                                 </div>
+                                                {/* PPF: Full o Partes específicas */}
+                                                {isPPFService(svc) && (
+                                                    <div className="mt-3 pt-3 border-t border-border/50 space-y-2 bg-blue-500/5 -mx-3 -mb-3 px-3 pb-3 rounded-b-lg" data-testid={`ppf-block-${svc.serviceId}`}>
+                                                        <p className="text-xs font-medium text-blue-300 flex items-center gap-1">
+                                                            <Package className="w-3 h-3" />
+                                                            PPF — Alcance del servicio
+                                                        </p>
+                                                        <div className="grid grid-cols-2 gap-1">
+                                                            {[
+                                                                { value: 'full', label: 'Full completo' },
+                                                                { value: 'partes', label: 'Solo partes' },
+                                                            ].map(opt => (
+                                                                <button
+                                                                    key={opt.value}
+                                                                    type="button"
+                                                                    onClick={() => setSelectedServices(prev => prev.map(s => s.serviceId === svc.serviceId ? { ...s, ppf_scope: opt.value } : s))}
+                                                                    className={`text-xs px-2 py-1.5 rounded border transition-colors ${
+                                                                        svc.ppf_scope === opt.value
+                                                                            ? 'bg-blue-500/25 border-blue-500/60 text-blue-200 font-medium'
+                                                                            : 'border-input hover:border-blue-500/40 text-muted-foreground'
+                                                                    }`}
+                                                                    data-testid={`ppf-scope-${svc.serviceId}-${opt.value}`}
+                                                                >
+                                                                    {opt.label}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                        {svc.ppf_scope === 'partes' && (
+                                                            <textarea
+                                                                value={svc.ppf_parts_description || ''}
+                                                                onChange={(e) => setSelectedServices(prev => prev.map(s => s.serviceId === svc.serviceId ? { ...s, ppf_parts_description: e.target.value } : s))}
+                                                                placeholder="Describe las partes: capó, estribos, paragolpes, espejos, techo, guardafangos..."
+                                                                className="w-full text-xs p-2 rounded border border-input bg-background min-h-[60px]"
+                                                                data-testid={`ppf-parts-desc-${svc.serviceId}`}
+                                                            />
+                                                        )}
+                                                        <p className="text-[11px] text-muted-foreground">
+                                                            Ajusta el precio del PPF arriba según lo negociado con el cliente.
+                                                        </p>
+                                                    </div>
+                                                )}
                                                 {/* Vehicle parts selection for polarizado services */}
                                                 {serviceRequiresParts(svc.serviceId) && (
                                                     <div className="mt-3 pt-3 border-t border-border/50">
@@ -1154,6 +1238,12 @@ export const CheckIn = () => {
                                             <span>Subtotal servicios</span>
                                             <span className="font-mono">{formatCurrency(bk.subtotal)}</span>
                                         </div>
+                                        {bk.extras.map(e => (
+                                            <div key={e.id} className="flex justify-between text-sm text-green-300" data-testid={`total-extra-${e.id}`}>
+                                                <span>+ {e.nombre}</span>
+                                                <span className="font-mono">+{formatCurrency(e.price)}</span>
+                                            </div>
+                                        ))}
                                         {bk.cardSurcharge > 0 && (
                                             <div className="flex justify-between text-sm text-cyan-300">
                                                 <span>Recargo tarjeta (5%)</span>

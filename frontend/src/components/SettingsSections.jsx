@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { sedesAPI, carSeriesAPI, sedeAssignmentAPI, usersAPI } from '../lib/api';
+import { sedesAPI, carSeriesAPI, sedeAssignmentAPI, usersAPI, serviceExtrasAPI } from '../lib/api';
 import { VEHICLE_PARTS } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -8,7 +8,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { toast } from 'sonner';
-import { MapPin, Car, Plus, Trash2, Edit, Building, User as UserIcon } from 'lucide-react';
+import { MapPin, Car, Plus, Trash2, Edit, Building, User as UserIcon, DollarSign } from 'lucide-react';
 
 // =================== SEDES ===================
 export const SedesSection = () => {
@@ -356,6 +356,145 @@ export const CarSeriesSection = () => {
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
                         <Button onClick={handleSave} data-testid="save-car-series-btn">Guardar</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </Card>
+    );
+};
+
+
+// =================== SERVICE EXTRAS (Sunroof y otros) ===================
+export const ServiceExtrasSection = () => {
+    const [items, setItems] = useState([]);
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [editingId, setEditingId] = useState(null);
+    const [form, setForm] = useState({ nombre: '', price: '', trigger_part: '', active: true });
+
+    const fetchAll = async () => {
+        try {
+            const res = await serviceExtrasAPI.list();
+            setItems(res.data || []);
+        } catch (err) { console.error(err); }
+    };
+
+    useEffect(() => { fetchAll(); }, []);
+
+    const openNew = () => {
+        setEditingId(null);
+        setForm({ nombre: '', price: '', trigger_part: '', active: true });
+        setDialogOpen(true);
+    };
+
+    const openEdit = (it) => {
+        setEditingId(it.id);
+        setForm({ nombre: it.nombre, price: it.price, trigger_part: it.trigger_part || '', active: it.active });
+        setDialogOpen(true);
+    };
+
+    const handleSave = async () => {
+        if (!form.nombre.trim()) { toast.error('Nombre requerido'); return; }
+        const price = parseFloat(form.price);
+        if (isNaN(price) || price < 0) { toast.error('Precio inválido'); return; }
+        try {
+            const payload = { nombre: form.nombre, price, trigger_part: form.trigger_part || null, active: form.active };
+            if (editingId) { await serviceExtrasAPI.update(editingId, payload); toast.success('Extra actualizado'); }
+            else { await serviceExtrasAPI.create(payload); toast.success('Extra creado'); }
+            setDialogOpen(false);
+            fetchAll();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error');
+        }
+    };
+
+    const handleDelete = async (it) => {
+        if (!window.confirm(`¿Eliminar extra "${it.nombre}"?`)) return;
+        try {
+            await serviceExtrasAPI.delete(it.id);
+            toast.success('Extra eliminado');
+            fetchAll();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error');
+        }
+    };
+
+    return (
+        <Card data-testid="service-extras-section">
+            <CardHeader>
+                <div className="flex items-center justify-between">
+                    <CardTitle className="font-heading flex items-center gap-2">
+                        <DollarSign className="w-5 h-5 text-green-400" />
+                        Extras de Servicio (Sunroof y otros)
+                    </CardTitle>
+                    <Button size="sm" onClick={openNew} data-testid="new-extra-btn">
+                        <Plus className="w-4 h-4 mr-1" /> Nuevo Extra
+                    </Button>
+                </div>
+            </CardHeader>
+            <CardContent className="space-y-2">
+                {items.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                        No hay extras configurados. Ejemplo: "Sunroof adicional" con precio y trigger_part="sunroof".
+                    </p>
+                ) : (
+                    <div className="space-y-2">
+                        {items.map(it => (
+                            <div key={it.id} className="flex items-center justify-between p-3 rounded bg-muted/40" data-testid={`extra-row-${it.id}`}>
+                                <div>
+                                    <p className="font-medium">
+                                        {it.nombre}{' '}
+                                        <span className="text-green-400 font-mono">${(it.price || 0).toLocaleString()}</span>
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {it.trigger_part ? `Se activa cuando se selecciona: ${it.trigger_part}` : 'Sin trigger automático'}
+                                        {!it.active && ' · INACTIVO'}
+                                    </p>
+                                </div>
+                                <div className="flex gap-1">
+                                    <Button variant="ghost" size="sm" onClick={() => openEdit(it)}><Edit className="w-4 h-4" /></Button>
+                                    <Button variant="ghost" size="sm" onClick={() => handleDelete(it)} className="text-red-500"><Trash2 className="w-4 h-4" /></Button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </CardContent>
+
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Extra</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div>
+                            <Label>Nombre *</Label>
+                            <Input value={form.nombre} onChange={(e) => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Sunroof adicional" data-testid="extra-nombre-input" />
+                        </div>
+                        <div>
+                            <Label>Precio (COP) *</Label>
+                            <Input type="number" min={0} value={form.price} onChange={(e) => setForm(f => ({ ...f, price: e.target.value }))} data-testid="extra-price-input" />
+                        </div>
+                        <div>
+                            <Label>Activar automáticamente al seleccionar la parte:</Label>
+                            <Select value={form.trigger_part || '__none__'} onValueChange={(v) => setForm(f => ({ ...f, trigger_part: v === '__none__' ? '' : v }))}>
+                                <SelectTrigger data-testid="extra-trigger-select"><SelectValue placeholder="(Ninguna)" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none__">(Manual)</SelectItem>
+                                    {VEHICLE_PARTS.map(p => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Ej: escoger "sunroof" para que se sume automáticamente cuando el cliente lo pida.
+                            </p>
+                        </div>
+                        <label className="flex items-center gap-2">
+                            <input type="checkbox" checked={form.active} onChange={(e) => setForm(f => ({ ...f, active: e.target.checked }))} className="w-4 h-4" />
+                            <span className="text-sm">Activo</span>
+                        </label>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
+                        <Button onClick={handleSave} data-testid="save-extra-btn">Guardar</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

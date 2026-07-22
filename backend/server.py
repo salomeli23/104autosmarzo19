@@ -220,6 +220,11 @@ class ServiceItem(BaseModel):
     description: Optional[str] = None
     parts: Optional[List[str]] = None  # Partes del vehículo para polarizado (panoramico, luneta, etc.)
     part_percentages: Optional[Dict[str, str]] = None  # {part_id: '35%', ...} para polarizado/ultrasecure
+    # PPF-specific (Full o Partes)
+    ppf_scope: Optional[str] = None  # 'full' | 'partes'
+    ppf_parts_description: Optional[str] = None  # texto libre describiendo las partes
+    # Extras aplicados a este servicio (id de service_extras y precio congelado al momento)
+    extras: Optional[List[Dict[str, Any]]] = None  # [{id, nombre, price}]
 
 class OrderCreate(BaseModel):
     client_name: str
@@ -558,6 +563,50 @@ async def suggest_car_series(brand: Optional[str] = None, model: Optional[str] =
         query["model"] = {"$regex": re.escape(model.strip()), "$options": "i"}
     items = await db.car_series.find(query, {"_id": 0}).limit(20).to_list(20)
     return items
+
+
+# ==================== SERVICE EXTRAS (Sunroof y otros) ====================
+class ServiceExtra(BaseModel):
+    nombre: str
+    price: float
+    trigger_part: Optional[str] = None  # id de VEHICLE_PARTS que activa el extra (ej. 'sunroof')
+    active: bool = True
+
+@api_router.get("/service-extras")
+async def list_service_extras(current_user: dict = Depends(get_current_user)):
+    items = await db.service_extras.find({}, {"_id": 0}).sort("nombre", 1).to_list(100)
+    return items
+
+@api_router.post("/service-extras")
+async def create_service_extra(data: ServiceExtra, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    if not data.nombre.strip():
+        raise HTTPException(status_code=400, detail="Nombre requerido")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": data.nombre.strip(),
+        "price": float(data.price),
+        "trigger_part": data.trigger_part,
+        "active": bool(data.active),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.service_extras.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/service-extras/{extra_id}")
+async def update_service_extra(extra_id: str, data: ServiceExtra, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    update = {"nombre": data.nombre.strip(), "price": float(data.price), "trigger_part": data.trigger_part, "active": bool(data.active)}
+    res = await db.service_extras.update_one({"id": extra_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Extra no encontrado")
+    return {"message": "Extra actualizado"}
+
+@api_router.delete("/service-extras/{extra_id}")
+async def delete_service_extra(extra_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    res = await db.service_extras.delete_one({"id": extra_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Extra no encontrado")
+    return {"message": "Extra eliminado"}
 
 
 # ==================== INVENTORY: TRANSFERIR ENTRE SEDES ====================
