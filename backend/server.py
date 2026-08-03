@@ -206,6 +206,9 @@ class UserResponse(BaseModel):
     name: str
     role: UserRole
     phone: Optional[str] = None
+    sede_id: Optional[str] = None
+    sede_nombre: Optional[str] = None
+    tecnico_roles: List[str] = []  # roles funcionales del técnico
     created_at: str
 
 class TokenResponse(BaseModel):
@@ -319,6 +322,11 @@ class OrderResponse(BaseModel):
     pre_assigned_technician_id: Optional[str] = None
     pre_assigned_technician_name: Optional[str] = None
     pre_assigned_at: Optional[str] = None
+    # Route slots (Hoja de Ruta)
+    route_slots: Optional[List[Dict[str, Any]]] = None
+    route_rule_id: Optional[str] = None
+    route_rule_name: Optional[str] = None
+    amount_paid: Optional[float] = None  # facturación acumulada
     # Postventa / Garantía
     is_postventa: Optional[bool] = False
     postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
@@ -447,7 +455,10 @@ async def get_users(role: Optional[str] = None, current_user: dict = Depends(get
     users = await db.users.find(query, {"_id": 0, "password": 0}).to_list(1000)
     return [UserResponse(
         id=u["id"], email=u["email"], name=u["name"],
-        role=UserRole(u["role"]), phone=u.get("phone"), created_at=u["created_at"]
+        role=UserRole(u["role"]), phone=u.get("phone"),
+        sede_id=u.get("sede_id"), sede_nombre=u.get("sede_nombre"),
+        tecnico_roles=u.get("tecnico_roles") or [],
+        created_at=u["created_at"]
     ) for u in users]
 
 @api_router.get("/users/technicians", response_model=List[UserResponse])
@@ -455,7 +466,10 @@ async def get_technicians(current_user: dict = Depends(get_current_user)):
     users = await db.users.find({"role": "tecnico"}, {"_id": 0, "password": 0}).to_list(1000)
     return [UserResponse(
         id=u["id"], email=u["email"], name=u["name"],
-        role=UserRole(u["role"]), phone=u.get("phone"), created_at=u["created_at"]
+        role=UserRole(u["role"]), phone=u.get("phone"),
+        sede_id=u.get("sede_id"), sede_nombre=u.get("sede_nombre"),
+        tecnico_roles=u.get("tecnico_roles") or [],
+        created_at=u["created_at"]
     ) for u in users]
 
 
@@ -607,6 +621,213 @@ async def delete_service_extra(extra_id: str, current_user: dict = Depends(requi
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Extra no encontrado")
     return {"message": "Extra eliminado"}
+
+
+# ==================== SERVICE ROUTES (Hoja de Ruta - reglas de asignación) ====================
+# Cada regla define: qué combinación de servicios la dispara y cuántos técnicos por rol necesita.
+class RouteSlotDef(BaseModel):
+    role: str  # 'lavado' | 'ceramico' | 'polarizado' | 'ppf' | 'accesorios' | 'latoneria_pintura' | 'detailing' | otro custom
+    count: int = 1
+    label: Optional[str] = None  # etiqueta opcional para el slot
+
+class ServiceRoute(BaseModel):
+    nombre: str  # p.ej. "Ultrasecure + Polarizado"
+    service_triggers: List[str] = []  # ids/nombres de servicios que deben estar todos presentes para activar
+    slots: List[RouteSlotDef] = []
+    active: bool = True
+
+@api_router.get("/service-routes")
+async def list_service_routes(current_user: dict = Depends(get_current_user)):
+    items = await db.service_routes.find({}, {"_id": 0}).sort("nombre", 1).to_list(200)
+    return items
+
+@api_router.post("/service-routes")
+async def create_service_route(data: ServiceRoute, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    if not data.nombre.strip():
+        raise HTTPException(status_code=400, detail="Nombre requerido")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": data.nombre.strip(),
+        "service_triggers": [s.strip() for s in data.service_triggers if s.strip()],
+        "slots": [s.model_dump() for s in data.slots],
+        "active": bool(data.active),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.service_routes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/service-routes/{route_id}")
+async def update_service_route(route_id: str, data: ServiceRoute, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    update = {
+        "nombre": data.nombre.strip(),
+        "service_triggers": [s.strip() for s in data.service_triggers if s.strip()],
+        "slots": [s.model_dump() for s in data.slots],
+        "active": bool(data.active),
+    }
+    res = await db.service_routes.update_one({"id": route_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Regla no encontrada")
+    return {"message": "Regla actualizada"}
+
+@api_router.delete("/service-routes/{route_id}")
+async def delete_service_route(route_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    res = await db.service_routes.delete_one({"id": route_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Regla no encontrada")
+    return {"message": "Regla eliminada"}
+
+
+# ==================== ORDER ROUTE (Hoja de Ruta por Orden) ====================
+def _order_service_names(order: dict) -> List[str]:
+    """Colecta ids/nombres de servicios de la orden en lowercase para matching."""
+    names = []
+    for s in (order.get("services") or []):
+        for key in ("service", "serviceId", "name", "category", "description"):
+            v = s.get(key)
+            if v:
+                names.append(str(v).lower())
+    return names
+
+def _match_service_route(order: dict, routes: List[dict]) -> Optional[dict]:
+    """Escoge la primera regla activa cuyos triggers estén TODOS presentes en los servicios de la orden.
+    Prefiere reglas con más triggers (más específicas)."""
+    order_names = " ".join(_order_service_names(order))
+    matches = []
+    for r in routes:
+        if not r.get("active", True):
+            continue
+        trigs = [t.lower() for t in (r.get("service_triggers") or []) if t]
+        if not trigs:
+            continue
+        if all(t in order_names for t in trigs):
+            matches.append(r)
+    matches.sort(key=lambda r: len(r.get("service_triggers") or []), reverse=True)
+    return matches[0] if matches else None
+
+def _payment_status(order: dict) -> str:
+    """Devuelve 'paid' | 'partial' | 'pending' desde datos de facturación."""
+    total = float(order.get("final_value") or order.get("negotiated_value") or 0)
+    paid = float(order.get("amount_paid") or 0)
+    if total <= 0:
+        return "pending"
+    if paid >= total - 0.01:
+        return "paid"
+    if paid > 0:
+        return "partial"
+    return "pending"
+
+@api_router.post("/orders/{order_id}/route/init")
+async def init_order_route(order_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Genera los slots de la hoja de ruta según la regla que empate con los servicios de la orden."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    routes = await db.service_routes.find({}, {"_id": 0}).to_list(200)
+    matched = _match_service_route(order, routes)
+    slots = []
+    if matched:
+        idx = 0
+        for slot_def in matched.get("slots") or []:
+            for _ in range(int(slot_def.get("count") or 1)):
+                idx += 1
+                slots.append({
+                    "id": str(uuid.uuid4()),
+                    "index": idx,
+                    "role": slot_def["role"],
+                    "label": slot_def.get("label") or slot_def["role"].replace("_", " ").title(),
+                    "technician_id": None,
+                    "technician_name": None,
+                    "agencia_nombre": None,
+                    "status": "pendiente",  # pendiente | en_proceso | completado
+                    "started_at": None,
+                    "completed_at": None,
+                })
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "route_slots": slots,
+            "route_rule_id": matched["id"] if matched else None,
+            "route_rule_name": matched["nombre"] if matched else None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    return {"matched_rule": matched["nombre"] if matched else None, "slots": slots}
+
+
+class AssignRouteSlot(BaseModel):
+    technician_id: Optional[str] = None
+    technician_name: Optional[str] = None  # override manual
+    agencia_nombre: Optional[str] = None  # para latonería_pintura (tercero)
+
+@api_router.post("/orders/{order_id}/route/slots/{slot_id}/assign")
+async def assign_route_slot(order_id: str, slot_id: str, data: AssignRouteSlot, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    slots = order.get("route_slots") or []
+    idx = next((i for i, s in enumerate(slots) if s["id"] == slot_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Slot no encontrado")
+    tech_name = data.technician_name
+    if data.technician_id:
+        tech = await db.users.find_one({"id": data.technician_id}, {"_id": 0})
+        if not tech:
+            raise HTTPException(status_code=404, detail="Técnico no encontrado")
+        tech_name = tech.get("name")
+        # Validación soft: warning si no tiene el rol requerido (permitir de todos modos)
+    slots[idx]["technician_id"] = data.technician_id
+    slots[idx]["technician_name"] = tech_name
+    slots[idx]["agencia_nombre"] = data.agencia_nombre
+    await db.orders.update_one({"id": order_id}, {"$set": {"route_slots": slots, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {"message": "Slot asignado", "slot": slots[idx]}
+
+
+@api_router.post("/orders/{order_id}/route/slots/{slot_id}/start")
+async def start_route_slot(order_id: str, slot_id: str, current_user: dict = Depends(get_current_user)):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    slots = order.get("route_slots") or []
+    idx = next((i for i, s in enumerate(slots) if s["id"] == slot_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Slot no encontrado")
+    slots[idx]["status"] = "en_proceso"
+    slots[idx]["started_at"] = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one({"id": order_id}, {"$set": {"route_slots": slots}})
+    return {"message": "Slot iniciado", "slot": slots[idx]}
+
+
+@api_router.post("/orders/{order_id}/route/slots/{slot_id}/complete")
+async def complete_route_slot(order_id: str, slot_id: str, current_user: dict = Depends(get_current_user)):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    slots = order.get("route_slots") or []
+    idx = next((i for i, s in enumerate(slots) if s["id"] == slot_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Slot no encontrado")
+    slots[idx]["status"] = "completado"
+    slots[idx]["completed_at"] = datetime.now(timezone.utc).isoformat()
+    update_fields = {"route_slots": slots, "updated_at": datetime.now(timezone.utc).isoformat()}
+    # Si todos completados, avanzar a "servicio_completado" (listo para Facturación)
+    if all(s["status"] == "completado" for s in slots) and slots:
+        update_fields["status"] = OrderStatus.SERVICIO_COMPLETADO.value
+        update_fields["service_completed_at"] = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one({"id": order_id}, {"$set": update_fields})
+    return {"message": "Slot completado", "all_done": all(s["status"] == "completado" for s in slots)}
+
+
+class UserRolesUpdate(BaseModel):
+    tecnico_roles: List[str] = []  # ['lavado','ceramico','polarizado','ppf','accesorios','latoneria_pintura','detailing']
+
+@api_router.put("/users/{user_id}/tecnico-roles")
+async def update_user_tecnico_roles(user_id: str, data: UserRolesUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    roles = [r.strip() for r in data.tecnico_roles if r.strip()]
+    res = await db.users.update_one({"id": user_id}, {"$set": {"tecnico_roles": roles}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return {"message": "Roles actualizados", "tecnico_roles": roles}
 
 
 # ==================== INVENTORY: TRANSFERIR ENTRE SEDES ====================

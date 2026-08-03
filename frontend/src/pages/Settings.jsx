@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { ROLE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
 import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff } from 'lucide-react';
-import { SedesSection, CarSeriesSection, ServiceExtrasSection } from '../components/SettingsSections';
+import { SedesSection, CarSeriesSection, ServiceExtrasSection, ServiceRoutesSection, TechnicianRolesSection } from '../components/SettingsSections';
 
 export const Settings = () => {
     const { user } = useAuth();
@@ -383,6 +383,8 @@ export const Settings = () => {
             <SedesSection />
             <CarSeriesSection />
             <ServiceExtrasSection />
+            <ServiceRoutesSection />
+            <TechnicianRolesSection />
         </div>
     );
 };

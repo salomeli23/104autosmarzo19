@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ordersAPI, usersAPI } from '../lib/api';
+import { ordersAPI, usersAPI, orderRouteAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { PlateBadge } from '../components/PlateBadge';
@@ -12,189 +12,277 @@ import { CarAvatar } from '../components/CarAvatar';
 import { LiveTimer } from '../components/LiveTimer';
 import { toast } from 'sonner';
 import {
-    DndContext, closestCenter, PointerSensor, KeyboardSensor,
-    useSensor, useSensors, DragOverlay, useDroppable,
-} from '@dnd-kit/core';
-import {
-    SortableContext, useSortable, sortableKeyboardCoordinates,
-    verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { User, Clock, GripVertical, Timer, RefreshCw, XCircle } from 'lucide-react';
+    User, Clock, RefreshCw, ChevronDown, ChevronRight, Play, Check, DollarSign, Wallet, AlertCircle, Wrench, Sparkles, Droplet, Shield, Boxes, Paintbrush, Route as RouteIcon,
+} from 'lucide-react';
 
-// ---- Draggable order card ----
-const DraggableOrder = ({ order, onClear }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: order.id });
-    const style = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.4 : 1,
-    };
+// Icono por rol
+const ROLE_ICONS = {
+    lavado: Droplet,
+    ceramico: Sparkles,
+    polarizado: Shield,
+    ppf: Shield,
+    accesorios: Boxes,
+    detailing: Sparkles,
+    latoneria_pintura: Paintbrush,
+};
+
+const ROLE_LABELS = {
+    lavado: 'Lavado',
+    ceramico: 'Cerámico',
+    polarizado: 'Polarizado',
+    ppf: 'PPF',
+    accesorios: 'Accesorios',
+    detailing: 'Detailing',
+    latoneria_pintura: 'Latonería y Pintura',
+};
+
+// Etiqueta de pago (paid / partial / pending)
+const paymentInfo = (order) => {
+    const total = order.final_value || order.negotiated_value || 0;
+    const paid = order.amount_paid || 0;
+    if (total <= 0) return { label: 'Sin monto', color: 'bg-muted text-muted-foreground', icon: AlertCircle };
+    if (paid >= total - 0.01) return { label: 'Pagado', color: 'bg-green-500/20 text-green-400 border-green-500/40', icon: DollarSign };
+    if (paid > 0) return { label: `Abono $${paid.toLocaleString()}`, color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40', icon: Wallet };
+    return { label: 'Saldo pendiente', color: 'bg-red-500/20 text-red-400 border-red-500/40', icon: AlertCircle };
+};
+
+// ================== Slot Row ==================
+const SlotRow = ({ slot, technicians, onAssign, onStart, onComplete }) => {
+    const Icon = ROLE_ICONS[slot.role] || Wrench;
+    const eligibleTechs = technicians.filter(t => (t.tecnico_roles || []).includes(slot.role));
+    const [selectedTech, setSelectedTech] = useState(slot.technician_id || '__none__');
+    const [agencia, setAgencia] = useState(slot.agencia_nombre || '');
+    const isTerceros = slot.role === 'latoneria_pintura';
+
+    const statusColor = {
+        pendiente: 'text-muted-foreground',
+        en_proceso: 'text-yellow-400',
+        completado: 'text-green-400',
+    }[slot.status];
+
     return (
-        <div
-            ref={setNodeRef}
-            style={style}
-            className="bg-card border border-border rounded-lg p-3 hover:border-primary/50 transition-colors"
-            data-testid={`autoasignar-order-${order.id}`}
-        >
-            <div className="flex items-start gap-2">
-                <button
-                    {...attributes}
-                    {...listeners}
-                    className="touch-none cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1 -ml-1"
-                    aria-label="Arrastrar"
-                >
-                    <GripVertical className="w-4 h-4" />
-                </button>
-                <CarAvatar photoUrl={order.profile_photo_url} size={44} />
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                        <PlateBadge plate={order.plate} size="md" />
-                        <OrderStatusBadge status={order.status} />
-                    </div>
-                    <p className="text-sm font-medium truncate">{order.client_name}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                        {order.brand} {order.model} {order.color ? `· ${order.color}` : ''}
-                    </p>
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                        {(order.services || []).slice(0, 3).map((s, i) => (
-                            <ServiceBadge key={i} service={typeof s === 'string' ? s : s.service} />
-                        ))}
-                    </div>
-                    {order.ingreso_at && (
-                        <div className="flex items-center gap-1 mt-1.5 text-[11px] text-muted-foreground">
-                            <Clock className="w-3 h-3" />
-                            <span>Ingresó hace</span>
-                            <LiveTimer startTime={order.ingreso_at} />
-                        </div>
-                    )}
-                    {onClear && order.pre_assigned_at && (
-                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
-                            <span className="text-[11px] text-cyan-400 flex items-center gap-1">
-                                <Timer className="w-3 h-3" />
-                                Asignado hace <LiveTimer startTime={order.pre_assigned_at} />
-                                {order.service_time_minutes ? ` · ${order.service_time_minutes} min est.` : ''}
-                            </span>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onClear(order.id); }}
-                                className="text-[11px] text-red-400 hover:text-red-500 flex items-center gap-0.5"
-                                data-testid={`unassign-tech-${order.id}`}
-                            >
-                                <XCircle className="w-3 h-3" /> Quitar
-                            </button>
-                        </div>
-                    )}
+        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,180px)_minmax(0,1fr)_minmax(0,200px)] gap-2 items-center p-2 rounded bg-muted/40" data-testid={`route-slot-${slot.id}`}>
+            <div className="flex items-center gap-2">
+                <Icon className="w-4 h-4 text-cyan-400" />
+                <div>
+                    <p className="text-sm font-medium">{slot.label}</p>
+                    <p className={`text-[11px] ${statusColor}`}>{slot.status}</p>
                 </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-1">
+                <Select
+                    value={selectedTech}
+                    onValueChange={(v) => {
+                        setSelectedTech(v);
+                        const techId = v === '__none__' ? null : v;
+                        onAssign({ technician_id: techId, agencia_nombre: isTerceros ? agencia : null });
+                    }}
+                    disabled={slot.status === 'completado'}
+                >
+                    <SelectTrigger className="h-8 text-xs" data-testid={`slot-tech-select-${slot.id}`}>
+                        <SelectValue placeholder="Asignar técnico…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="__none__">(Sin asignar)</SelectItem>
+                        {eligibleTechs.length === 0 && (
+                            <div className="text-xs text-muted-foreground p-2">No hay técnicos con rol {slot.role}</div>
+                        )}
+                        {eligibleTechs.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+                {isTerceros && (
+                    <Input
+                        placeholder="Nombre agencia (tercero)"
+                        value={agencia}
+                        onChange={(e) => setAgencia(e.target.value)}
+                        onBlur={() => onAssign({ technician_id: selectedTech === '__none__' ? null : selectedTech, agencia_nombre: agencia })}
+                        className="h-8 text-xs"
+                        data-testid={`slot-agencia-input-${slot.id}`}
+                    />
+                )}
+            </div>
+
+            <div className="flex gap-1 justify-end">
+                {slot.status === 'pendiente' && (slot.technician_id || slot.agencia_nombre) && (
+                    <Button size="sm" variant="outline" onClick={onStart} data-testid={`slot-start-${slot.id}`}>
+                        <Play className="w-3 h-3 mr-1" /> Iniciar
+                    </Button>
+                )}
+                {slot.status === 'en_proceso' && (
+                    <Button size="sm" onClick={onComplete} className="bg-green-600 hover:bg-green-700" data-testid={`slot-complete-${slot.id}`}>
+                        <Check className="w-3 h-3 mr-1" /> Completar
+                    </Button>
+                )}
+                {slot.status === 'completado' && (
+                    <span className="text-[11px] text-green-400 flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Completado
+                    </span>
+                )}
             </div>
         </div>
     );
 };
 
-// ---- Droppable column for a técnico ----
-const TechnicianColumn = ({ tech, orders, onClear }) => {
-    const { setNodeRef, isOver } = useDroppable({ id: `tech-${tech.id}` });
+// ================== Order Card ==================
+const OrderCard = ({ order, technicians, onRefresh }) => {
+    const [expanded, setExpanded] = useState(false);
+    const pay = paymentInfo(order);
+    const PayIcon = pay.icon;
+    const slots = order.route_slots || [];
+    const doneCount = slots.filter(s => s.status === 'completado').length;
+    const totalCount = slots.length;
+
+    const initRoute = async () => {
+        try {
+            const r = await orderRouteAPI.init(order.id);
+            if (!r.data?.matched_rule) {
+                toast.warning('No hay regla que coincida con los servicios. Configura una en Settings.');
+            } else {
+                toast.success(`Hoja de ruta creada: ${r.data.matched_rule}`);
+            }
+            setExpanded(true);
+            onRefresh();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error al crear hoja de ruta');
+        }
+    };
+
+    const doAssign = async (slotId, data) => {
+        try {
+            await orderRouteAPI.assignSlot(order.id, slotId, data);
+            onRefresh();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error al asignar');
+        }
+    };
+    const doStart = async (slotId) => {
+        try {
+            await orderRouteAPI.startSlot(order.id, slotId);
+            toast.success('Slot iniciado');
+            onRefresh();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error');
+        }
+    };
+    const doComplete = async (slotId) => {
+        try {
+            const r = await orderRouteAPI.completeSlot(order.id, slotId);
+            toast.success(r.data?.all_done ? 'Servicio completado (todos los slots)' : 'Slot completado');
+            onRefresh();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error');
+        }
+    };
+
     return (
-        <Card
-            ref={setNodeRef}
-            className={`flex flex-col h-full transition-colors ${isOver ? 'border-cyan-400 bg-cyan-500/5' : ''}`}
-            data-testid={`tech-column-${tech.id}`}
-        >
-            <CardHeader className="pb-3">
-                <CardTitle className="text-base font-heading flex items-center gap-2">
-                    <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center">
-                        <User className="w-4 h-4 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <p className="truncate">{tech.name}</p>
-                        <p className="text-xs text-muted-foreground font-normal">{orders.length} asignados</p>
-                    </div>
-                </CardTitle>
-            </CardHeader>
-            <CardContent className="flex-1 space-y-2 min-h-[120px]">
-                <SortableContext items={orders.map(o => o.id)} strategy={verticalListSortingStrategy}>
-                    {orders.length === 0 ? (
-                        <div className="text-center py-6 text-xs text-muted-foreground border-2 border-dashed border-border rounded-lg">
-                            Suelta autos aquí
+        <Card className="hover:border-cyan-500/40 transition-colors" data-testid={`order-card-${order.id}`}>
+            <CardContent className="p-3 space-y-3">
+                {/* Header */}
+                <div className="flex items-start justify-between gap-2">
+                    <button
+                        onClick={() => setExpanded(v => !v)}
+                        className="flex items-start gap-2 min-w-0 flex-1 text-left"
+                    >
+                        {expanded ? <ChevronDown className="w-4 h-4 mt-1 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 mt-1 text-muted-foreground" />}
+                        <CarAvatar photoUrl={order.profile_photo_url} size={40} />
+                        <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <PlateBadge plate={order.plate} size="md" />
+                                <OrderStatusBadge status={order.status} />
+                                <span className={`text-[11px] px-2 py-0.5 rounded-full border flex items-center gap-1 ${pay.color}`} data-testid={`payment-tag-${order.id}`}>
+                                    <PayIcon className="w-3 h-3" />
+                                    {pay.label}
+                                </span>
+                            </div>
+                            <p className="text-sm truncate">{order.client_name}</p>
+                            <p className="text-xs text-muted-foreground truncate">{order.brand} {order.model}</p>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                                {(order.services || []).slice(0, 4).map((s, i) => (
+                                    <ServiceBadge key={i} service={typeof s === 'string' ? s : s.service} />
+                                ))}
+                            </div>
                         </div>
-                    ) : orders.map(o => (
-                        <DraggableOrder key={o.id} order={o} onClear={onClear} />
-                    ))}
-                </SortableContext>
+                    </button>
+                    <div className="text-right shrink-0">
+                        {order.ingreso_at && (
+                            <div className="text-[11px] text-muted-foreground flex items-center gap-1 justify-end">
+                                <Clock className="w-3 h-3" />
+                                <LiveTimer startTime={order.ingreso_at} />
+                            </div>
+                        )}
+                        {totalCount > 0 && (
+                            <p className={`text-[11px] font-mono ${doneCount === totalCount ? 'text-green-400' : 'text-cyan-400'}`}>
+                                {doneCount}/{totalCount} slots
+                            </p>
+                        )}
+                    </div>
+                </div>
+
+                {/* Expandido: hoja de ruta */}
+                {expanded && (
+                    <div className="pt-2 border-t border-border space-y-2">
+                        {slots.length === 0 ? (
+                            <div className="text-center py-4 space-y-2">
+                                <p className="text-sm text-muted-foreground">Esta orden aún no tiene hoja de ruta generada.</p>
+                                <Button size="sm" onClick={initRoute} data-testid={`init-route-${order.id}`}>
+                                    <RouteIcon className="w-3 h-3 mr-1" /> Generar hoja de ruta
+                                </Button>
+                            </div>
+                        ) : (
+                            <>
+                                {order.route_rule_name && (
+                                    <p className="text-[11px] text-cyan-400 flex items-center gap-1">
+                                        <RouteIcon className="w-3 h-3" />
+                                        Regla: {order.route_rule_name}
+                                    </p>
+                                )}
+                                <div className="space-y-1">
+                                    {slots.map(s => (
+                                        <SlotRow
+                                            key={s.id}
+                                            slot={s}
+                                            technicians={technicians}
+                                            onAssign={(d) => doAssign(s.id, d)}
+                                            onStart={() => doStart(s.id)}
+                                            onComplete={() => doComplete(s.id)}
+                                        />
+                                    ))}
+                                </div>
+                                <div className="flex justify-end">
+                                    <Button size="sm" variant="ghost" onClick={initRoute} className="text-xs text-muted-foreground">
+                                        Regenerar hoja de ruta
+                                    </Button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
             </CardContent>
         </Card>
     );
 };
 
-// ---- Droppable backlog (unassigned queue) ----
-const QueueColumn = ({ orders }) => {
-    const { setNodeRef, isOver } = useDroppable({ id: 'queue-unassigned' });
-    return (
-        <Card
-            ref={setNodeRef}
-            className={`flex flex-col h-full transition-colors ${isOver ? 'border-purple-400 bg-purple-500/5' : ''}`}
-            data-testid="queue-column"
-        >
-            <CardHeader className="pb-3">
-                <CardTitle className="text-base font-heading flex items-center gap-2">
-                    <div className="w-9 h-9 rounded-full bg-purple-500/20 flex items-center justify-center">
-                        <RefreshCw className="w-4 h-4 text-purple-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <p>Cola sin asignar</p>
-                        <p className="text-xs text-muted-foreground font-normal">{orders.length} autos esperando</p>
-                    </div>
-                </CardTitle>
-            </CardHeader>
-            <CardContent className="flex-1 space-y-2 min-h-[200px]">
-                <SortableContext items={orders.map(o => o.id)} strategy={verticalListSortingStrategy}>
-                    {orders.length === 0 ? (
-                        <div className="text-center py-8 text-sm text-muted-foreground">
-                            No hay autos pendientes
-                        </div>
-                    ) : orders.map(o => <DraggableOrder key={o.id} order={o} />)}
-                </SortableContext>
-            </CardContent>
-        </Card>
-    );
-};
-
-// ===========================================================
-//   Page
-// ===========================================================
+// ================== Página ==================
 export const AutoAsignar = () => {
+    const [orders, setOrders] = useState([]);
     const [technicians, setTechnicians] = useState([]);
-    const [unassigned, setUnassigned] = useState([]);
-    const [assignedByTech, setAssignedByTech] = useState({});
     const [loading, setLoading] = useState(true);
-    const [activeId, setActiveId] = useState(null);
-    const [pendingAssignment, setPendingAssignment] = useState(null); // { order, technician }
-    const [serviceMinutes, setServiceMinutes] = useState(60);
-
-    const sensors = useSensors(
-        useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-    );
 
     const fetchAll = useCallback(async () => {
         try {
-            const [techRes, queueRes, byTechRes] = await Promise.all([
+            const [ordersRes, techRes] = await Promise.all([
+                ordersAPI.getAll(),
                 usersAPI.getTechnicians(),
-                ordersAPI.getPendingTechAssignment(),
-                ordersAPI.getOrdersByTechnician(),
             ]);
+            // Filtrar órdenes en estados relevantes (en_revision → servicio_completado)
+            const relevantStatus = ['en_revision', 'en_corte', 'corte_completado', 'asignado', 'en_proceso'];
+            const filtered = (ordersRes.data || []).filter(o => relevantStatus.includes(o.status));
+            setOrders(filtered);
             setTechnicians(techRes.data || []);
-            setUnassigned(queueRes.data || []);
-            const grouped = {};
-            (byTechRes.data || []).forEach(o => {
-                const tid = o.pre_assigned_technician_id;
-                if (!tid) return;
-                grouped[tid] = grouped[tid] || [];
-                grouped[tid].push(o);
-            });
-            setAssignedByTech(grouped);
         } catch (err) {
             console.error(err);
-            toast.error('Error al cargar autos por asignar');
+            toast.error('Error cargando datos');
         } finally {
             setLoading(false);
         }
@@ -206,197 +294,38 @@ export const AutoAsignar = () => {
         return () => clearInterval(i);
     }, [fetchAll]);
 
-    const findOrder = (id) => {
-        const inQ = unassigned.find(o => o.id === id);
-        if (inQ) return inQ;
-        for (const tid of Object.keys(assignedByTech)) {
-            const f = assignedByTech[tid].find(o => o.id === id);
-            if (f) return f;
-        }
-        return null;
-    };
-
-    const handleDragEnd = async (event) => {
-        const { active, over } = event;
-        setActiveId(null);
-        if (!over) return;
-        const orderId = active.id;
-        const targetId = over.id;
-        const order = findOrder(orderId);
-        if (!order) return;
-
-        if (targetId === 'queue-unassigned') {
-            // un-assign
-            if (!order.pre_assigned_technician_id) return;
-            try {
-                await ordersAPI.clearPreAssignment(orderId);
-                toast.success('Auto devuelto a la cola');
-                fetchAll();
-            } catch (err) {
-                toast.error(err.response?.data?.detail || 'Error al quitar asignación');
-            }
-            return;
-        }
-
-        if (String(targetId).startsWith('tech-')) {
-            const techId = String(targetId).replace('tech-', '');
-            const tech = technicians.find(t => t.id === techId);
-            if (!tech) return;
-            setPendingAssignment({ order, technician: tech });
-            setServiceMinutes(order.service_time_minutes || 60);
-        }
-    };
-
-    const confirmAssign = async () => {
-        if (!pendingAssignment) return;
-        const { order, technician } = pendingAssignment;
-        if (!serviceMinutes || serviceMinutes < 1) {
-            toast.error('Define el tiempo promedio en minutos');
-            return;
-        }
-        try {
-            await ordersAPI.preAssignTechnician({
-                order_id: order.id,
-                technician_id: technician.id,
-                service_time_minutes: parseInt(serviceMinutes, 10),
-            });
-            toast.success(`${order.plate} → ${technician.name} (${serviceMinutes} min)`);
-            setPendingAssignment(null);
-            fetchAll();
-        } catch (err) {
-            toast.error(err.response?.data?.detail || 'Error al asignar técnico');
-        }
-    };
-
-    const handleClear = async (orderId) => {
-        try {
-            await ordersAPI.clearPreAssignment(orderId);
-            toast.success('Pre-asignación removida');
-            fetchAll();
-        } catch (err) {
-            toast.error(err.response?.data?.detail || 'Error');
-        }
-    };
-
-    const activeOrder = activeId ? findOrder(activeId) : null;
-
     return (
-        <div className="space-y-6" data-testid="auto-asignar-page">
+        <div className="space-y-4" data-testid="auto-asignar-page">
             <div className="flex items-start justify-between gap-4 flex-col sm:flex-row">
                 <div>
                     <h1 className="font-heading text-3xl md:text-4xl">Autos por Asignar</h1>
                     <p className="text-muted-foreground">
-                        Arrastra cada auto al técnico responsable y define su tiempo promedio.
-                        Una orden no puede ir a Corte sin técnico asignado.
+                        Hoja de ruta con múltiples técnicos por servicio.
+                        Configura las reglas en <strong>Configuración › Reglas de Hoja de Ruta</strong>.
                     </p>
                 </div>
-                <Button variant="outline" onClick={fetchAll} data-testid="refresh-auto-asignar-btn">
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    Refrescar
+                <Button variant="outline" onClick={fetchAll} data-testid="refresh-btn">
+                    <RefreshCw className="w-4 h-4 mr-2" /> Refrescar
                 </Button>
             </div>
 
             {loading ? (
                 <div className="flex justify-center py-12">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
                 </div>
+            ) : orders.length === 0 ? (
+                <Card>
+                    <CardContent className="p-8 text-center text-muted-foreground">
+                        No hay autos pendientes de asignación.
+                    </CardContent>
+                </Card>
             ) : (
-                <DndContext
-                    sensors={sensors}
-                    collisionDetection={closestCenter}
-                    onDragStart={(e) => setActiveId(e.active.id)}
-                    onDragEnd={handleDragEnd}
-                    onDragCancel={() => setActiveId(null)}
-                >
-                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-                        <div className="lg:col-span-1">
-                            <QueueColumn orders={unassigned} />
-                        </div>
-                        <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                            {technicians.length === 0 ? (
-                                <Card className="md:col-span-2 xl:col-span-3">
-                                    <CardContent className="p-8 text-center text-muted-foreground">
-                                        No hay técnicos registrados
-                                    </CardContent>
-                                </Card>
-                            ) : technicians.map(t => (
-                                <TechnicianColumn
-                                    key={t.id}
-                                    tech={t}
-                                    orders={assignedByTech[t.id] || []}
-                                    onClear={handleClear}
-                                />
-                            ))}
-                        </div>
-                    </div>
-
-                    <DragOverlay>
-                        {activeOrder && (
-                            <div className="bg-card border-2 border-cyan-400 rounded-lg p-3 shadow-2xl w-72">
-                                <div className="flex items-center gap-2">
-                                    <CarAvatar photoUrl={activeOrder.profile_photo_url} size={40} />
-                                    <div className="flex-1 min-w-0">
-                                        <PlateBadge plate={activeOrder.plate} size="md" />
-                                        <p className="text-xs text-muted-foreground truncate mt-1">
-                                            {activeOrder.brand} {activeOrder.model}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </DragOverlay>
-                </DndContext>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    {orders.map(o => (
+                        <OrderCard key={o.id} order={o} technicians={technicians} onRefresh={fetchAll} />
+                    ))}
+                </div>
             )}
-
-            {/* Confirm assignment dialog */}
-            <Dialog open={!!pendingAssignment} onOpenChange={(o) => !o && setPendingAssignment(null)}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle className="font-heading text-xl">Asignar técnico</DialogTitle>
-                        <DialogDescription>
-                            Define el tiempo promedio estimado para este servicio.
-                        </DialogDescription>
-                    </DialogHeader>
-                    {pendingAssignment && (
-                        <div className="space-y-4">
-                            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                                <CarAvatar photoUrl={pendingAssignment.order.profile_photo_url} size={48} />
-                                <div className="flex-1 min-w-0">
-                                    <PlateBadge plate={pendingAssignment.order.plate} size="md" />
-                                    <p className="text-sm mt-1 truncate">{pendingAssignment.order.client_name}</p>
-                                    <p className="text-xs text-muted-foreground truncate">
-                                        {pendingAssignment.order.brand} {pendingAssignment.order.model}
-                                    </p>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/30">
-                                <User className="w-5 h-5 text-primary" />
-                                <span className="font-medium">{pendingAssignment.technician.name}</span>
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Tiempo promedio (minutos) *</Label>
-                                <Input
-                                    type="number"
-                                    min={1}
-                                    step={5}
-                                    value={serviceMinutes}
-                                    onChange={(e) => setServiceMinutes(e.target.value)}
-                                    data-testid="service-minutes-input"
-                                />
-                            </div>
-                        </div>
-                    )}
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setPendingAssignment(null)}>
-                            Cancelar
-                        </Button>
-                        <Button onClick={confirmAssign} data-testid="confirm-pre-assign-btn">
-                            <Timer className="w-4 h-4 mr-2" />
-                            Asignar
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
         </div>
     );
 };

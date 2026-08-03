@@ -221,6 +221,27 @@ export const serviceExtrasAPI = {
     delete: (id) => api.delete(`/service-extras/${id}`),
 };
 
+// Service Routes (Hoja de Ruta - reglas)
+export const serviceRoutesAPI = {
+    list: () => api.get('/service-routes'),
+    create: (data) => api.post('/service-routes', data),
+    update: (id, data) => api.put(`/service-routes/${id}`, data),
+    delete: (id) => api.delete(`/service-routes/${id}`),
+};
+
+// Hoja de Ruta por orden
+export const orderRouteAPI = {
+    init: (orderId) => api.post(`/orders/${orderId}/route/init`),
+    assignSlot: (orderId, slotId, data) => api.post(`/orders/${orderId}/route/slots/${slotId}/assign`, data),
+    startSlot: (orderId, slotId) => api.post(`/orders/${orderId}/route/slots/${slotId}/start`),
+    completeSlot: (orderId, slotId) => api.post(`/orders/${orderId}/route/slots/${slotId}/complete`),
+};
+
+// Actualizar roles funcionales del técnico
+export const userRolesAPI = {
+    setTecnicoRoles: (userId, roles) => api.put(`/users/${userId}/tecnico-roles`, { tecnico_roles: roles }),
+};
+
 // Inventario: transferir entre sedes / asignar sede a usuario
 export const sedeAssignmentAPI = {
     transferInventory: (itemId, data) => api.post(`/inventory/${itemId}/transfer-sede`, data),

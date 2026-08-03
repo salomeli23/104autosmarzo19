@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { sedesAPI, carSeriesAPI, sedeAssignmentAPI, usersAPI, serviceExtrasAPI } from '../lib/api';
+import { sedesAPI, carSeriesAPI, sedeAssignmentAPI, usersAPI, serviceExtrasAPI, serviceRoutesAPI, userRolesAPI } from '../lib/api';
 import { VEHICLE_PARTS } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -8,7 +8,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { toast } from 'sonner';
-import { MapPin, Car, Plus, Trash2, Edit, Building, User as UserIcon, DollarSign } from 'lucide-react';
+import { MapPin, Car, Plus, Trash2, Edit, Building, User as UserIcon, DollarSign, Route, Wrench } from 'lucide-react';
 
 // =================== SEDES ===================
 export const SedesSection = () => {
@@ -501,3 +501,243 @@ export const ServiceExtrasSection = () => {
         </Card>
     );
 };
+
+// =================== SERVICE ROUTES (Hoja de Ruta - Reglas) ===================
+const AVAILABLE_ROLES = [
+    { value: 'lavado', label: 'Lavado' },
+    { value: 'ceramico', label: 'Cerámico' },
+    { value: 'polarizado', label: 'Polarizado' },
+    { value: 'ppf', label: 'PPF' },
+    { value: 'accesorios', label: 'Accesorios' },
+    { value: 'detailing', label: 'Detailing' },
+    { value: 'latoneria_pintura', label: 'Latonería y Pintura (tercero)' },
+];
+
+export const ServiceRoutesSection = () => {
+    const [rules, setRules] = useState([]);
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [editingId, setEditingId] = useState(null);
+    const [form, setForm] = useState({ nombre: '', service_triggers: '', slots: [], active: true });
+
+    const fetchAll = async () => {
+        try {
+            const res = await serviceRoutesAPI.list();
+            setRules(res.data || []);
+        } catch (err) { console.error(err); }
+    };
+    useEffect(() => { fetchAll(); }, []);
+
+    const openNew = () => {
+        setEditingId(null);
+        setForm({ nombre: '', service_triggers: '', slots: [{ role: 'polarizado', count: 1, label: '' }], active: true });
+        setDialogOpen(true);
+    };
+    const openEdit = (r) => {
+        setEditingId(r.id);
+        setForm({
+            nombre: r.nombre,
+            service_triggers: (r.service_triggers || []).join(', '),
+            slots: r.slots || [],
+            active: r.active,
+        });
+        setDialogOpen(true);
+    };
+
+    const handleSave = async () => {
+        if (!form.nombre.trim() || form.slots.length === 0) {
+            toast.error('Nombre y al menos 1 slot requeridos');
+            return;
+        }
+        const payload = {
+            nombre: form.nombre.trim(),
+            service_triggers: form.service_triggers.split(',').map(s => s.trim()).filter(Boolean),
+            slots: form.slots.map(s => ({ role: s.role, count: parseInt(s.count) || 1, label: s.label || null })),
+            active: form.active,
+        };
+        try {
+            if (editingId) { await serviceRoutesAPI.update(editingId, payload); toast.success('Regla actualizada'); }
+            else { await serviceRoutesAPI.create(payload); toast.success('Regla creada'); }
+            setDialogOpen(false);
+            fetchAll();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error');
+        }
+    };
+
+    const handleDelete = async (r) => {
+        if (!window.confirm(`¿Eliminar regla "${r.nombre}"?`)) return;
+        try {
+            await serviceRoutesAPI.delete(r.id);
+            toast.success('Regla eliminada');
+            fetchAll();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error');
+        }
+    };
+
+    const addSlot = () => setForm(f => ({ ...f, slots: [...f.slots, { role: 'polarizado', count: 1, label: '' }] }));
+    const removeSlot = (idx) => setForm(f => ({ ...f, slots: f.slots.filter((_, i) => i !== idx) }));
+    const updateSlot = (idx, key, val) => setForm(f => ({ ...f, slots: f.slots.map((s, i) => i === idx ? { ...s, [key]: val } : s) }));
+
+    return (
+        <Card data-testid="service-routes-section">
+            <CardHeader>
+                <div className="flex items-center justify-between">
+                    <CardTitle className="font-heading flex items-center gap-2">
+                        <Route className="w-5 h-5 text-purple-400" />
+                        Reglas de Hoja de Ruta
+                    </CardTitle>
+                    <Button size="sm" onClick={openNew} data-testid="new-route-btn"><Plus className="w-4 h-4 mr-1" /> Nueva Regla</Button>
+                </div>
+            </CardHeader>
+            <CardContent className="space-y-2">
+                {rules.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                        Crea reglas que determinen qué técnicos (por rol) se necesitan según la combinación de servicios.
+                    </p>
+                ) : (
+                    rules.map(r => (
+                        <div key={r.id} className="p-3 rounded bg-muted/40" data-testid={`route-row-${r.id}`}>
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                    <p className="font-medium">
+                                        {r.nombre} {!r.active && <span className="text-xs text-red-400">· INACTIVA</span>}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                        Triggers: {(r.service_triggers || []).join(' + ') || '—'}
+                                    </p>
+                                    <p className="text-xs mt-1 flex flex-wrap gap-1">
+                                        {(r.slots || []).map((s, i) => (
+                                            <span key={i} className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-[11px]">
+                                                {s.count}× {AVAILABLE_ROLES.find(x => x.value === s.role)?.label || s.role}
+                                            </span>
+                                        ))}
+                                    </p>
+                                </div>
+                                <div className="flex gap-1">
+                                    <Button variant="ghost" size="sm" onClick={() => openEdit(r)}><Edit className="w-4 h-4" /></Button>
+                                    <Button variant="ghost" size="sm" onClick={() => handleDelete(r)} className="text-red-500"><Trash2 className="w-4 h-4" /></Button>
+                                </div>
+                            </div>
+                        </div>
+                    ))
+                )}
+            </CardContent>
+
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>{editingId ? 'Editar' : 'Nueva'} Regla</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div>
+                            <Label>Nombre *</Label>
+                            <Input value={form.nombre} onChange={(e) => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Detailing + Polarizado" data-testid="route-nombre-input" />
+                        </div>
+                        <div>
+                            <Label>Servicios que disparan (separados por coma)</Label>
+                            <Input value={form.service_triggers} onChange={(e) => setForm(f => ({ ...f, service_triggers: e.target.value }))} placeholder="detailing, polarizado" data-testid="route-triggers-input" />
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Todos deben estar presentes (parcial, case-insensitive). Ej: "ppf, detailing"
+                            </p>
+                        </div>
+                        <div>
+                            <Label>Slots requeridos</Label>
+                            <div className="space-y-2 mt-1">
+                                {form.slots.map((s, idx) => (
+                                    <div key={idx} className="flex items-center gap-2 p-2 rounded bg-muted/40">
+                                        <Select value={s.role} onValueChange={(v) => updateSlot(idx, 'role', v)}>
+                                            <SelectTrigger className="w-40 h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                {AVAILABLE_ROLES.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                                            </SelectContent>
+                                        </Select>
+                                        <Input type="number" min={1} value={s.count} onChange={(e) => updateSlot(idx, 'count', e.target.value)} className="w-16 h-8 text-xs" />
+                                        <Input placeholder="Etiqueta (opc)" value={s.label || ''} onChange={(e) => updateSlot(idx, 'label', e.target.value)} className="flex-1 h-8 text-xs" />
+                                        <Button variant="ghost" size="sm" onClick={() => removeSlot(idx)} className="text-red-500"><Trash2 className="w-4 h-4" /></Button>
+                                    </div>
+                                ))}
+                                <Button size="sm" variant="outline" onClick={addSlot}><Plus className="w-3 h-3 mr-1" /> Agregar slot</Button>
+                            </div>
+                        </div>
+                        <label className="flex items-center gap-2">
+                            <input type="checkbox" checked={form.active} onChange={(e) => setForm(f => ({ ...f, active: e.target.checked }))} className="w-4 h-4" />
+                            <span className="text-sm">Activa</span>
+                        </label>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
+                        <Button onClick={handleSave} data-testid="save-route-btn">Guardar</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </Card>
+    );
+};
+
+
+// =================== TÉCNICOS: ROLES ===================
+export const TechnicianRolesSection = () => {
+    const [techs, setTechs] = useState([]);
+
+    const fetchAll = async () => {
+        try {
+            const res = await usersAPI.getTechnicians();
+            setTechs(res.data || []);
+        } catch (err) { console.error(err); }
+    };
+    useEffect(() => { fetchAll(); }, []);
+
+    const toggleRole = async (tech, role) => {
+        const current = new Set(tech.tecnico_roles || []);
+        if (current.has(role)) current.delete(role);
+        else current.add(role);
+        const arr = Array.from(current);
+        try {
+            await userRolesAPI.setTecnicoRoles(tech.id, arr);
+            setTechs(prev => prev.map(t => t.id === tech.id ? { ...t, tecnico_roles: arr } : t));
+        } catch (err) {
+            toast.error(err.response?.data?.detail || 'Error');
+        }
+    };
+
+    return (
+        <Card data-testid="tecnico-roles-section">
+            <CardHeader>
+                <CardTitle className="font-heading flex items-center gap-2">
+                    <Wrench className="w-5 h-5 text-orange-400" />
+                    Roles funcionales de Técnicos
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+                {techs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No hay técnicos registrados.</p>
+                ) : techs.map(t => (
+                    <div key={t.id} className="p-3 rounded bg-muted/40" data-testid={`tecnico-row-${t.id}`}>
+                        <p className="font-medium text-sm">{t.name}</p>
+                        <p className="text-xs text-muted-foreground mb-2">{t.email}</p>
+                        <div className="flex flex-wrap gap-1">
+                            {AVAILABLE_ROLES.map(r => {
+                                const active = (t.tecnico_roles || []).includes(r.value);
+                                return (
+                                    <button
+                                        key={r.value}
+                                        type="button"
+                                        onClick={() => toggleRole(t, r.value)}
+                                        className={`text-[11px] px-2 py-1 rounded border transition-colors ${
+                                            active ? 'bg-cyan-500/25 border-cyan-500/60 text-cyan-200' : 'border-input hover:border-cyan-500/40 text-muted-foreground'
+                                        }`}
+                                        data-testid={`tecnico-role-toggle-${t.id}-${r.value}`}
+                                    >
+                                        {r.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                ))}
+            </CardContent>
+        </Card>
+    );
+};
+

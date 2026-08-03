@@ -47,7 +47,6 @@ const navItems = [
     { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'asesor', 'coordinador'] },
     { path: '/auto-asignar', label: 'Autos por Asignar', icon: UserPlus, roles: ['admin', 'coordinador'] },
     { path: '/cutting', label: 'Corte de Piezas', icon: Scissors, roles: ['admin', 'corte', 'coordinador'] },
-    { path: '/assign', label: 'Asignar Bahía', icon: Warehouse, roles: ['admin', 'coordinador'] },
     { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
     { path: '/billing', label: 'Facturación', icon: CreditCard, roles: ['admin', 'facturacion'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin', 'asesor'] },
