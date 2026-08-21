@@ -36,6 +36,9 @@ import {
     Boxes,
     ShieldCheck,
     Warehouse,
+    Receipt,
+    LogOut as LogOutIcon,
+    FileSignature,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
@@ -49,6 +52,9 @@ const navItems = [
     { path: '/cutting', label: 'Corte de Piezas', icon: Scissors, roles: ['admin', 'corte', 'coordinador'] },
     { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
     { path: '/billing', label: 'Facturación', icon: CreditCard, roles: ['admin', 'facturacion'] },
+    { path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'asesor', 'facturacion', 'coordinador'] },
+    { path: '/facturacion-electronica', label: 'Clientes por Facturar', icon: FileSignature, roles: ['admin', 'facturacion', 'asesor'] },
+    { path: '/autos-salida', label: 'Autorizar Salida', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin', 'asesor'] },
     { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'asesor', 'coordinador', 'facturacion'] },
     { path: '/postventa', label: 'Postventa / Garantías', icon: ShieldCheck, roles: ['admin', 'asesor', 'coordinador'] },

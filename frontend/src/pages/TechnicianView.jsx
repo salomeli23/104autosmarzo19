@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ordersAPI } from '../lib/api';
+import { ordersAPI, orderRouteAPI } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -57,13 +57,18 @@ export const TechnicianView = () => {
 
     const fetchOrders = useCallback(async () => {
         try {
-            // Get orders assigned to this technician
+            // Get orders assigned to this technician (legacy assigned_technician_id OR route_slots)
             const response = await ordersAPI.getAll();
-            // Filter orders that are assigned or in process for this technician
-            const myOrders = response.data.filter(o => 
-                (o.status === 'asignado' || o.status === 'en_proceso') &&
-                o.assigned_technician_id === user?.id
-            );
+            const uid = user?.id;
+            const myOrders = response.data.filter(o => {
+                const legacy =
+                    (o.status === 'asignado' || o.status === 'en_proceso') &&
+                    o.assigned_technician_id === uid;
+                const inRoute = Array.isArray(o.route_slots)
+                    ? o.route_slots.some(s => s.technician_id === uid && s.status !== 'completado')
+                    : false;
+                return legacy || inRoute;
+            });
             setOrders(myOrders);
         } catch (error) {
             console.error('Error fetching orders:', error);
@@ -165,8 +170,34 @@ export const TechnicianView = () => {
     };
 
     // Group orders by status
-    const assignedOrders = orders.filter(o => o.status === 'asignado');
-    const inProcessOrders = orders.filter(o => o.status === 'en_proceso');
+    const assignedOrders = orders.filter(o => o.status === 'asignado' && o.assigned_technician_id === user?.id);
+    const inProcessOrders = orders.filter(o => o.status === 'en_proceso' && o.assigned_technician_id === user?.id);
+    // Route-slot orders: this tech has at least one non-completed slot
+    const routeOrders = orders.filter(o =>
+        Array.isArray(o.route_slots) &&
+        o.route_slots.some(s => s.technician_id === user?.id && s.status !== 'completado')
+    );
+
+    const myPendingSlots = (o) =>
+        (o.route_slots || []).filter(s => s.technician_id === user?.id && s.status !== 'completado');
+
+    const handleSlotAction = async (orderId, slotId, action) => {
+        setProcessing(true);
+        try {
+            if (action === 'start') {
+                await orderRouteAPI.startSlot(orderId, slotId);
+                toast.success('Slot iniciado');
+            } else {
+                await orderRouteAPI.completeSlot(orderId, slotId);
+                toast.success('Slot completado');
+            }
+            fetchOrders();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Error');
+        } finally {
+            setProcessing(false);
+        }
+    };
 
     return (
         <div className="space-y-6" data-testid="technician-page">
@@ -279,6 +310,74 @@ export const TechnicianView = () => {
                 </div>
             ) : (
                 <div className="space-y-8">
+                    {/* Hoja de Ruta - slots asignados a mí */}
+                    {routeOrders.length > 0 && (
+                        <div>
+                            <h2 className="font-heading text-xl mb-4 flex items-center gap-2">
+                                <Wrench className="w-5 h-5 text-cyan-500" />
+                                Hoja de Ruta
+                                <span className="text-sm text-muted-foreground">({routeOrders.length})</span>
+                            </h2>
+                            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {routeOrders.map(order => (
+                                    <Card key={order.id} className="card-hover border-cyan-500/40" data-testid={`route-order-${order.id}`}>
+                                        <CardContent className="p-4 space-y-3">
+                                            <div className="flex items-center gap-3">
+                                                <CarAvatar photoUrl={order.profile_photo_url} size={44} />
+                                                <div className="min-w-0">
+                                                    <PlateBadge plate={order.plate} size="lg" />
+                                                    <p className="text-sm text-muted-foreground mt-1 truncate">
+                                                        {order.brand} {order.model} · {order.client_name}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            {/* Mis slots */}
+                                            <div className="space-y-2">
+                                                {myPendingSlots(order).map(slot => (
+                                                    <div key={slot.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/40 border border-cyan-500/20">
+                                                        <div className="min-w-0">
+                                                            <p className="text-sm font-medium truncate">{slot.label}</p>
+                                                            <p className="text-[10px] uppercase text-muted-foreground">
+                                                                Estado: {slot.status}
+                                                                {slot.started_at && ` · ${formatElapsed(slot.started_at)}`}
+                                                            </p>
+                                                        </div>
+                                                        {slot.status === 'pendiente' ? (
+                                                            <Button
+                                                                size="sm"
+                                                                onClick={() => handleSlotAction(order.id, slot.id, 'start')}
+                                                                disabled={processing}
+                                                                data-testid={`start-slot-${slot.id}`}
+                                                            >
+                                                                <Play className="w-3 h-3 mr-1" /> Iniciar
+                                                            </Button>
+                                                        ) : (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="default"
+                                                                onClick={() => handleSlotAction(order.id, slot.id, 'complete')}
+                                                                disabled={processing}
+                                                                data-testid={`complete-slot-${slot.id}`}
+                                                            >
+                                                                <CheckCircle className="w-3 h-3 mr-1" /> Completar
+                                                            </Button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            {/* Timers */}
+                                            <div className="space-y-1 p-2 rounded-lg bg-muted/40 border border-muted">
+                                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 font-semibold">Tiempos</p>
+                                                <TimerRow icon={LogIn} label="Ingreso" startedAt={order.ingreso_at} completedAt={order.inspection_at} color="text-blue-400" />
+                                                <TimerRow icon={Scissors} label="Corte" startedAt={order.cutting_started_at} completedAt={order.cutting_completed_at} color="text-orange-400" />
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* In Process - Priority */}
                     {inProcessOrders.length > 0 && (
                         <div>

@@ -248,4 +248,18 @@ export const sedeAssignmentAPI = {
     setUserSede: (userId, sedeId) => api.put(`/users/${userId}/sede`, { sede_id: sedeId }),
 };
 
+// Pagos
+export const paymentsAPI = {
+    register: (data) => api.post('/payments', data),
+    list: (q) => api.get('/payments', { params: q ? { q } : {} }),
+    forOrder: (orderId) => api.get(`/payments/order/${orderId}`),
+    ordersWithBalance: (params) => api.get('/orders-with-balance', { params }),
+    pendingRelease: () => api.get('/orders-pending-release'),
+    authorizeRelease: (orderId) => api.post(`/orders/${orderId}/authorize-release`),
+    pendingInvoice: () => api.get('/orders-pending-invoice'),
+    sendInvoiceEmail: (orderId) => api.post(`/orders/${orderId}/send-invoice-email`),
+    sendIngresoReceipt: (orderId) => api.post(`/orders/${orderId}/send-ingreso-receipt`),
+    seedTestOrders: () => api.post('/seed/test-orders'),
+};
+
 export default api;

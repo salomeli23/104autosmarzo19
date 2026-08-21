@@ -21,6 +21,7 @@ from io import BytesIO
 import asyncio
 import resend
 import re
+from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -1604,7 +1605,38 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         data.order_id
     )
     
-    return {"message": "Ingreso aprobado exitosamente"}
+    # Enviar recibo de ingreso por email (PDF firmado + foto frontal) si hay correo
+    email_sent = False
+    if order.get("client_email"):
+        try:
+            order_after = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+            pdf_bytes = build_ingreso_receipt(order_after)
+            b = _order_balance(order_after)
+            attachments = [_pdf_attachment(f"recibo_ingreso_{order.get('order_code')}.pdf", pdf_bytes)]
+            front = order_after.get("profile_photo_url")
+            front_att = _photo_attachment("foto_frontal.jpg", front) if front else None
+            if front_att:
+                attachments.append(front_att)
+            html = (
+                f"<div style='font-family:Arial,sans-serif;color:#0f172a;'>"
+                f"<h2 style='color:#00e0d1'>Recibo de ingreso de tu vehículo</h2>"
+                f"<p>Hola <b>{order.get('client_name')}</b>,</p>"
+                f"<p>Confirmamos el ingreso del vehículo <b>{(order.get('plate') or '').upper()}</b>. "
+                f"Adjuntamos el recibo firmado.</p>"
+                f"<p>Saldo pendiente: <b>${b['balance']:,.0f}</b>.</p>"
+                f"<p style='color:#64748b;font-size:12px'>— PolarizadosYA!</p>"
+                f"</div>"
+            )
+            eid = await _send_email_with_attachments(
+                order["client_email"],
+                f"Recibo de ingreso · Orden {order.get('order_code')}",
+                html, attachments,
+            )
+            email_sent = bool(eid)
+        except Exception as e:
+            logger.error(f"[ingreso-email] {e}")
+
+    return {"message": "Ingreso aprobado exitosamente", "email_sent": email_sent}
 
 # Step 3: Inspection 360
 @api_router.post("/orders/inspection")
@@ -3181,6 +3213,508 @@ def _meters_from_part_measurements(part_measurements: Optional[Dict[str, str]]) 
         except ValueError:
             continue
     return round(total_m, 2)
+
+# ============================================================
+# PAGOS · FACTURACIÓN ELECTRÓNICA · AUTORIZACIÓN DE SALIDA
+# ============================================================
+import base64 as _b64_pay
+
+
+class PaymentRegister(BaseModel):
+    order_id: str
+    amount: float
+    method: str  # 'efectivo' | 'tarjeta' | 'transferencia' | 'nequi' | 'daviplata' | 'otro'
+    reference: Optional[str] = None
+    notes: Optional[str] = None
+
+
+def _order_balance(order: dict) -> Dict[str, float]:
+    total = float(order.get("final_value") or order.get("negotiated_value") or 0)
+    paid = float(order.get("amount_paid") or 0)
+    return {"total": round(total, 2), "paid": round(paid, 2), "balance": round(max(total - paid, 0), 2)}
+
+
+async def _send_email_with_attachments(
+    recipient: str,
+    subject: str,
+    html: str,
+    attachments: List[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Send email via Resend with optional attachments (base64 bytes)."""
+    if not RESEND_API_KEY or not recipient:
+        return None
+    params = {
+        "from": SENDER_EMAIL,
+        "to": [recipient],
+        "subject": subject,
+        "html": html,
+    }
+    if attachments:
+        params["attachments"] = attachments
+    try:
+        res = await asyncio.to_thread(resend.Emails.send, params)
+        return (res or {}).get("id") if isinstance(res, dict) else None
+    except Exception as e:
+        logger.error(f"[email] Resend send failed: {e}")
+        return None
+
+
+def _pdf_attachment(name: str, data: bytes) -> Dict[str, Any]:
+    return {"filename": name, "content": list(data)}
+
+
+def _photo_attachment(name: str, data_url: str) -> Optional[Dict[str, Any]]:
+    if not data_url:
+        return None
+    try:
+        raw = data_url.split(",", 1)[1] if data_url.startswith("data:") else data_url
+        return {"filename": name, "content": list(_b64_pay.b64decode(raw))}
+    except Exception:
+        return None
+
+
+@api_router.post("/payments")
+async def register_payment(
+    data: PaymentRegister,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Registra un abono/pago sobre una orden. Acumula en order.amount_paid."""
+    if data.amount is None or data.amount <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+
+    bal_before = _order_balance(order)
+    if data.amount > bal_before["balance"] + 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El monto excede el saldo pendiente ({bal_before['balance']:.0f}).",
+        )
+
+    payment_doc = {
+        "id": str(uuid.uuid4()),
+        "order_id": data.order_id,
+        "order_code": order.get("order_code"),
+        "plate": order.get("plate"),
+        "client_name": order.get("client_name"),
+        "client_cedula": order.get("client_cedula"),
+        "amount": round(float(data.amount), 2),
+        "method": data.method,
+        "reference": data.reference,
+        "notes": data.notes,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": current_user["id"],
+        "created_by_name": current_user["name"],
+    }
+    await db.payments.insert_one(payment_doc)
+    payment_doc.pop("_id", None)
+
+    new_paid = round(bal_before["paid"] + float(data.amount), 2)
+    total = bal_before["total"]
+    new_balance = round(max(total - new_paid, 0), 2)
+    update = {
+        "amount_paid": new_paid,
+        "last_payment_at": payment_doc["created_at"],
+        "updated_at": payment_doc["created_at"],
+    }
+    if new_balance <= 0.01 and total > 0:
+        update["ready_for_delivery"] = True
+        # Si estaba en TERMINADO_FALTA_PAGO o servicio_completado, marcarlo como pagado
+        if order.get("status") in (OrderStatus.SERVICIO_COMPLETADO.value, OrderStatus.TERMINADO_FALTA_PAGO.value):
+            update["status"] = OrderStatus.TERMINADO_PAGADO.value
+            update["payment_method"] = order.get("payment_method") or data.method
+            update["paid_at"] = payment_doc["created_at"]
+    await db.orders.update_one({"id": data.order_id}, {"$set": update})
+
+    await log_order_history(
+        data.order_id, "PAGO_REGISTRADO",
+        order.get("status", ""), order.get("status", ""),
+        current_user["id"], current_user["name"],
+        {"amount": data.amount, "method": data.method, "reference": data.reference,
+         "balance_after": new_balance},
+    )
+
+    # Enviar estado de cuenta por email si hay correo del cliente
+    email_id = None
+    if order.get("client_email"):
+        try:
+            order_after = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+            payments = await db.payments.find(
+                {"order_id": data.order_id}, {"_id": 0}
+            ).sort("created_at", 1).to_list(100)
+            pdf_bytes = build_payment_statement(order_after, payments)
+            html = (
+                f"<div style='font-family:Arial,sans-serif;color:#0f172a;'>"
+                f"<h2 style='color:#00e0d1'>Recibimos tu pago</h2>"
+                f"<p>Hola <b>{order.get('client_name')}</b>,</p>"
+                f"<p>Registramos un abono de <b>${data.amount:,.0f}</b> "
+                f"({data.method}) para la orden <b>{order.get('order_code')}</b>.</p>"
+                f"<p>Saldo pendiente: <b>${new_balance:,.0f}</b>.</p>"
+                f"<p>Adjuntamos el estado de cuenta en PDF.</p>"
+                f"<p style='color:#64748b;font-size:12px'>— PolarizadosYA!</p>"
+                f"</div>"
+            )
+            email_id = await _send_email_with_attachments(
+                order["client_email"],
+                f"Estado de cuenta · Orden {order.get('order_code')}",
+                html,
+                [_pdf_attachment(f"estado_cuenta_{order.get('order_code')}.pdf", pdf_bytes)],
+            )
+        except Exception as e:
+            logger.error(f"[payment-email] {e}")
+
+    return {
+        "message": "Pago registrado",
+        "payment": payment_doc,
+        "balance": new_balance,
+        "total": total,
+        "paid": new_paid,
+        "ready_for_delivery": new_balance <= 0.01 and total > 0,
+        "email_sent": bool(email_id),
+    }
+
+
+@api_router.get("/payments")
+async def list_payments(
+    q: Optional[str] = None,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Lista pagos, opcionalmente filtrados por placa o cedula (case-insensitive)."""
+    filt: Dict[str, Any] = {}
+    if q:
+        rx = re.compile(re.escape(q), re.IGNORECASE)
+        filt["$or"] = [
+            {"plate": rx},
+            {"client_cedula": rx},
+            {"client_name": rx},
+            {"order_code": rx},
+        ]
+    items = await db.payments.find(filt, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api_router.get("/payments/order/{order_id}")
+async def payments_for_order(order_id: str, current_user: dict = Depends(get_current_user)):
+    items = await db.payments.find({"order_id": order_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    return items
+
+
+@api_router.get("/orders-with-balance")
+async def orders_with_balance(
+    q: Optional[str] = None,
+    only_pending: bool = False,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Órdenes recientes con su saldo. Filtro opcional por placa/cédula."""
+    filt: Dict[str, Any] = {
+        "status": {"$in": [
+            OrderStatus.INGRESADO.value, OrderStatus.EN_REVISION.value,
+            OrderStatus.EN_CORTE.value, OrderStatus.ASIGNADO.value,
+            OrderStatus.EN_PROCESO.value, OrderStatus.SERVICIO_COMPLETADO.value,
+            OrderStatus.TERMINADO_FALTA_PAGO.value, OrderStatus.TERMINADO_PAGADO.value,
+        ]},
+    }
+    if q:
+        rx = re.compile(re.escape(q), re.IGNORECASE)
+        filt["$or"] = [
+            {"plate": rx}, {"client_cedula": rx},
+            {"client_name": rx}, {"order_code": rx},
+        ]
+    cursor = db.orders.find(filt, {"_id": 0}).sort("ingreso_at", -1).limit(200)
+    out = []
+    async for o in cursor:
+        b = _order_balance(o)
+        if only_pending and b["balance"] <= 0.01:
+            continue
+        out.append({
+            "id": o["id"],
+            "order_code": o.get("order_code"),
+            "plate": o.get("plate"),
+            "brand": o.get("brand"),
+            "model": o.get("model"),
+            "client_name": o.get("client_name"),
+            "client_cedula": o.get("client_cedula"),
+            "client_phone": o.get("client_phone"),
+            "client_email": o.get("client_email"),
+            "status": o.get("status"),
+            "ingreso_at": o.get("ingreso_at"),
+            "payment_method": o.get("payment_method"),
+            "requires_invoice": bool(o.get("requires_invoice")),
+            "profile_photo_url": o.get("profile_photo_url"),
+            **b,
+        })
+    return out
+
+
+@api_router.get("/orders-pending-release")
+async def orders_pending_release(
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.COORDINADOR])),
+):
+    """Autos por autorizar salida: servicio completado y aún no entregados."""
+    cursor = db.orders.find(
+        {"status": {"$in": [
+            OrderStatus.SERVICIO_COMPLETADO.value,
+            OrderStatus.TERMINADO_FALTA_PAGO.value,
+            OrderStatus.TERMINADO_PAGADO.value,
+        ]},
+         "delivered_at": {"$in": [None]}},
+        {"_id": 0},
+    ).sort("service_completed_at", -1).limit(200)
+    out = []
+    async for o in cursor:
+        b = _order_balance(o)
+        out.append({
+            "id": o["id"],
+            "order_code": o.get("order_code"),
+            "plate": o.get("plate"),
+            "brand": o.get("brand"),
+            "model": o.get("model"),
+            "client_name": o.get("client_name"),
+            "client_phone": o.get("client_phone"),
+            "client_email": o.get("client_email"),
+            "status": o.get("status"),
+            "service_completed_at": o.get("service_completed_at"),
+            "ready_for_delivery": bool(o.get("ready_for_delivery")),
+            "profile_photo_url": o.get("profile_photo_url"),
+            "release_authorized_at": o.get("release_authorized_at"),
+            "release_authorized_by": o.get("release_authorized_by_name"),
+            **b,
+        })
+    return out
+
+
+@api_router.post("/orders/{order_id}/authorize-release")
+async def authorize_release(
+    order_id: str,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.COORDINADOR])),
+):
+    """Autoriza la salida del auto. Requiere saldo = 0."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    b = _order_balance(order)
+    if b["balance"] > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se puede autorizar salida: falta pago de ${b['balance']:,.0f}",
+        )
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "release_authorized": True,
+            "release_authorized_at": now,
+            "release_authorized_by": current_user["id"],
+            "release_authorized_by_name": current_user["name"],
+            "ready_for_delivery": True,
+            "updated_at": now,
+        }},
+    )
+    await log_order_history(
+        order_id, "SALIDA_AUTORIZADA",
+        order.get("status", ""), order.get("status", ""),
+        current_user["id"], current_user["name"], {},
+    )
+    return {"message": "Salida autorizada", "release_authorized_at": now}
+
+
+@api_router.get("/orders-pending-invoice")
+async def orders_pending_invoice(
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
+):
+    """Clientes que solicitaron factura electrónica y aún no ha sido enviada."""
+    cursor = db.orders.find(
+        {"requires_invoice": True,
+         "invoice_sent_at": {"$in": [None]}},
+        {"_id": 0},
+    ).sort("ingreso_at", -1).limit(200)
+    out = []
+    async for o in cursor:
+        b = _order_balance(o)
+        out.append({
+            "id": o["id"],
+            "order_code": o.get("order_code"),
+            "plate": o.get("plate"),
+            "client_name": o.get("client_name"),
+            "client_cedula": o.get("client_cedula"),
+            "client_email": o.get("client_email"),
+            "client_phone": o.get("client_phone"),
+            "status": o.get("status"),
+            "ingreso_at": o.get("ingreso_at"),
+            "invoice_number": o.get("invoice_number"),
+            **b,
+        })
+    return out
+
+
+@api_router.post("/orders/{order_id}/send-invoice-email")
+async def send_invoice_email(
+    order_id: str,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
+):
+    """Envía una Factura Electrónica MOCK por correo. TODO: reemplazar con Siigo real."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if not order.get("client_email"):
+        raise HTTPException(status_code=400, detail="El cliente no tiene correo registrado")
+
+    # Numeración simulada tipo Siigo
+    invoice_number = order.get("invoice_number") or f"MOCK-FE-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{order.get('order_code','')}"
+    pdf_bytes = build_mock_invoice(order, invoice_number)
+
+    html = (
+        f"<div style='font-family:Arial,sans-serif;color:#0f172a;'>"
+        f"<h2 style='color:#00e0d1'>Factura Electrónica (MOCK)</h2>"
+        f"<p>Hola <b>{order.get('client_name')}</b>,</p>"
+        f"<p>Adjuntamos la factura electrónica <b>{invoice_number}</b> de la orden "
+        f"<b>{order.get('order_code')}</b>.</p>"
+        f"<p style='color:#dc2626;font-size:12px'><b>Nota:</b> Este es un documento de prueba (MOCK). "
+        f"La versión oficial se enviará cuando conectemos con Siigo.</p>"
+        f"<p style='color:#64748b;font-size:12px'>— PolarizadosYA!</p>"
+        f"</div>"
+    )
+    email_id = await _send_email_with_attachments(
+        order["client_email"],
+        f"Factura Electrónica {invoice_number}",
+        html,
+        [_pdf_attachment(f"factura_{invoice_number}.pdf", pdf_bytes)],
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "invoice_number": invoice_number,
+            "invoice_sent_at": now,
+            "invoice_sent_by": current_user["id"],
+            "invoice_sent_by_name": current_user["name"],
+            "updated_at": now,
+        }},
+    )
+    await log_order_history(
+        order_id, "FACTURA_ENVIADA",
+        order.get("status", ""), order.get("status", ""),
+        current_user["id"], current_user["name"],
+        {"invoice_number": invoice_number, "email_id": email_id},
+    )
+    return {"message": "Factura enviada (MOCK)", "invoice_number": invoice_number, "email_id": email_id}
+
+
+@api_router.post("/orders/{order_id}/send-ingreso-receipt")
+async def send_ingreso_receipt(
+    order_id: str,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Reenvía el recibo de ingreso (PDF firmado + fotos 360°)."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if not order.get("client_email"):
+        raise HTTPException(status_code=400, detail="El cliente no tiene correo registrado")
+
+    pdf_bytes = build_ingreso_receipt(order)
+    b = _order_balance(order)
+
+    attachments = [_pdf_attachment(f"recibo_ingreso_{order.get('order_code')}.pdf", pdf_bytes)]
+    # Adjuntar fotos 360 (limitar a 8 para no exceder ~25MB)
+    photos = (order.get("inspection_photos") or [])[:8]
+    for i, ph in enumerate(photos, start=1):
+        att = _photo_attachment(f"revision_360_{i}.jpg", ph)
+        if att:
+            attachments.append(att)
+    front = order.get("profile_photo_url")
+    front_att = _photo_attachment("foto_frontal.jpg", front) if front else None
+    if front_att:
+        attachments.insert(1, front_att)
+
+    html = (
+        f"<div style='font-family:Arial,sans-serif;color:#0f172a;'>"
+        f"<h2 style='color:#00e0d1'>Recibo de ingreso de tu vehículo</h2>"
+        f"<p>Hola <b>{order.get('client_name')}</b>,</p>"
+        f"<p>Confirmamos el ingreso del vehículo <b>{(order.get('plate') or '').upper()}</b> "
+        f"({order.get('brand', '')} {order.get('model', '')}).</p>"
+        f"<p>Adjuntamos el recibo firmado y las fotos de la Revisión 360°.</p>"
+        f"<p>Saldo pendiente: <b>${b['balance']:,.0f}</b>.</p>"
+        f"<p style='color:#64748b;font-size:12px'>— PolarizadosYA!</p>"
+        f"</div>"
+    )
+    email_id = await _send_email_with_attachments(
+        order["client_email"],
+        f"Recibo de ingreso · Orden {order.get('order_code')}",
+        html,
+        attachments,
+    )
+    return {"message": "Recibo enviado", "email_id": email_id, "photos": len(photos)}
+
+
+# ============================================================
+# SEED de orden de prueba para probar Pagos / Facturación / Salida
+# ============================================================
+@api_router.post("/seed/test-orders")
+async def seed_test_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Crea unas órdenes de prueba en distintos estados para poblar Pagos, Facturación y Salida."""
+    now = datetime.now(timezone.utc).isoformat()
+    samples = [
+        {
+            "client_name": "Carlos Pérez", "client_cedula": "1023456789",
+            "client_phone": "3001112233", "client_email": None,
+            "plate": "ABC123", "brand": "Mazda", "model": "CX-5",
+            "final_value": 900000, "amount_paid": 300000,
+            "status": OrderStatus.SERVICIO_COMPLETADO.value,
+            "payment_method": "efectivo", "requires_invoice": False,
+        },
+        {
+            "client_name": "Laura Gómez", "client_cedula": "52912345",
+            "client_phone": "3145556677", "client_email": None,
+            "plate": "XYZ789", "brand": "Toyota", "model": "Corolla",
+            "final_value": 1200000, "amount_paid": 1200000,
+            "status": OrderStatus.TERMINADO_PAGADO.value,
+            "payment_method": "tarjeta", "requires_invoice": True,
+            "ready_for_delivery": True,
+        },
+        {
+            "client_name": "Andrés Rojas", "client_cedula": "80123456",
+            "client_phone": "3009998877", "client_email": None,
+            "plate": "GHI456", "brand": "Renault", "model": "Duster",
+            "final_value": 650000, "amount_paid": 0,
+            "status": OrderStatus.INGRESADO.value,
+            "payment_method": "transferencia", "requires_invoice": True,
+        },
+    ]
+    created = []
+    for s in samples:
+        exists = await db.orders.find_one({"plate": s["plate"], "client_cedula": s["client_cedula"]}, {"_id": 0})
+        if exists:
+            continue
+        oid = str(uuid.uuid4())
+        code = f"OT-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
+        doc = {
+            "id": oid, "order_code": code, "qr_code": "",
+            "client_name": s["client_name"], "client_phone": s["client_phone"],
+            "client_email": s.get("client_email"), "client_cedula": s["client_cedula"],
+            "plate": s["plate"], "brand": s["brand"], "model": s["model"],
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "time_slot": "seed", "services": [{"service": "Polarizado Ceramic i3", "price": s["final_value"]}],
+            "negotiated_value": s["final_value"], "final_value": s["final_value"],
+            "amount_paid": s.get("amount_paid", 0),
+            "status": s["status"], "signature_url": None, "risk_agreement_accepted": True,
+            "ingreso_at": now, "inspection_photos": [],
+            "assigned_technician_id": None, "assigned_technician_name": None,
+            "payment_method": s.get("payment_method"),
+            "requires_invoice": s.get("requires_invoice", False),
+            "profile_photo_url": None,
+            "route_slots": [], "route_rule_id": None, "route_rule_name": None,
+            "service_completed_at": now if s["status"] in (OrderStatus.SERVICIO_COMPLETADO.value, OrderStatus.TERMINADO_PAGADO.value) else None,
+            "ready_for_delivery": s.get("ready_for_delivery", False),
+            "created_by": current_user["id"], "created_by_name": current_user["name"],
+            "created_by_role": current_user["role"],
+            "created_at": now, "updated_at": now,
+        }
+        await db.orders.insert_one(doc)
+        created.append({"id": oid, "order_code": code, "plate": s["plate"]})
+    return {"created": created, "count": len(created)}
+
 
 # Include router and configure CORS
 app.include_router(api_router)

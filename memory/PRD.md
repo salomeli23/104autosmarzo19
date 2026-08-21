@@ -4,6 +4,47 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
+2026-08-21
+
+## Última Sesión (2026-08-21) — Iteración 17 (Pagos · Facturación E. · Autorizar Salida · Emails con PDF)
+
+### Módulo de Pagos (`/pagos`)
+- **Backend**: `POST /api/payments` acumula abonos en `order.amount_paid`. Valida que el monto no exceda saldo. Al completar saldo → `ready_for_delivery=true` y status → `terminado_pagado`. `GET /api/payments` (con filtro `q` por placa/cédula/cliente/orden). `GET /api/orders-with-balance?only_pending=&q=` lista órdenes con saldo (rango 200 más recientes). `GET /api/payments/order/{id}` historial por orden.
+- **Frontend**: Tabs Órdenes / Historial. Buscador por placa, cédula, cliente. Toggle "Solo pendientes". Dialog "Registrar abono" con monto pre-cargado al saldo, método (efectivo/tarjeta/transferencia/nequi/daviplata), referencia, notas. Envía email de estado de cuenta con PDF si hay `client_email`.
+- data-testids: `pagos-page`, `tab-orders-btn`, `tab-history-btn`, `pagos-search-input`, `filter-pending-btn`, `pay-btn-{id}`, `pay-amount-input`, `pay-method-select`, `confirm-pay-btn`.
+
+### Clientes por Facturar (`/facturacion-electronica`)
+- **Backend**: `GET /api/orders-pending-invoice` lista órdenes `requires_invoice=true` y `invoice_sent_at=null`. `POST /api/orders/{id}/send-invoice-email` envía Factura Electrónica MOCK (PDF con numeración simulada `MOCK-FE-YYYYMMDD-{code}`) via Resend con adjunto PDF. Marca `invoice_sent_at`/`invoice_number`.
+- **Frontend**: Solo muestra clientes con factura electrónica solicitada. Input para agregar correo si el cliente no lo tiene. Botón "Enviar Factura (MOCK)" deshabilitado sin email. Badge "Modo MOCK activo" avisa que es de prueba hasta conectar Siigo real.
+- data-testids: `facturacion-page`, `invoice-row-{id}`, `invoice-email-input-{id}`, `send-invoice-btn-{id}`.
+
+### Autos por Autorizar Salida (`/autos-salida`)
+- **Backend**: `GET /api/orders-pending-release` lista órdenes en `servicio_completado`/`terminado_pagado`/`terminado_falta_pago` no entregadas. `POST /api/orders/{id}/authorize-release` FALLA con 400 si `balance > 0` ("No se puede autorizar salida: falta pago"). Marca `release_authorized_at`, `release_authorized_by_name`.
+- **Frontend**: Dos secciones: Pendientes y Ya autorizados. Cards muestran badge "Falta por pago" (rojo) si balance>0, "Listo para autorizar" (cyan) si balance=0, "Autorizado" (verde) si ya se autorizó. Botón "Autorizar salida" deshabilitado hasta que saldo sea $0.
+- data-testids: `autos-salida-page`, `salida-row-{id}`, `falta-pago-{id}`, `authorize-btn-{id}`.
+
+### Emails automáticos (Resend + PDFs reportlab)
+- **Nuevo helper** `/app/backend/pdf_utils.py`: `build_ingreso_receipt` (Recibo firmado con saldo pendiente), `build_payment_statement` (Estado de cuenta), `build_mock_invoice` (Factura DIAN MOCK). Usa reportlab 4.2.5.
+- **Triggers**:
+  - **Check-in aprobado**: `POST /api/orders/ingreso-approval` ahora envía correo con PDF recibo firmado + foto frontal (si hay email).
+  - **Pago registrado**: `POST /api/payments` envía estado de cuenta PDF con historial de abonos y saldo.
+  - **Reenvío manual**: `POST /api/orders/{id}/send-ingreso-receipt` reenvía recibo + fotos 360° (hasta 8 fotos por límite Resend ~25MB).
+  - **Factura**: `POST /api/orders/{id}/send-invoice-email`.
+
+### Fix P0: Vista Técnico soporta Hoja de Ruta (`route_slots`)
+- **Frontend `/technician`**: filtro extendido — muestra órdenes donde `assigned_technician_id === user.id` (legacy) O donde algún `route_slots[i].technician_id === user.id` con status ≠ completado. Nueva sección "Hoja de Ruta" al top de la vista lista órdenes de multi-técnico con botones "Iniciar slot"/"Completar slot" por cada slot asignado al técnico. Timers Ingreso y Corte visibles.
+- data-testids: `route-order-{id}`, `start-slot-{slot_id}`, `complete-slot-{slot_id}`.
+
+### Ajuste Check-in: Sunroof solo en Ultrasecure
+- **Frontend `CheckIn.jsx`**: `applicableExtras()` ahora filtra extras cuyo `trigger_part='sunroof'` o `nombre` contiene "sunroof" para que solo apliquen si hay algún servicio Ultrasecure seleccionado. Sin Ultrasecure → el costo Sunroof NO se agrega al total aunque la parte esté marcada.
+
+### Seed de datos de prueba
+- `POST /api/seed/test-orders` (admin): crea 3 órdenes idempotentes ABC123 (saldo 600k), XYZ789 (balance 0, requires_invoice), GHI456 (balance 650k, requires_invoice) para probar los 3 módulos.
+
+### Tests
+- **64/64 pytest** (16 nuevos iter14 + 48 regresiones). Frontend verificado: /pagos con dialog, /facturacion-electronica con MOCK send, /autos-salida con gate por saldo. Reporte: `/app/test_reports/iteration_14.json`.
+
+## Fecha de última actualización previa
 2026-06-10
 
 ## Última Sesión (2026-06-10) — Iteración 16 (Consejo de Corte + Sedes/Sucursales)

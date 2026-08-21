@@ -260,14 +260,32 @@ export const CheckIn = () => {
         })();
     }, []);
 
-    // Devuelve los extras que aplican según las partes seleccionadas en los servicios
+    // Detecta si algún servicio seleccionado es Ultrasecure
+    const hasUltrasecureService = () => selectedServices.some(svc => {
+        const id = (svc.serviceId || '').toLowerCase();
+        const name = (svc.serviceName || '').toLowerCase();
+        const cat = (svc.category || '').toLowerCase();
+        return id.includes('ultrasecure') || name.includes('ultrasecure') || cat.includes('ultrasecure');
+    });
+
+    // Devuelve los extras que aplican según las partes seleccionadas en los servicios.
+    // Regla: los extras cuyo trigger_part sea "sunroof" o cuyo nombre contenga "sunroof"
+    // SOLO aplican si el servicio es Ultrasecure.
     const applicableExtras = () => {
         const activeExtras = serviceExtras.filter(e => e.active);
         const triggeredIds = new Set();
         selectedServices.forEach(svc => {
             (svc.parts || []).forEach(p => triggeredIds.add(p));
         });
-        return activeExtras.filter(e => e.trigger_part && triggeredIds.has(e.trigger_part));
+        const ultrasecureOn = hasUltrasecureService();
+        return activeExtras.filter(e => {
+            if (!e.trigger_part || !triggeredIds.has(e.trigger_part)) return false;
+            const isSunroofExtra =
+                (e.trigger_part || '').toLowerCase() === 'sunroof' ||
+                (e.nombre || '').toLowerCase().includes('sunroof');
+            if (isSunroofExtra && !ultrasecureOn) return false;
+            return true;
+        });
     };
 
     // Detecta si algún servicio seleccionado es PPF

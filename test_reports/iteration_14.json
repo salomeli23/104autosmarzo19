@@ -1,0 +1,61 @@
+{
+  "summary": "Iter 14: NEW backend endpoints (Pagos / Facturacion / Autos-Salida / seed-test-orders) tested via pytest 16/16 PASS. Full regression 64/64 (all iter8+9+10+11+12+13+14). Frontend /pagos, /facturacion-electronica and /autos-salida all load, render correctly, and integrate with backend. Sunroof-only-for-Ultrasecure logic verified in CheckIn.jsx. TechnicianView Hoja de Ruta section is code-correct (data-testids in place) but couldn't be exercised E2E because no seeded route_slot assignments exist for tecnico@polarizadosya.com. Found 1 minor React DOM nesting warning in FacturacionElectronica.jsx.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "FacturacionElectronica card row", "issue": "React hydration warning: <Badge> renders a <div> inside a <p> tag (client_name paragraph wraps a Badge component). Fix: change <p> at FacturacionElectronica.jsx L84 to a <div> or move the Badge sibling out of the <p>.", "selector": "[data-testid^=invoice-row-] p.font-medium", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "backend pytest iter14 16/16 PASS: TestOrdersWithBalance(3), TestPayments(6), TestOrdersPendingRelease(3 incl. balance>0 400 gate), TestOrdersPendingInvoice(3 incl. XYZ789 400 no-email + GHI456 send success MOCK-FE-*), TestSendIngresoReceipt(1 = 400 no email)",
+    "seed idempotence: second POST /api/seed/test-orders returns count=0",
+    "regression full backend 64/64 PASS (iter8 7 + iter9 2 + iter10 8 + iter11 4 + iter12 10 + iter13 17 + iter14 16)",
+    "FRONTEND /pagos: page loads with data-testid=pagos-page; 25 pending orders visible; toggle Solo pendientes -> 27 total; search 'GHI' filters to 1 row; history tab renders payment rows",
+    "FRONTEND /pagos register dialog: opens with amount pre-filled = balance, method select, ref & notes inputs, confirm-pay-btn all wired",
+    "FRONTEND /facturacion-electronica: 1 pending invoice row; when client_email is null, invoice-email-input-<id> is visible and send-invoice-btn-<id> is DISABLED — correct behavior",
+    "FRONTEND /autos-salida: 4 rows (3 Pendientes + 1 Ya autorizado); 2 falta-pago-<id> badges shown; authorize-btn disabled for balance>0 orders, enabled for XYZ789 (balance=0)",
+    "Code review CheckIn.jsx L280-286: applicableExtras() correctly excludes sunroof extras when hasUltrasecureService()=false — logic verified"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration14_features.py",
+    "/app/test_reports/pytest/iteration14_results.xml",
+    "/app/test_reports/pytest/iteration14_full_results.xml"
+  ],
+  "action_items": [
+    "(LOW) FacturacionElectronica.jsx L84: change the <p> wrapping <User/> + client_name + <Badge/> into a <div> — <p> cannot contain a nested <div> (Badge). Silences React hydration warning.",
+    "(INFO) There is NO PUT /api/orders/{id} to update client_email/other fields. If UI in FacturacionElectronica intends to send with the email-override input, it currently ignores that value and calls send-invoice-email which reads client_email from DB — the entered email is only used as a UI-side 'enable button' gate. Add a small PATCH-order or accept email in send-invoice-email body if we want the override to actually route to the typed address.",
+    "(INFO) TechnicianView Hoja de Ruta could not be E2E tested — no seeded route_slots for tecnico@. Recommend adding a route-slot seed for tecnico to /api/seed/test-orders or a separate seed endpoint so E2E can validate start-slot/complete-slot buttons."
+  ],
+  "critical_code_review_comments": [
+    "server.py L3237-3259 _send_email_with_attachments: silent-fail if RESEND_API_KEY missing or exception — correct for testing (endpoints still 200) but logs error via logger.error. OK.",
+    "server.py L3266-3273 _photo_attachment: correctly strips 'data:...,' prefix before b64decode — robust.",
+    "server.py L3282-3293 register_payment: enforces amount>0 and amount<=balance+0.01 (nice epsilon). Balance recompute uses final_value OR negotiated_value fallback (L3232) — good.",
+    "server.py L3321-3327 complete-balance path: sets ready_for_delivery + transitions status from SERVICIO_COMPLETADO/TERMINADO_FALTA_PAGO to TERMINADO_PAGADO. Note: if order was in ASIGNADO/EN_PROCESO it does NOT auto-terminate (only ready_for_delivery flips) — likely intended (payment before service completion).",
+    "server.py L3487-3519 authorize_release: 400 with clear msg 'No se puede autorizar salida: falta pago de $N'. Sets release_authorized_by_name for UI. Idempotent-ish (re-calling on already-authorized order simply overwrites timestamp — consider guarding).",
+    "server.py L3654-3716 seed_test_orders: strictly idempotent (find by plate+cedula) — good. But sets service_completed_at only for SERVICIO_COMPLETADO/TERMINADO_PAGADO — GHI456 (INGRESADO) intentionally has no service_completed_at.",
+    "server.py L3564 invoice_number formula uses order_code which can be empty on legacy orders — falls back to '' but works. Consider requiring order_code.",
+    "server.py L3453-3462 orders_pending_release query uses {'delivered_at': {'$in': [None]}} — works but 'field missing OR null' matches both. Cleaner: {'$or': [{'delivered_at': None}, {'delivered_at': {'$exists': false}}]}. Currently OK because $in [None] matches missing fields in Mongo? Actually $in [null] DOES match missing fields — Mongo semantic — so it's fine.",
+    "Pagos.jsx L69 setAmount(String(o.balance||'')) — if balance=0 pre-fills empty; but pay-btn is already disabled for balance<=0. Fine.",
+    "FacturacionElectronica.jsx: emailOverride entered in UI is NEVER sent to backend — only used to gate the send button. Backend uses order.client_email. Either wire the override through the endpoint payload or add a note that the email must be edited on the order first.",
+    "AutosSalida.jsx uses 30s polling interval — reasonable but consider debouncing on tab-visibility-change to reduce load."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration14_features.py (new, 16 tests + pymongo-based state reset fixtures)"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16 iter14 + 48/48 regression = 64/64)",
+    "frontend": "100% on iter14 scope (Pagos, Facturacion, Autos Salida — all render + integrate). Hoja de Ruta not exercised due to missing seed."
+  },
+  "test_credentials": {
+    "admin": "admin@polarizadosya.com / admin123",
+    "facturacion": "facturacion@polarizadosya.com / factura123",
+    "tecnico": "tecnico@polarizadosya.com / tecnico123"
+  },
+  "seed_data_creation": "POST /api/seed/test-orders creates ABC123 (Carlos Pérez, paid=300k/900k SERVICIO_COMPLETADO no-email), XYZ789 (Laura Gómez, paid full, TERMINADO_PAGADO requires_invoice no-email), GHI456 (Andrés Rojas, 0/650k INGRESADO requires_invoice no-email). Idempotent. iter14 tests also reset ABC123 & XYZ789/GHI456 invoice flags via pymongo for reruns.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Today 2026-01-21. Iter14 backend endpoints (Pagos/Facturacion/Autos-Salida) all pass 16/16 pytest + 64/64 full regression. New paths use hyphens to avoid collision: /orders-with-balance, /orders-pending-release, /orders-pending-invoice, /payments, /seed/test-orders. Test file: /app/backend/tests/test_iteration14_features.py exposes _mongo() helper for state reset (useful for reruns). Frontend uses localStorage key 'token' (NOT 'access_token'). Filter default onlyPending=true in /pagos hides fully-paid orders — toggle filter-pending-btn to see them. React DOM nesting warning on FacturacionElectronica.jsx L84 needs main-agent fix. No PUT /orders/{id} endpoint — email-override in FacturacionElectronica UI is not wired to backend (see action_items).",
+  "rca of the issue": "N/A — no blocking bug found. Only one minor React warning (Badge inside <p>) and one design gap (email-override input in FacturacionElectronica doesn't propagate to backend)."
+}
