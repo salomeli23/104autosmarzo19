@@ -246,6 +246,10 @@ class OrderCreate(BaseModel):
     negotiated_value: float
     notes: Optional[str] = None
     confirmation_pin: Optional[str] = None
+    # Cita por prioridad (sin validar franja)
+    is_priority: Optional[bool] = False
+    authorization_code: Optional[str] = None
+    priority_reason: Optional[str] = None
     # Postventa / Garantía
     is_postventa: Optional[bool] = False
     postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
@@ -328,6 +332,9 @@ class OrderResponse(BaseModel):
     route_rule_id: Optional[str] = None
     route_rule_name: Optional[str] = None
     amount_paid: Optional[float] = None  # facturación acumulada
+    # Cita por prioridad
+    is_priority: Optional[bool] = False
+    priority_reason: Optional[str] = None
     # Postventa / Garantía
     is_postventa: Optional[bool] = False
     postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
@@ -896,11 +903,20 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     # Validate confirmation PIN
     settings = await db.settings.find_one({"key": "booking_pin"}, {"_id": 0})
     expected_pin = (settings or {}).get("value", "00000")
-    
-    if not order.confirmation_pin:
-        raise HTTPException(status_code=400, detail="PIN de confirmación requerido")
-    if str(order.confirmation_pin).strip() != str(expected_pin).strip():
-        raise HTTPException(status_code=400, detail="PIN de confirmación incorrecto")
+
+    # Cita por PRIORIDAD: requiere código de autorización dedicado (default 00000)
+    if order.is_priority:
+        prio_settings = await db.settings.find_one({"key": "priority_pin"}, {"_id": 0})
+        expected_priority = (prio_settings or {}).get("value", "00000")
+        if not order.authorization_code:
+            raise HTTPException(status_code=400, detail="Código de autorización requerido para citas por prioridad")
+        if str(order.authorization_code).strip() != str(expected_priority).strip():
+            raise HTTPException(status_code=400, detail="Código de autorización inválido")
+    else:
+        if not order.confirmation_pin:
+            raise HTTPException(status_code=400, detail="PIN de confirmación requerido")
+        if str(order.confirmation_pin).strip() != str(expected_pin).strip():
+            raise HTTPException(status_code=400, detail="PIN de confirmación incorrecto")
     
     # Block duplicate: same plate + same date (excluding desistimiento and postventa)
     # Postventa/Garantía sí permite múltiples órdenes para misma placa+fecha si fuera necesario
@@ -922,8 +938,15 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     order_code = generate_order_code()
     qr_code = generate_qr_code(order_code)
     
-    # Calculate specific scheduled time based on queue position
-    scheduled_time = await calculate_scheduled_time(order.date, order.time_slot)
+    # Calculate specific scheduled time based on queue position.
+    # For PRIORIDAD: agendar inmediatamente con la hora actual de Colombia (UTC-5).
+    if order.is_priority:
+        col_now = datetime.now(timezone.utc) - timedelta(hours=5)
+        scheduled_time = col_now.strftime("%H:%M")
+        effective_time_slot = order.time_slot or "prioridad"
+    else:
+        scheduled_time = await calculate_scheduled_time(order.date, order.time_slot)
+        effective_time_slot = order.time_slot
     
     order_doc = {
         "id": order_id,
@@ -939,8 +962,10 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "year": order.year,
         "color": order.color,
         "date": order.date,
-        "time_slot": order.time_slot,
+        "time_slot": effective_time_slot,
         "scheduled_time": scheduled_time,  # Hora específica de la cita
+        "is_priority": bool(order.is_priority),
+        "priority_reason": order.priority_reason if order.is_priority else None,
         "services": [s.model_dump() for s in order.services],
         "negotiated_value": order.negotiated_value,
         "final_value": None,

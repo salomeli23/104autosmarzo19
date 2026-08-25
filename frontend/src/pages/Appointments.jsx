@@ -60,6 +60,9 @@ export const Appointments = () => {
         time_slot: '',
         notes: '',
         confirmation_pin: '',
+        appointment_type: 'franja', // 'franja' | 'prioridad'
+        authorization_code: '',
+        priority_reason: '',
     });
 
     // Fetch service catalog on mount
@@ -286,6 +289,9 @@ export const Appointments = () => {
             time_slot: '',
             notes: '',
             confirmation_pin: '',
+            appointment_type: 'franja',
+            authorization_code: '',
+            priority_reason: '',
         });
         setSelectedServices([]);
         setCustomServiceName('');
@@ -302,15 +308,18 @@ export const Appointments = () => {
             return;
         }
 
-        if (!formData.time_slot) {
-            toast.error('Selecciona una franja horaria');
-            return;
-        }
+        const isPriority = formData.appointment_type === 'prioridad';
 
-        const selectedSlot = slotsAvailability?.slots?.find(s => s.id === formData.time_slot);
-        if (selectedSlot && selectedSlot.remaining <= 0) {
-            toast.error('Esta franja ya no tiene cupos disponibles');
-            return;
+        if (!isPriority) {
+            if (!formData.time_slot) {
+                toast.error('Selecciona una franja horaria');
+                return;
+            }
+            const selectedSlot = slotsAvailability?.slots?.find(s => s.id === formData.time_slot);
+            if (selectedSlot && selectedSlot.remaining <= 0) {
+                toast.error('Esta franja ya no tiene cupos disponibles');
+                return;
+            }
         }
 
         const total = calculateTotal();
@@ -319,7 +328,12 @@ export const Appointments = () => {
             return;
         }
 
-        if (!formData.confirmation_pin || formData.confirmation_pin.trim() === '') {
+        if (isPriority) {
+            if (!formData.authorization_code || formData.authorization_code.trim() === '') {
+                toast.error('Ingresa el código de autorización para citas por prioridad');
+                return;
+            }
+        } else if (!formData.confirmation_pin || formData.confirmation_pin.trim() === '') {
             toast.error('Ingresa el PIN de confirmación para agendar');
             return;
         }
@@ -343,11 +357,14 @@ export const Appointments = () => {
                 year: null,
                 color: null,
                 date: format(selectedDate, 'yyyy-MM-dd'),
-                time_slot: formData.time_slot,
+                time_slot: isPriority ? 'prioridad' : formData.time_slot,
                 services: servicesData,
                 negotiated_value: total,
                 notes: formData.notes || null,
-                confirmation_pin: formData.confirmation_pin.trim(),
+                confirmation_pin: isPriority ? null : formData.confirmation_pin.trim(),
+                is_priority: isPriority,
+                authorization_code: isPriority ? formData.authorization_code.trim() : null,
+                priority_reason: isPriority ? (formData.priority_reason || null) : null,
             };
 
             const response = await ordersAPI.create(submitData);
@@ -607,6 +624,42 @@ export const Appointments = () => {
                             <DialogDescription>Complete los datos del cliente, vehículo y servicios</DialogDescription>
                         </DialogHeader>
                         <form onSubmit={handleSubmit} className="space-y-6">
+                            {/* Tipo de Cita */}
+                            <div className="space-y-2 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
+                                <Label className="flex items-center gap-2 text-cyan-400">
+                                    <Clock className="w-4 h-4" />
+                                    Tipo de Cita *
+                                </Label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData(prev => ({ ...prev, appointment_type: 'franja' }))}
+                                        className={`p-3 rounded-lg border text-left transition-all ${
+                                            formData.appointment_type === 'franja'
+                                                ? 'border-cyan-500 bg-cyan-500/10'
+                                                : 'border-border bg-card hover:border-cyan-500/50'
+                                        }`}
+                                        data-testid="appointment-type-franja"
+                                    >
+                                        <p className="font-medium">Por franja</p>
+                                        <p className="text-xs text-muted-foreground">Respeta cupos y horarios</p>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData(prev => ({ ...prev, appointment_type: 'prioridad' }))}
+                                        className={`p-3 rounded-lg border text-left transition-all ${
+                                            formData.appointment_type === 'prioridad'
+                                                ? 'border-amber-500 bg-amber-500/10'
+                                                : 'border-border bg-card hover:border-amber-500/50'
+                                        }`}
+                                        data-testid="appointment-type-prioridad"
+                                    >
+                                        <p className="font-medium">Por prioridad</p>
+                                        <p className="text-xs text-muted-foreground">Sin franja · requiere código</p>
+                                    </button>
+                                </div>
+                            </div>
+
                             {/* Client Info */}
                             <div className="space-y-4">
                                 <h3 className="font-heading text-lg flex items-center gap-2">
@@ -751,9 +804,9 @@ export const Appointments = () => {
                             <div className="space-y-4">
                                 <h3 className="font-heading text-lg flex items-center gap-2">
                                     <CalendarIcon className="w-4 h-4" />
-                                    Fecha y Franja Horaria
+                                    {formData.appointment_type === 'prioridad' ? 'Fecha (Prioridad)' : 'Fecha y Franja Horaria'}
                                 </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className={`grid grid-cols-1 ${formData.appointment_type === 'franja' ? 'md:grid-cols-2' : ''} gap-4`}>
                                     <div className="space-y-2">
                                         <Label>Fecha de la Cita *</Label>
                                         <div className="flex justify-center border rounded-lg p-2 overflow-x-auto">
@@ -769,7 +822,14 @@ export const Appointments = () => {
                                         <p className="text-xs text-muted-foreground text-center">
                                             Fecha seleccionada: {format(selectedDate, "EEEE, d 'de' MMMM yyyy", { locale: es })}
                                         </p>
+                                        {formData.appointment_type === 'prioridad' && (
+                                            <div className="mt-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm flex items-center gap-2" data-testid="priority-notice">
+                                                <AlertCircle className="w-4 h-4 shrink-0" />
+                                                Prioridad: se agenda inmediatamente sin importar franjas ni cupos.
+                                            </div>
+                                        )}
                                     </div>
+                                    {formData.appointment_type === 'franja' && (
                                     <div className="space-y-2">
                                         <Label className="flex items-center gap-2">
                                             <Clock className="w-4 h-4" />
@@ -856,6 +916,7 @@ export const Appointments = () => {
                                             </div>
                                         )}
                                     </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -1091,34 +1152,72 @@ export const Appointments = () => {
                                 />
                             </div>
 
-                            {/* Confirmation PIN */}
-                            <div className="space-y-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
-                                <Label htmlFor="confirmation_pin" className="flex items-center gap-2 text-amber-400">
-                                    <AlertCircle className="w-4 h-4" />
-                                    PIN de Confirmación *
-                                </Label>
-                                <Input
-                                    id="confirmation_pin"
-                                    type="password"
-                                    inputMode="numeric"
-                                    autoComplete="off"
-                                    maxLength={10}
-                                    value={formData.confirmation_pin}
-                                    onChange={(e) => setFormData(prev => ({ ...prev, confirmation_pin: e.target.value.replace(/\D/g, '') }))}
-                                    placeholder="Ingresa el PIN para confirmar"
-                                    required
-                                    data-testid="appointment-pin-input"
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                    Se requiere PIN para evitar duplicados. Configúralo en Ajustes (Admin).
-                                </p>
-                            </div>
+                            {/* Confirmation PIN o Código de autorización */}
+                            {formData.appointment_type === 'prioridad' ? (
+                                <div className="space-y-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                                    <Label htmlFor="authorization_code" className="flex items-center gap-2 text-amber-400">
+                                        <AlertCircle className="w-4 h-4" />
+                                        Código de Autorización *
+                                    </Label>
+                                    <Input
+                                        id="authorization_code"
+                                        type="password"
+                                        inputMode="numeric"
+                                        autoComplete="off"
+                                        maxLength={10}
+                                        value={formData.authorization_code}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, authorization_code: e.target.value.replace(/\D/g, '') }))}
+                                        placeholder="Ingresa el código de autorización"
+                                        required
+                                        data-testid="appointment-auth-code-input"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Las citas por prioridad requieren autorización del administrador.
+                                    </p>
+                                    <div className="mt-2">
+                                        <Label htmlFor="priority_reason" className="text-xs">Motivo de prioridad (opcional)</Label>
+                                        <Input
+                                            id="priority_reason"
+                                            value={formData.priority_reason}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, priority_reason: e.target.value }))}
+                                            placeholder="Ej: Cliente VIP, emergencia..."
+                                            data-testid="appointment-priority-reason"
+                                        />
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                                    <Label htmlFor="confirmation_pin" className="flex items-center gap-2 text-amber-400">
+                                        <AlertCircle className="w-4 h-4" />
+                                        PIN de Confirmación *
+                                    </Label>
+                                    <Input
+                                        id="confirmation_pin"
+                                        type="password"
+                                        inputMode="numeric"
+                                        autoComplete="off"
+                                        maxLength={10}
+                                        value={formData.confirmation_pin}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, confirmation_pin: e.target.value.replace(/\D/g, '') }))}
+                                        placeholder="Ingresa el PIN para confirmar"
+                                        required
+                                        data-testid="appointment-pin-input"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Se requiere PIN para evitar duplicados. Configúralo en Ajustes (Admin).
+                                    </p>
+                                </div>
+                            )}
 
                             <Button 
                                 type="submit" 
                                 className="w-full brand-glow" 
                                 data-testid="submit-appointment-btn"
-                                disabled={!slotsAvailability?.is_open || selectedServices.length === 0 || !formData.confirmation_pin}
+                                disabled={
+                                    selectedServices.length === 0 ||
+                                    (formData.appointment_type === 'franja' && (!slotsAvailability?.is_open || !formData.confirmation_pin)) ||
+                                    (formData.appointment_type === 'prioridad' && !formData.authorization_code)
+                                }
                             >
                                 <DollarSign className="w-4 h-4 mr-2" />
                                 Agendar Cita - {formatCurrency(calculateTotal())}

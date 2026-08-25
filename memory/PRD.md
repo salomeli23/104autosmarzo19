@@ -4,6 +4,25 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
+2026-08-25
+
+## Última Sesión (2026-08-25) — Iteración 18 (Cita por Prioridad)
+
+### Nueva Cita: Tipo "Por Franja" | "Por Prioridad"
+- **Backend `/api/orders` (POST)**:
+  - `OrderCreate` acepta `is_priority: bool`, `authorization_code: str`, `priority_reason: Optional[str]`.
+  - Si `is_priority=false` (default): valida `confirmation_pin` como antes (setting `booking_pin`).
+  - Si `is_priority=true`: valida `authorization_code` contra setting `priority_pin` (default `00000`). Bypassa la franja: `time_slot="prioridad"` y `scheduled_time = HH:MM Colombia now` (UTC-5).
+  - Errores: 400 "Código de autorización requerido" / "Código de autorización inválido".
+  - `OrderResponse` expone `is_priority`, `priority_reason`.
+- **Frontend `/appointments`**: Dialog "Nueva Cita" ahora tiene un selector arriba "Tipo de Cita" con dos tarjetas (`appointment-type-franja` / `appointment-type-prioridad`). Al elegir Prioridad:
+  - Se oculta el selector de franja horaria.
+  - Aparece banner amber: "Prioridad: se agenda inmediatamente sin importar franjas ni cupos".
+  - Aparece input `appointment-auth-code-input` (código de autorización) + `appointment-priority-reason` (motivo opcional).
+  - El PIN de confirmación normal queda oculto.
+- **Testing curl**: 4 escenarios validados: prioridad sin código → 400; prioridad código inválido → 400; prioridad con `00000` → 200 (agenda con hora actual Colombia); franja sin PIN → 400.
+
+## Fecha de última actualización previa
 2026-08-21
 
 ## Última Sesión (2026-08-21) — Iteración 17 (Pagos · Facturación E. · Autorizar Salida · Emails con PDF)
