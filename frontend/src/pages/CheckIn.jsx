@@ -49,6 +49,8 @@ export const CheckIn = () => {
     const [sendingPhotos, setSendingPhotos] = useState(false);
     const [paymentMethod, setPaymentMethod] = useState('efectivo'); // efectivo | tarjeta | transferencia
     const [requiresInvoice, setRequiresInvoice] = useState(false);
+    // Overrides de precio de extras (por id) para permitir editar el Sunroof en Check-in
+    const [extraPriceOverrides, setExtraPriceOverrides] = useState({});
     
     // Risk Agreement Modal
     const [showRiskAgreement, setShowRiskAgreement] = useState(false);
@@ -101,14 +103,27 @@ export const CheckIn = () => {
             setOrder(orderRes.data);
             setServiceCatalog(catalogRes.data);
             
-            // Initialize services from order with prices
+            // Initialize services from order with prices, parts and extras
             const initialServices = orderRes.data.services?.map(s => ({
                 serviceId: s.service,
                 serviceName: s.description?.split(' - ')[1] || s.service,
                 category: s.description?.split(' - ')[0] || 'Servicio',
-                price: s.price || 0
+                price: s.price || 0,
+                parts: s.parts || [],
+                part_percentages: s.part_percentages || {},
+                extras: s.extras || [],
             })) || [];
             setSelectedServices(initialServices);
+            // Precargar precios editables (sunroof) desde los extras que vienen del agendamiento
+            const overrides = {};
+            initialServices.forEach(s => {
+                (s.extras || []).forEach(ex => {
+                    const isSunroof = String(ex.nombre || '').toLowerCase().includes('sunroof')
+                        || String(ex.id || '').toLowerCase().includes('sunroof');
+                    if (isSunroof && ex.price != null) overrides[ex.id] = String(ex.price);
+                });
+            });
+            if (Object.keys(overrides).length) setExtraPriceOverrides(overrides);
             setCedulaNumber(orderRes.data.client_cedula || '');
             
             setStep(2);
@@ -285,7 +300,19 @@ export const CheckIn = () => {
                 (e.nombre || '').toLowerCase().includes('sunroof');
             if (isSunroofExtra && !ultrasecureOn) return false;
             return true;
+        }).map(e => {
+            // Aplicar override manual si existe (Sunroof editable en Check-in)
+            const overridden = extraPriceOverrides[e.id];
+            if (overridden !== undefined && overridden !== '') {
+                const num = parseFloat(overridden);
+                if (!isNaN(num) && num >= 0) return { ...e, price: num };
+            }
+            return e;
         });
+    };
+
+    const handleExtraPriceChange = (extraId, value) => {
+        setExtraPriceOverrides(prev => ({ ...prev, [extraId]: value }));
     };
 
     // Detecta si algún servicio seleccionado es PPF
@@ -1256,12 +1283,32 @@ export const CheckIn = () => {
                                             <span>Subtotal servicios</span>
                                             <span className="font-mono">{formatCurrency(bk.subtotal)}</span>
                                         </div>
-                                        {bk.extras.map(e => (
-                                            <div key={e.id} className="flex justify-between text-sm text-green-300" data-testid={`total-extra-${e.id}`}>
-                                                <span>+ {e.nombre}</span>
-                                                <span className="font-mono">+{formatCurrency(e.price)}</span>
-                                            </div>
-                                        ))}
+                                        {bk.extras.map(e => {
+                                            const isSunroof =
+                                                (e.trigger_part || '').toLowerCase() === 'sunroof' ||
+                                                (e.nombre || '').toLowerCase().includes('sunroof');
+                                            return (
+                                                <div key={e.id} className="flex justify-between items-center gap-2 text-sm text-green-300" data-testid={`total-extra-${e.id}`}>
+                                                    <span className="flex-1">+ {e.nombre}</span>
+                                                    {isSunroof ? (
+                                                        <div className="flex items-center gap-1">
+                                                            <span className="text-xs text-muted-foreground">$</span>
+                                                            <Input
+                                                                type="number"
+                                                                min="0"
+                                                                value={extraPriceOverrides[e.id] ?? e.price ?? ''}
+                                                                onChange={(ev) => handleExtraPriceChange(e.id, ev.target.value)}
+                                                                className="w-28 h-7 text-right font-mono"
+                                                                placeholder="0"
+                                                                data-testid={`extra-price-input-${e.id}`}
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <span className="font-mono">+{formatCurrency(e.price)}</span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                         {bk.cardSurcharge > 0 && (
                                             <div className="flex justify-between text-sm text-cyan-300">
                                                 <span>Recargo tarjeta (5%)</span>

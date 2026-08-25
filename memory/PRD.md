@@ -6,6 +6,21 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-08-25
 
+## Última Sesión (2026-08-25 PM-2) — Iteración 20 (Sunroof editable en Check-in)
+
+### Sunroof adicional editable en Check-in / Ingreso
+- **Frontend `CheckIn.jsx`**:
+  - Nuevo estado `extraPriceOverrides` (por id de extra).
+  - `applicableExtras()` aplica el override si el asesor cambia el valor.
+  - En el desglose del total, el extra Sunroof (`trigger_part='sunroof'` o nombre contiene "sunroof") se renderiza como **Input numérico editable** (`data-testid=extra-price-input-{id}`) en lugar de texto fijo. Otros extras siguen como texto fijo.
+  - Precarga automática: al buscar la orden por código, los extras que venían del agendamiento se cargan en `selectedServices[i].extras` y el `sunroof_price` se rellena en `extraPriceOverrides`.
+  - Total se recalcula en vivo al cambiar el valor.
+- **Backend**: `IngresoApproval` ya soporta `services[i].extras=[{id,nombre,price}]` — el precio ajustado en check-in se persiste tal cual el asesor lo dejó.
+- Verificación E2E: crear cita prioridad con sunroof 150k → check-in muestra input con 150000 → editar a 250000 → total pasa de $450k a $550k automáticamente.
+
+## Fecha de última actualización previa
+2026-08-25
+
 ## Última Sesión (2026-08-25 PM) — Iteración 19 (Prioridad + Ultrasecure Refino)
 
 ### Prioridad: check-in inmediato con hora Colombia
