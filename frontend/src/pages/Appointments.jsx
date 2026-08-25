@@ -114,7 +114,11 @@ export const Appointments = () => {
 
     // Calculate total from selected services
     const calculateTotal = () => {
-        return selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
+        return selectedServices.reduce((sum, svc) => {
+            const base = svc.price || 0;
+            const sunroofExtra = (svc.parts || []).includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
+            return sum + base + sunroofExtra;
+        }, 0);
     };
 
     const handleDateSelect = (date) => {
@@ -191,7 +195,7 @@ export const Appointments = () => {
         { id: 'panoramico', name: 'Panorámico' },
         { id: 'vidrio_copiloto', name: 'Vidrio Copiloto' },
         { id: 'vidrio_piloto', name: 'Vidrio Piloto' },
-        { id: 'vidrio_trasero', name: 'Vidrio Trasero' },
+        { id: 'vidrio_trasero_piloto', name: 'Vidrio Trasero Piloto' },
         { id: 'vidrio_trasero_copiloto', name: 'Vidrio Trasero Copiloto' },
         { id: 'trasero', name: 'Trasero' },
         { id: 'luneta', name: 'Luneta' },
@@ -245,6 +249,25 @@ export const Appointments = () => {
                 }
                 return s;
             })
+        );
+    };
+
+    // Select ALL parts for a service (Ultrasecure "Completo")
+    const handleSelectAllParts = (serviceId) => {
+        setSelectedServices(prev =>
+            prev.map(s => {
+                if (s.serviceId !== serviceId) return s;
+                const allIds = VEHICLE_PARTS.map(p => p.id);
+                const isAll = (s.parts || []).length === allIds.length;
+                return { ...s, parts: isAll ? [] : allIds };
+            })
+        );
+    };
+
+    // Set custom Sunroof extra price for a service
+    const handleSunroofPriceChange = (serviceId, price) => {
+        setSelectedServices(prev =>
+            prev.map(s => s.serviceId === serviceId ? { ...s, sunroof_price: price } : s)
         );
     };
 
@@ -339,12 +362,19 @@ export const Appointments = () => {
         }
 
         try {
-            const servicesData = selectedServices.map(svc => ({
-                service: svc.serviceId,
-                price: svc.price,
-                description: `${svc.category} - ${svc.serviceName}`,
-                parts: svc.parts || []  // Include selected vehicle parts
-            }));
+            const servicesData = selectedServices.map(svc => {
+                const parts = svc.parts || [];
+                const sunroofPrice = parts.includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
+                return {
+                    service: svc.serviceId,
+                    price: svc.price,
+                    description: `${svc.category} - ${svc.serviceName}`,
+                    parts,
+                    extras: sunroofPrice > 0
+                        ? [{ id: 'sunroof', nombre: 'Sunroof (adicional)', price: sunroofPrice }]
+                        : [],
+                };
+            });
 
             const submitData = {
                 client_name: formData.client_name,
@@ -988,10 +1018,25 @@ export const Appointments = () => {
                                                                 {/* Vehicle parts selection for polarizado services */}
                                                                 {showParts && (
                                                                     <div className="mt-3 pt-3 border-t border-border/50">
-                                                                        <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                                                                            <Car className="w-3 h-3" />
-                                                                            Selecciona las partes del vehículo:
-                                                                        </p>
+                                                                        <div className="flex items-center justify-between mb-2">
+                                                                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                                                                <Car className="w-3 h-3" />
+                                                                                Selecciona las partes del vehículo:
+                                                                            </p>
+                                                                            <Button
+                                                                                type="button"
+                                                                                size="sm"
+                                                                                variant={selectedService?.parts?.length === VEHICLE_PARTS.length ? 'default' : 'outline'}
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    handleSelectAllParts(service.id);
+                                                                                }}
+                                                                                data-testid={`select-all-parts-${service.id}`}
+                                                                                className="h-7 text-xs"
+                                                                            >
+                                                                                {selectedService?.parts?.length === VEHICLE_PARTS.length ? '✓ Completo' : 'Completo'}
+                                                                            </Button>
+                                                                        </div>
                                                                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                                                             {VEHICLE_PARTS.map((part) => {
                                                                                 const isPartSelected = selectedService?.parts?.includes(part.id);
@@ -1027,6 +1072,24 @@ export const Appointments = () => {
                                                                                 );
                                                                             })}
                                                                         </div>
+                                                                        {selectedService?.parts?.includes('sunroof') && (
+                                                                            <div className="mt-3 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 space-y-1" data-testid={`sunroof-extra-${service.id}`}>
+                                                                                <Label className="text-xs text-amber-400 flex items-center gap-1">
+                                                                                    <DollarSign className="w-3 h-3" />
+                                                                                    Sunroof · costo adicional (personalizado)
+                                                                                </Label>
+                                                                                <Input
+                                                                                    type="number"
+                                                                                    min="0"
+                                                                                    value={selectedService?.sunroof_price || ''}
+                                                                                    onChange={(e) => handleSunroofPriceChange(service.id, e.target.value)}
+                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                    placeholder="Ingresa el valor extra por Sunroof"
+                                                                                    data-testid={`sunroof-price-${service.id}`}
+                                                                                    className="h-8"
+                                                                                />
+                                                                            </div>
+                                                                        )}
                                                                         {selectedService?.parts?.length > 0 && (
                                                                             <p className="text-xs text-cyan-400 mt-2">
                                                                                 {selectedService.parts.length} parte(s) seleccionada(s)

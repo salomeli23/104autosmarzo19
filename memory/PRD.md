@@ -6,6 +6,21 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-08-25
 
+## Última Sesión (2026-08-25 PM) — Iteración 19 (Prioridad + Ultrasecure Refino)
+
+### Prioridad: check-in inmediato con hora Colombia
+- **Backend**: `create_order` para prioridad usa `get_colombia_time()` (pytz UTC-5) para el `scheduled_time` — consistente con `validate_checkin_time`.
+- **Backend `checkin_order`**: si `order.is_priority=true` se BYPASSA `validate_checkin_time` (no hay gate por franja/hora). Testeado E2E: crear cita prioridad → checkin inmediato → 200 OK.
+
+### Ultrasecure: opción "Completo" + Sunroof abierto
+- **`VEHICLE_PARTS` en Appointments.jsx**: eliminada la pieza `vidrio_trasero` (redundante). Quedan 9 partes: Panorámico, Vidrio Copiloto/Piloto, Vidrio Trasero Piloto/Copiloto, Trasero, Luneta, Sunroof, Custodias.
+- **Botón "Completo"** por servicio: `data-testid=select-all-parts-{serviceId}`. Marca/desmarca las 9 partes de una vez. Al estar todo marcado muestra "✓ Completo" en verde.
+- **Sunroof adicional con costo abierto**: cuando se selecciona la pieza `sunroof` aparece un bloque ámbar con input numérico `data-testid=sunroof-price-{serviceId}` para ingresar el valor extra. Este valor se suma automáticamente al total y se envía al backend como `extras=[{id:'sunroof', nombre:'Sunroof (adicional)', price}]` dentro del servicio.
+- Aplica para AMBOS tipos de cita (franja y prioridad).
+
+## Fecha de última actualización previa
+2026-08-25
+
 ## Última Sesión (2026-08-25) — Iteración 18 (Cita por Prioridad)
 
 ### Nueva Cita: Tipo "Por Franja" | "Por Prioridad"

@@ -938,10 +938,10 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     order_code = generate_order_code()
     qr_code = generate_qr_code(order_code)
     
-    # Calculate specific scheduled time based on queue position.
-    # For PRIORIDAD: agendar inmediatamente con la hora actual de Colombia (UTC-5).
+    # Cita por PRIORIDAD: se agenda con la hora actual de Colombia y se
+    # habilita el check-in inmediato (no se aplica gate de scheduled_time).
     if order.is_priority:
-        col_now = datetime.now(timezone.utc) - timedelta(hours=5)
+        col_now = get_colombia_time()
         scheduled_time = col_now.strftime("%H:%M")
         effective_time_slot = order.time_slot or "prioridad"
     else:
@@ -1561,21 +1561,23 @@ async def checkin_order(data: CheckInRequest, current_user: dict = Depends(requi
             }
         )
     
-    # Validate check-in time based on scheduled time
-    scheduled_time = order.get("scheduled_time")
-    can_checkin, message, time_remaining, sched_time = validate_checkin_time(order["date"], scheduled_time)
-    if not can_checkin:
-        raise HTTPException(
-            status_code=400, 
-            detail={
-                "type": "time_validation",
-                "message": message,
-                "time_remaining": time_remaining,
-                "scheduled_time": sched_time,
-                "slot_time": order["time_slot"],
-                "appointment_date": order["date"]
-            }
-        )
+    # Validate check-in time based on scheduled time.
+    # Citas por PRIORIDAD se pueden ingresar inmediatamente sin importar la hora.
+    if not order.get("is_priority"):
+        scheduled_time = order.get("scheduled_time")
+        can_checkin, message, time_remaining, sched_time = validate_checkin_time(order["date"], scheduled_time)
+        if not can_checkin:
+            raise HTTPException(
+                status_code=400, 
+                detail={
+                    "type": "time_validation",
+                    "message": message,
+                    "time_remaining": time_remaining,
+                    "scheduled_time": sched_time,
+                    "slot_time": order["time_slot"],
+                    "appointment_date": order["date"]
+                }
+            )
     
     return OrderResponse(**order)
 
