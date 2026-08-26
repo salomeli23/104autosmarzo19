@@ -6,6 +6,18 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-08-26
 
+## Última Sesión (2026-08-26 PM-3) — Iteración 24 (Simplificar zonas en Completar Corte)
+
+### Cambio UI
+- **`CuttingView.jsx` · Completar Corte**: eliminados los dropdowns `part-material-{id}` y `part-rollo-{id}` de cada zona/pieza. Ahora cada bloque muestra únicamente:
+  - Medida lineal (cm) 1–350
+  - Checkbox "Aprovechamiento"
+- El label superior cambió de "Medida lineal (cm), porcentaje y material por pieza" a "Medida lineal (cm) por pieza".
+- El texto de ayuda se ajustó para reflejar que la referencia de material se toma del nuevo "Catálogo de Materiales" (tabs Material 1/2/3) y no por pieza.
+
+## Fecha de última actualización previa
+2026-08-26
+
 ## Última Sesión (2026-08-26 PM-2) — Iteración 23 (Catálogo Corte: Promedios + Materiales + Rollos)
 
 ### Módulo de Corte: nuevas capacidades en "Completar Corte"

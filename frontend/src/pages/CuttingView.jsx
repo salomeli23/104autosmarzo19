@@ -776,18 +776,16 @@ const CuttingView = () => {
                             <div className="space-y-3">
                                 <Label className="flex items-center gap-2 font-medium">
                                     <Ruler className="w-4 h-4" />
-                                    Medida lineal (cm), porcentaje y material por pieza
+                                    Medida lineal (cm) por pieza
                                 </Label>
                                 <p className="text-xs text-muted-foreground -mt-1">
                                     Cada pieza muestra el porcentaje elegido por el cliente en el check-in.
-                                    Selecciona el material (tipo de rollo) y el rollo específico del stock para descontar automáticamente.
+                                    Marca &quot;Aprovechamiento&quot; si el corte se hace con material de scrap y no debe descontar del rollo.
                                 </p>
                                 <div className="grid sm:grid-cols-2 gap-3">
                                     {VEHICLE_PARTS.map((part) => {
                                         const wasSelected = orderSelectedParts(selectedOrder).has(part.id);
                                         const pct = getPartPercentage(selectedOrder, part.id);
-                                        const material = partMaterials[part.id]?.tipo_rollo || '';
-                                        const rolloId = partMaterials[part.id]?.inventory_item_id || '';
                                         const isAprov = !!partMaterials[part.id]?.is_aprovechamiento;
                                         // Medida lineal única (1-350 cm)
                                         const medida = partDims[part.id]?.medida || '';
@@ -798,11 +796,6 @@ const CuttingView = () => {
                                                 [part.id]: value ? `${value} cm` : '',
                                             }));
                                         };
-                                        // Filtrar rollos por material seleccionado
-                                        const filteredRollos = material
-                                            ? rollos.filter(r => r.tipo_rollo === material)
-                                            : rollos;
-                                        const selectedRollo = rollos.find(r => r.id === rolloId);
                                         return (
                                             <div
                                                 key={part.id}
@@ -837,50 +830,6 @@ const CuttingView = () => {
                                                         <option key={n} value={n}>{n} cm</option>
                                                     ))}
                                                 </select>
-                                                {/* Material y rollo */}
-                                                <div className="grid grid-cols-2 gap-1.5">
-                                                    <select
-                                                        className="px-2 py-1.5 rounded border border-input bg-background text-xs"
-                                                        value={material}
-                                                        onChange={(e) => {
-                                                            const newTipo = e.target.value;
-                                                            setPartMaterials(prev => ({
-                                                                ...prev,
-                                                                [part.id]: {
-                                                                    ...(prev[part.id] || {}),
-                                                                    tipo_rollo: newTipo || null,
-                                                                    inventory_item_id: rollos.find(r => r.id === prev[part.id]?.inventory_item_id && r.tipo_rollo === newTipo)?.id || null,
-                                                                }
-                                                            }));
-                                                        }}
-                                                        data-testid={`part-material-${part.id}`}
-                                                    >
-                                                        <option value="">Material…</option>
-                                                        {ROLLO_TYPES.map(t => (
-                                                            <option key={t.value} value={t.value}>{t.label}</option>
-                                                        ))}
-                                                    </select>
-                                                    <select
-                                                        className="px-2 py-1.5 rounded border border-input bg-background text-xs"
-                                                        value={rolloId}
-                                                        onChange={(e) => setPartMaterials(prev => ({
-                                                            ...prev,
-                                                            [part.id]: {
-                                                                ...(prev[part.id] || {}),
-                                                                inventory_item_id: e.target.value || null,
-                                                            }
-                                                        }))}
-                                                        disabled={!material}
-                                                        data-testid={`part-rollo-${part.id}`}
-                                                    >
-                                                        <option value="">Marca / Rollo…</option>
-                                                        {filteredRollos.map(r => (
-                                                            <option key={r.id} value={r.id}>
-                                                                {r.codigo} · {r.nombre} ({(r.metros_restantes ?? 0).toFixed(2)}m)
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
                                                 {/* Checkbox Aprovechamiento */}
                                                 <label
                                                     className={`flex items-center gap-2 cursor-pointer select-none p-1.5 rounded transition-colors ${isAprov ? 'bg-purple-500/15' : 'hover:bg-muted/40'}`}
@@ -902,12 +851,6 @@ const CuttingView = () => {
                                                         ♻ Aprovechamiento (no descuenta del stock)
                                                     </span>
                                                 </label>
-                                                {selectedRollo && !isAprov && (
-                                                    <p className="text-[11px] text-cyan-400 flex items-center gap-1" data-testid={`part-rollo-info-${part.id}`}>
-                                                        <Package className="w-3 h-3" />
-                                                        {labelForTipoRollo(selectedRollo.tipo_rollo)} · {selectedRollo.codigo} · quedan {(selectedRollo.metros_restantes ?? 0).toFixed(2)}m
-                                                    </p>
-                                                )}
                                                 {isAprov && (
                                                     <p className="text-[11px] text-purple-400 flex items-center gap-1" data-testid={`part-aprov-info-${part.id}`}>
                                                         <Package className="w-3 h-3" />
