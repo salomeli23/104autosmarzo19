@@ -6,6 +6,31 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-08-26
 
+## Última Sesión (2026-08-26 PM-4) — Iteración 25 (Retenciones + Tab Impuestos)
+
+### Nuevo flujo en Facturación Electrónica
+- **Botón "Aplicar retención"** ANTES del botón "Enviar Factura" (que queda bloqueado hasta aplicar).
+- **Dialog Aplicar Retención**:
+  - Ciudad (default Bogotá) — al cambiar de Bogotá, Reteica se desactiva.
+  - **Reteica** (0.966% Bogotá) — activada por default cuando city=Bogotá.
+  - **Retefuente** con presets 2.5% (servicios) y 6.9% (honorarios) + input libre.
+  - Checkbox **"no aplica"** para clientes exentos (skip retenciones).
+  - Checkbox **"Cambiar NIT/Cédula o Razón Social"** — reveal inputs; el cambio se propaga a TODAS las órdenes históricas y futuras del cliente (match por client_name o client_cedula previa).
+  - Preview en vivo: Subtotal − Reteica − Retefuente = Neto a pagar.
+- **Tab "Impuestos"** con card resumen (count, total Reteica, total Retefuente, total retenido) + búsqueda + listado detallado.
+
+### Backend
+- `POST /api/orders/{id}/apply-retention`: crea documento en `db.retentions`, actualiza `order.retention_applied=true` y `retention_snapshot`. Si `update_identity=true`, propaga NIT/razón social a todas las órdenes del cliente.
+- `GET /api/retentions?q=`: reporte con items + summary agregado.
+- `POST /api/orders/{id}/send-invoice-email` ahora **valida** que `retention_applied=true` (o `no_aplica=true`) antes de enviar → 400 si no.
+- `GET /api/orders-pending-invoice` incluye `retention_applied` y `retention_snapshot`.
+
+### Testing
+- iteration_18.json: **8/8 pytest PASS + E2E frontend VERIFIED**. Único item menor: en tab Impuestos al primer mount hay un flash 0 antes de cargar (no crítico).
+
+## Fecha de última actualización previa
+2026-08-26
+
 ## Última Sesión (2026-08-26 PM-3) — Iteración 24 (Simplificar zonas en Completar Corte)
 
 ### Cambio UI

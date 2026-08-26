@@ -3594,12 +3594,157 @@ async def orders_pending_invoice(
             "client_cedula": o.get("client_cedula"),
             "client_email": o.get("client_email"),
             "client_phone": o.get("client_phone"),
+            "client_razon_social": o.get("client_razon_social"),
             "status": o.get("status"),
             "ingreso_at": o.get("ingreso_at"),
             "invoice_number": o.get("invoice_number"),
+            "retention_applied": bool(o.get("retention_applied")),
+            "retention_snapshot": o.get("retention_snapshot"),
             **b,
         })
     return out
+
+
+class ApplyRetention(BaseModel):
+    city: Optional[str] = None
+    apply_reteica: bool = False
+    reteica_rate: Optional[float] = None  # % ej: 0.966
+    apply_retefuente: bool = False
+    retefuente_rate: Optional[float] = None  # % ej: 2.5 o 6.9
+    update_identity: bool = False
+    new_cedula: Optional[str] = None
+    new_razon_social: Optional[str] = None
+    no_aplica: bool = False
+
+
+@api_router.post("/orders/{order_id}/apply-retention")
+async def apply_retention(
+    order_id: str,
+    data: ApplyRetention,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
+):
+    """Aplica retenciones (Reteica/Retefuente) sobre la orden y opcionalmente actualiza
+    cédula/razón social. Requerido antes de enviar la factura electrónica."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+
+    total = float(order.get("final_value") or order.get("negotiated_value") or 0)
+    reteica_amt = 0.0
+    retefuente_amt = 0.0
+
+    if not data.no_aplica:
+        if data.apply_reteica:
+            if data.reteica_rate is None or data.reteica_rate < 0:
+                raise HTTPException(status_code=400, detail="Tasa de Reteica inválida")
+            reteica_amt = round(total * (data.reteica_rate / 100.0), 2)
+        if data.apply_retefuente:
+            if data.retefuente_rate is None or data.retefuente_rate < 0:
+                raise HTTPException(status_code=400, detail="Tasa de Retefuente inválida")
+            retefuente_amt = round(total * (data.retefuente_rate / 100.0), 2)
+
+    total_ret = round(reteica_amt + retefuente_amt, 2)
+    now = datetime.now(timezone.utc).isoformat()
+
+    retention_doc = {
+        "id": str(uuid.uuid4()),
+        "order_id": order_id,
+        "order_code": order.get("order_code"),
+        "plate": order.get("plate"),
+        "client_name": order.get("client_name"),
+        "client_cedula": data.new_cedula if data.update_identity and data.new_cedula else order.get("client_cedula"),
+        "city": data.city,
+        "no_aplica": bool(data.no_aplica),
+        "reteica_applied": bool(data.apply_reteica) and not data.no_aplica,
+        "reteica_rate": data.reteica_rate,
+        "reteica_amount": reteica_amt,
+        "retefuente_applied": bool(data.apply_retefuente) and not data.no_aplica,
+        "retefuente_rate": data.retefuente_rate,
+        "retefuente_amount": retefuente_amt,
+        "total_retention": total_ret,
+        "order_total_before": total,
+        "order_total_after": round(total - total_ret, 2),
+        "identity_updated": bool(data.update_identity),
+        "old_cedula": order.get("client_cedula") if data.update_identity else None,
+        "old_razon_social": order.get("client_razon_social") if data.update_identity else None,
+        "new_cedula": data.new_cedula if data.update_identity else None,
+        "new_razon_social": data.new_razon_social if data.update_identity else None,
+        "applied_at": now,
+        "applied_by": current_user["id"],
+        "applied_by_name": current_user["name"],
+    }
+    await db.retentions.insert_one(retention_doc)
+    retention_doc.pop("_id", None)
+
+    # Update order with retention snapshot
+    order_update = {
+        "retention_applied": True,
+        "retention_snapshot": {
+            "no_aplica": bool(data.no_aplica),
+            "city": data.city,
+            "reteica_rate": data.reteica_rate if data.apply_reteica and not data.no_aplica else None,
+            "reteica_amount": reteica_amt,
+            "retefuente_rate": data.retefuente_rate if data.apply_retefuente and not data.no_aplica else None,
+            "retefuente_amount": retefuente_amt,
+            "total_retention": total_ret,
+        },
+        "retention_applied_at": now,
+        "retention_applied_by": current_user["name"],
+        "updated_at": now,
+    }
+    if data.update_identity:
+        if data.new_cedula:
+            order_update["client_cedula"] = data.new_cedula
+        if data.new_razon_social:
+            order_update["client_razon_social"] = data.new_razon_social
+
+    await db.orders.update_one({"id": order_id}, {"$set": order_update})
+
+    # Propagar el cambio de identidad a TODAS las órdenes históricas/futuras del cliente
+    if data.update_identity and (data.new_cedula or data.new_razon_social):
+        # Match por client_name (case-insensitive) O por client_cedula previa
+        query_or = []
+        if order.get("client_name"):
+            query_or.append({"client_name": order["client_name"]})
+        if order.get("client_cedula"):
+            query_or.append({"client_cedula": order["client_cedula"]})
+        if query_or:
+            propagate = {"updated_at": now}
+            if data.new_cedula:
+                propagate["client_cedula"] = data.new_cedula
+            if data.new_razon_social:
+                propagate["client_razon_social"] = data.new_razon_social
+            await db.orders.update_many({"$or": query_or, "id": {"$ne": order_id}}, {"$set": propagate})
+
+    return {"message": "Retención aplicada", "retention": retention_doc}
+
+
+@api_router.get("/retentions")
+async def list_retentions(
+    q: Optional[str] = None,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION])),
+):
+    """Reporte de retenciones aplicadas (para sección Impuestos)."""
+    filt = {}
+    if q:
+        rx = re.compile(re.escape(q), re.IGNORECASE)
+        filt["$or"] = [
+            {"plate": rx}, {"client_cedula": rx},
+            {"client_name": rx}, {"order_code": rx}, {"city": rx},
+        ]
+    items = await db.retentions.find(filt, {"_id": 0}).sort("applied_at", -1).to_list(500)
+    # Summary totals
+    total_reteica = sum(float(r.get("reteica_amount") or 0) for r in items)
+    total_retefuente = sum(float(r.get("retefuente_amount") or 0) for r in items)
+    return {
+        "items": items,
+        "summary": {
+            "count": len(items),
+            "total_reteica": round(total_reteica, 2),
+            "total_retefuente": round(total_retefuente, 2),
+            "total_retention": round(total_reteica + total_retefuente, 2),
+        },
+    }
 
 
 @api_router.post("/orders/{order_id}/send-invoice-email")
@@ -3607,12 +3752,20 @@ async def send_invoice_email(
     order_id: str,
     current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
 ):
-    """Envía una Factura Electrónica MOCK por correo. TODO: reemplazar con Siigo real."""
+    """Envía una Factura Electrónica MOCK por correo. TODO: reemplazar con Siigo real.
+
+    Requisito: el usuario debe haber aplicado retención (o marcado 'no aplica') antes.
+    """
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     if not order.get("client_email"):
         raise HTTPException(status_code=400, detail="El cliente no tiene correo registrado")
+    if not order.get("retention_applied"):
+        raise HTTPException(
+            status_code=400,
+            detail="Debes aplicar retención (o marcarla como 'no aplica') antes de enviar la factura."
+        )
 
     # Numeración simulada tipo Siigo
     invoice_number = order.get("invoice_number") or f"MOCK-FE-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{order.get('order_code','')}"

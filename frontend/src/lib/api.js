@@ -265,6 +265,8 @@ export const paymentsAPI = {
     authorizeRelease: (orderId) => api.post(`/orders/${orderId}/authorize-release`),
     pendingInvoice: () => api.get('/orders-pending-invoice'),
     sendInvoiceEmail: (orderId) => api.post(`/orders/${orderId}/send-invoice-email`),
+    applyRetention: (orderId, data) => api.post(`/orders/${orderId}/apply-retention`, data),
+    listRetentions: (q) => api.get('/retentions', { params: q ? { q } : {} }),
     sendIngresoReceipt: (orderId) => api.post(`/orders/${orderId}/send-ingreso-receipt`),
     seedTestOrders: () => api.post('/seed/test-orders'),
 };
