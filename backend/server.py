@@ -791,8 +791,17 @@ async def assign_route_slot(order_id: str, slot_id: str, data: AssignRouteSlot, 
     return {"message": "Slot asignado", "slot": slots[idx]}
 
 
+class StartRouteSlot(BaseModel):
+    service_time_minutes: Optional[int] = None
+
+
+class CompleteRouteSlot(BaseModel):
+    notes: Optional[str] = None
+    completion_photos: Optional[List[str]] = None  # base64 data URLs, max 10
+
+
 @api_router.post("/orders/{order_id}/route/slots/{slot_id}/start")
-async def start_route_slot(order_id: str, slot_id: str, current_user: dict = Depends(get_current_user)):
+async def start_route_slot(order_id: str, slot_id: str, data: Optional[StartRouteSlot] = None, current_user: dict = Depends(get_current_user)):
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
@@ -802,12 +811,20 @@ async def start_route_slot(order_id: str, slot_id: str, current_user: dict = Dep
         raise HTTPException(status_code=404, detail="Slot no encontrado")
     slots[idx]["status"] = "en_proceso"
     slots[idx]["started_at"] = datetime.now(timezone.utc).isoformat()
+    # Persistir tiempo estimado si viene o usar el de la orden
+    stm = None
+    if data and data.service_time_minutes:
+        stm = int(data.service_time_minutes)
+    elif order.get("service_time_minutes"):
+        stm = int(order["service_time_minutes"])
+    if stm:
+        slots[idx]["service_time_minutes"] = stm
     await db.orders.update_one({"id": order_id}, {"$set": {"route_slots": slots}})
     return {"message": "Slot iniciado", "slot": slots[idx]}
 
 
 @api_router.post("/orders/{order_id}/route/slots/{slot_id}/complete")
-async def complete_route_slot(order_id: str, slot_id: str, current_user: dict = Depends(get_current_user)):
+async def complete_route_slot(order_id: str, slot_id: str, data: Optional[CompleteRouteSlot] = None, current_user: dict = Depends(get_current_user)):
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
@@ -817,13 +834,19 @@ async def complete_route_slot(order_id: str, slot_id: str, current_user: dict = 
         raise HTTPException(status_code=404, detail="Slot no encontrado")
     slots[idx]["status"] = "completado"
     slots[idx]["completed_at"] = datetime.now(timezone.utc).isoformat()
+    if data:
+        if data.notes:
+            slots[idx]["notes"] = data.notes
+        if data.completion_photos:
+            slots[idx]["completion_photos"] = data.completion_photos[:10]
     update_fields = {"route_slots": slots, "updated_at": datetime.now(timezone.utc).isoformat()}
     # Si todos completados, avanzar a "servicio_completado" (listo para Facturación)
-    if all(s["status"] == "completado" for s in slots) and slots:
+    all_done = all(s["status"] == "completado" for s in slots) and bool(slots)
+    if all_done:
         update_fields["status"] = OrderStatus.SERVICIO_COMPLETADO.value
         update_fields["service_completed_at"] = datetime.now(timezone.utc).isoformat()
     await db.orders.update_one({"id": order_id}, {"$set": update_fields})
-    return {"message": "Slot completado", "all_done": all(s["status"] == "completado" for s in slots)}
+    return {"message": "Slot completado", "all_done": all_done}
 
 
 class UserRolesUpdate(BaseModel):
@@ -1016,9 +1039,12 @@ async def get_orders(status: Optional[str] = None, date: Optional[str] = None, c
     if date:
         query["date"] = date
     
-    # Technicians only see their assigned orders
+    # Technicians only see their assigned orders (legacy assigned_technician_id OR route_slots)
     if current_user["role"] == "tecnico":
-        query["assigned_technician_id"] = current_user["id"]
+        query["$or"] = [
+            {"assigned_technician_id": current_user["id"]},
+            {"route_slots.technician_id": current_user["id"]},
+        ]
     
     orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return [OrderResponse(**o) for o in orders]

@@ -233,8 +233,8 @@ export const serviceRoutesAPI = {
 export const orderRouteAPI = {
     init: (orderId) => api.post(`/orders/${orderId}/route/init`),
     assignSlot: (orderId, slotId, data) => api.post(`/orders/${orderId}/route/slots/${slotId}/assign`, data),
-    startSlot: (orderId, slotId) => api.post(`/orders/${orderId}/route/slots/${slotId}/start`),
-    completeSlot: (orderId, slotId) => api.post(`/orders/${orderId}/route/slots/${slotId}/complete`),
+    startSlot: (orderId, slotId, body) => api.post(`/orders/${orderId}/route/slots/${slotId}/start`, body || {}),
+    completeSlot: (orderId, slotId, body) => api.post(`/orders/${orderId}/route/slots/${slotId}/complete`, body || {}),
 };
 
 // Actualizar roles funcionales del técnico

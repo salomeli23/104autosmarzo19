@@ -4,6 +4,33 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
+2026-08-26
+
+## Última Sesión (2026-08-26) — Iteración 21 (Vista Técnico rediseñada con secciones + timer + reporte)
+
+### Vista Técnico (`/technician`) rediseñada
+- **6 secciones por rol** (Tabs con alerta): **Corte**, **Instalación** (polarizado/ppf/ultrasecure), **Lavado**, **Accesorios**, **Detailing** (detailing/ceramico), **Latonería y Pintura**. Cada tab muestra un badge amarillo con el número de slots pendientes.
+- **Alerta global**: header con "N servicio(s) pendiente(s)" en ámbar.
+- **Card por slot** (`data-testid=slot-card-{id}`):
+  - Placa (badge amarillo), rol del slot, marca/modelo, cliente.
+  - Bloque "Tiempos" con `Ingreso`, `Programada`, y (al iniciar) `Inicio` + `Transcurrido`.
+  - Timer en vivo: badge "Xm restantes" (verde/amarillo/naranja/rojo según `service_time_minutes`). Cuando se pasa: "+Xm excedido" en rojo.
+  - Botón **Iniciar servicio** cuando `status=pendiente`.
+  - Botón **Finalizar y enviar reporte** cuando `status=en_proceso`.
+  - Cuando `status=completado`: badge verde y hasta 4 miniaturas de fotos del reporte.
+- **Dialog Finalizar** con textarea de reporte obligatorio y uploader de hasta 10 fotos. Al confirmar → `POST /orders/{id}/route/slots/{slot_id}/complete` con `notes` + `completion_photos`. Si todos los slots quedan completados, la orden pasa a `servicio_completado` (lista para Autorizar Salida).
+
+### Backend
+- **`start_route_slot`**: acepta body opcional `{service_time_minutes}` y lo persiste en el slot (fallback a `order.service_time_minutes`).
+- **`complete_route_slot`**: acepta body opcional `{notes, completion_photos}` (max 10) y los guarda en el slot.
+- **`GET /api/orders`** (técnicos): filtro extendido a `$or` de `assigned_technician_id` **OR** `route_slots.technician_id` para que la lista incluya los slots asignados vía Hoja de Ruta.
+
+### Técnicos disponibles
+- Carlos Técnico → `tecnico1@polarizadosya.com` / `tecnico123`
+- Pedro Técnico → `tecnico2@polarizadosya.com` / `tecnico123`
+- Juan Técnico → `tecnico@polarizadosya.com` / `tecnico123`
+
+## Fecha de última actualización previa
 2026-08-25
 
 ## Última Sesión (2026-08-25 PM-2) — Iteración 20 (Sunroof editable en Check-in)
