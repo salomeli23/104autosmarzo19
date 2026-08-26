@@ -18,21 +18,26 @@ import {
 } from 'lucide-react';
 
 // ============================================================
-// Sección → roles de slot que agrupa
+// Sección → roles de slot que agrupa (matches por role o por label)
 // ============================================================
 const SECTIONS = [
-    { id: 'corte', label: 'Corte', icon: Scissors, roles: ['corte', 'corte_piezas'] },
-    { id: 'instalacion', label: 'Instalación', icon: Wrench, roles: ['polarizado', 'ppf', 'ultrasecure', 'instalacion'] },
-    { id: 'lavado', label: 'Lavado', icon: Sparkles, roles: ['lavado'] },
-    { id: 'accesorios', label: 'Accesorios', icon: Package, roles: ['accesorios'] },
-    { id: 'detailing', label: 'Detailing', icon: Sparkles, roles: ['detailing', 'ceramico'] },
-    { id: 'latoneria', label: 'Latonería y Pintura', icon: PaintBucket, roles: ['latoneria_pintura', 'latoneria', 'pintura'] },
+    { id: 'corte', label: 'Corte', icon: Scissors, roles: ['corte', 'corte_piezas'], labelKeywords: ['corte'] },
+    { id: 'instalacion', label: 'Instalación', icon: Wrench, roles: ['polarizado', 'ppf', 'ultrasecure', 'instalacion'], labelKeywords: ['instalación', 'instalacion', 'polariz', 'ppf'] },
+    { id: 'lavado', label: 'Lavado', icon: Sparkles, roles: ['lavado'], labelKeywords: ['lavado'] },
+    { id: 'accesorios', label: 'Accesorios', icon: Package, roles: ['accesorios'], labelKeywords: ['accesorio'] },
+    { id: 'detailing', label: 'Detailing', icon: Sparkles, roles: ['detailing', 'ceramico'], labelKeywords: ['detailing', 'cerámico', 'ceramico'] },
+    { id: 'latoneria', label: 'Latonería y Pintura', icon: PaintBucket, roles: ['latoneria_pintura', 'latoneria', 'pintura'], labelKeywords: ['latonería', 'latoneria', 'pintura'] },
 ];
 
-const roleToSectionId = (role) => {
-    const r = (role || '').toLowerCase();
-    const found = SECTIONS.find(s => s.roles.includes(r));
-    return found ? found.id : null;
+const slotSectionId = (slot) => {
+    const role = (slot?.role || '').toLowerCase();
+    const label = (slot?.label || '').toLowerCase();
+    // 1) Prioridad al LABEL (permite reglas custom donde el label indica la sección real)
+    let sec = SECTIONS.find(s => (s.labelKeywords || []).some(k => label.includes(k)));
+    if (sec) return sec.id;
+    // 2) Fallback: match por role explícito
+    sec = SECTIONS.find(s => s.roles.includes(role));
+    return sec ? sec.id : null;
 };
 
 // ============================================================
@@ -239,7 +244,7 @@ export const TechnicianView = () => {
         (orders || []).forEach(o => {
             (o.route_slots || []).forEach(slot => {
                 if (slot.technician_id !== uid) return;
-                const secId = roleToSectionId(slot.role);
+                const secId = slotSectionId(slot);
                 if (!secId) return;
                 map[secId].push({ order: o, slot });
             });

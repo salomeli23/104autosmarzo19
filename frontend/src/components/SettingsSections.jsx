@@ -504,6 +504,8 @@ export const ServiceExtrasSection = () => {
 
 // =================== SERVICE ROUTES (Hoja de Ruta - Reglas) ===================
 const AVAILABLE_ROLES = [
+    { value: 'corte', label: 'Corte' },
+    { value: 'instalacion', label: 'Instalación' },
     { value: 'lavado', label: 'Lavado' },
     { value: 'ceramico', label: 'Cerámico' },
     { value: 'polarizado', label: 'Polarizado' },

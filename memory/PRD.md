@@ -6,6 +6,21 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-08-26
 
+## Última Sesión (2026-08-26 PM) — Iteración 22 (Fix bug: slot con label custom no aparecía)
+
+### Bug reportado
+Técnico Carlos tenía un slot asignado con `role='polarizado'` pero `label='Corte'` (rule 'Ultrasecure Polarizado'). En Vista Técnico la tab Corte quedaba VACÍA porque el mapeo solo consideraba el `role`.
+
+### Fix aplicado
+- **`TechnicianView.jsx`**: `slotSectionId(slot)` ahora prioriza **match por labelKeywords** primero, luego cae al role como fallback. Esto permite que reglas con roles genéricos pero labels específicos (ej: `role='polarizado' label='Corte'`) se agrupen en la sección correcta.
+- **`SettingsSections.jsx`**: `AVAILABLE_ROLES` agrega opciones `corte` e `instalacion` (9 roles totales) para que el admin pueda crear reglas semánticamente correctas.
+
+### Testing
+- Retest en `iteration_16.json`: Fix **VERIFIED** por testing agent. BUGTST con slot label='Corte' aparece en tab Corte con badge=1; slot label='Instalación' en tab Instalación; regresión preservada para slots con label='Polarizado' (siguen en Instalación por keyword 'polariz'). Dialog Finalizar funciona E2E.
+
+## Fecha de última actualización previa
+2026-08-26
+
 ## Última Sesión (2026-08-26) — Iteración 21 (Vista Técnico rediseñada con secciones + timer + reporte)
 
 ### Vista Técnico (`/technician`) rediseñada
