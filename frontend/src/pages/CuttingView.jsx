@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { cuttingAPI, inventoryAPI, carSeriesAPI } from '../lib/api';
+import { cuttingAPI, inventoryAPI, carSeriesAPI, cuttingCatalogAPI } from '../lib/api';
 import { VEHICLE_PARTS } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -7,9 +7,10 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Badge } from '../components/ui/badge';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { toast } from 'sonner';
-import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package, Lightbulb } from 'lucide-react';
+import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package, Lightbulb, Layers, Gauge } from 'lucide-react';
 import { LiveTimer } from '../components/LiveTimer';
 
 const CuttingView = () => {
@@ -31,6 +32,10 @@ const CuttingView = () => {
     // Consejo de Corte: sugerencias de series basadas en marca+modelo de la orden
     const [seriesSuggestions, setSeriesSuggestions] = useState([]);
     const [selectedSeriesId, setSelectedSeriesId] = useState('');
+    // Catálogo de materiales y promedio del carro
+    const [materialsCatalog, setMaterialsCatalog] = useState(null);
+    const [carAverage, setCarAverage] = useState(null);
+    const [pickedMaterial, setPickedMaterial] = useState('');
 
     // Cargar series sugeridas cuando se abre el dialog
     const loadSeriesSuggestions = useCallback(async (order) => {
@@ -43,6 +48,24 @@ const CuttingView = () => {
             setSeriesSuggestions(res.data || []);
         } catch (err) {
             setSeriesSuggestions([]);
+        }
+    }, []);
+
+    // Cargar catálogo de materiales (una sola vez)
+    useEffect(() => {
+        cuttingCatalogAPI.getMaterials()
+            .then(res => setMaterialsCatalog(res.data))
+            .catch(() => setMaterialsCatalog(null));
+    }, []);
+
+    // Auto-detectar promedio de material al abrir el dialog
+    const loadCarAverage = useCallback(async (order) => {
+        if (!order?.brand && !order?.model) { setCarAverage(null); return; }
+        try {
+            const res = await cuttingCatalogAPI.getCarAverage(order.brand || '', order.model || '');
+            setCarAverage(res.data?.found ? res.data : null);
+        } catch {
+            setCarAverage(null);
         }
     }, []);
 
@@ -232,6 +255,7 @@ const CuttingView = () => {
         setSelectedSeriesId('');
         setNotes('');
         loadSeriesSuggestions(order);
+        loadCarAverage(order);
         setPpfSerial(order?.ppf_vehicle_serial || '');
         setPpfModel(order?.ppf_vehicle_model || '');
         setSelectedRolloId('');
@@ -660,6 +684,93 @@ const CuttingView = () => {
                                     </Button>
                                 </div>
                             </div>
+
+                            {/* Promedio de material según marca + modelo */}
+                            <div className="space-y-2 p-3 rounded-lg border border-cyan-500/40 bg-cyan-500/5" data-testid="promedio-block">
+                                <Label className="flex items-center gap-2 font-medium text-cyan-400">
+                                    <Gauge className="w-4 h-4" />
+                                    Promedio sugerido de material
+                                </Label>
+                                {carAverage ? (
+                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                        <p className="text-sm">
+                                            <span className="text-muted-foreground">{carAverage.brand} {carAverage.model}:</span>{' '}
+                                            <span className="font-mono font-bold text-cyan-400 text-lg" data-testid="promedio-value">
+                                                {carAverage.promedio_m.toFixed(2)} m
+                                            </span>
+                                        </p>
+                                        <Badge variant="outline" className="text-xs border-cyan-500/40 text-cyan-400">
+                                            {(carAverage.promedio_m * 100).toFixed(0)} cm totales
+                                        </Badge>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-muted-foreground">
+                                        Sin promedio registrado para {selectedOrder?.brand || 'esta marca'} {selectedOrder?.model || ''}.
+                                        Usa los datos históricos como referencia.
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Catálogo de materiales — 3 pestañas */}
+                            {materialsCatalog && (
+                                <div className="space-y-2" data-testid="materials-catalog-block">
+                                    <Label className="flex items-center gap-2 font-medium">
+                                        <Layers className="w-4 h-4" />
+                                        Catálogo de Materiales
+                                        {pickedMaterial && (
+                                            <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/40 text-xs" data-testid="picked-material-badge">
+                                                Seleccionado: {pickedMaterial}
+                                            </Badge>
+                                        )}
+                                    </Label>
+                                    <Tabs defaultValue="material_1" className="w-full">
+                                        <TabsList className="grid grid-cols-3 w-full">
+                                            <TabsTrigger value="material_1" data-testid="tab-material-1">
+                                                Material 1
+                                            </TabsTrigger>
+                                            <TabsTrigger value="material_2" data-testid="tab-material-2">
+                                                Material 2
+                                            </TabsTrigger>
+                                            <TabsTrigger value="material_3" data-testid="tab-material-3">
+                                                Material 3
+                                            </TabsTrigger>
+                                        </TabsList>
+                                        {['material_1', 'material_2', 'material_3'].map(key => {
+                                            const cat = materialsCatalog[key];
+                                            return (
+                                                <TabsContent key={key} value={key} className="mt-3">
+                                                    <p className="text-xs text-muted-foreground mb-2">
+                                                        {cat.label} · {cat.items.length} materiales
+                                                    </p>
+                                                    <div className="grid sm:grid-cols-2 gap-1.5 max-h-64 overflow-y-auto pr-1">
+                                                        {cat.items.map(name => {
+                                                            const active = pickedMaterial === name;
+                                                            return (
+                                                                <button
+                                                                    key={name}
+                                                                    type="button"
+                                                                    onClick={() => setPickedMaterial(active ? '' : name)}
+                                                                    className={`text-left text-xs px-2 py-1.5 rounded border transition-colors ${
+                                                                        active
+                                                                            ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400 font-medium'
+                                                                            : 'bg-muted/30 border-border hover:bg-muted/60'
+                                                                    }`}
+                                                                    data-testid={`material-item-${key}`}
+                                                                >
+                                                                    {name}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </TabsContent>
+                                            );
+                                        })}
+                                    </Tabs>
+                                    <p className="text-[11px] text-muted-foreground">
+                                        Selecciona un material como referencia. Luego elige el rollo específico del stock en cada pieza.
+                                    </p>
+                                </div>
+                            )}
 
                             {/* Medidas por pieza */}
                             <div className="space-y-3">

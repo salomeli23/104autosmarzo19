@@ -6,6 +6,27 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-08-26
 
+## Última Sesión (2026-08-26 PM-2) — Iteración 23 (Catálogo Corte: Promedios + Materiales + Rollos)
+
+### Módulo de Corte: nuevas capacidades en "Completar Corte"
+- **Promedio sugerido de material** (auto-detect): al abrir el dialog, backend detecta marca+modelo de la orden y devuelve el promedio en metros. Matching insensible a acentos, mayúsculas, guiones y espacios (ej: "Mazda CX5" ~ "Mazda CX-5" ~ 1.51m). Fallback por substring del modelo si no hay match exacto.
+- **Catálogo de Materiales con 3 tabs**:
+  - **Material 1 · Polarizados** (30): Ultracarbon, Nanocerámica, Black Ceramic, Xtreme/Huperoptik, Ceramic I3/I3+, Ceramic XR Edge, Ceramic IR 3M, Ultraoptik.
+  - **Material 2 · Seguridad / Ultrasecure** (9): Nanoseguridad, Clear Spectra, Ultrasecure 300/500/700/1500 micras, Windshield TPU.
+  - **Material 3 · PPF** (16): Autobahn, XPEL, Avery, Spectra, Air Ceramic.
+- **Seleccionar un item** muestra badge cyan "Seleccionado: XXX" (referencia visual para el operador).
+- **51 rollos** cargados automáticamente en `/inventory` desde el xlsx del usuario (endpoint `POST /seed/cutting-catalog` admin, idempotente).
+
+### Backend nuevo
+- `/app/backend/cutting_catalog.py`: constantes CAR_AVERAGES (175+ items), MATERIALS_CATALOG (3 categorías), ROLLS_LIST (51 rollos) + `lookup_car_average()`.
+- Endpoints: `GET /api/cutting/materials-catalog`, `GET /api/cutting/car-average?brand=&model=`, `GET /api/cutting/car-averages`, `POST /api/seed/cutting-catalog`.
+
+### Testing
+- iteration_17.json: **12/12 pytest PASS** (matching CX5~CX-5, idempotencia, 403 para no-admin) + **frontend E2E VERIFIED**: promedio Mazda CX-5 = 1.51m visible en dialog, 3 tabs navegables con counts correctos (30/9/16), selección/deselección de item funciona con badge.
+
+## Fecha de última actualización previa
+2026-08-26
+
 ## Última Sesión (2026-08-26 PM) — Iteración 22 (Fix bug: slot con label custom no aparecía)
 
 ### Bug reportado

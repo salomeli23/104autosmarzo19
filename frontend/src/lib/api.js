@@ -248,6 +248,13 @@ export const sedeAssignmentAPI = {
     setUserSede: (userId, sedeId) => api.put(`/users/${userId}/sede`, { sede_id: sedeId }),
 };
 
+// Catálogo de corte
+export const cuttingCatalogAPI = {
+    getMaterials: () => api.get('/cutting/materials-catalog'),
+    getCarAverage: (brand, model) => api.get('/cutting/car-average', { params: { brand, model } }),
+    seedRolls: () => api.post('/seed/cutting-catalog'),
+};
+
 // Pagos
 export const paymentsAPI = {
     register: (data) => api.post('/payments', data),

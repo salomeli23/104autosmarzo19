@@ -22,6 +22,7 @@ import asyncio
 import resend
 import re
 from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice
+from cutting_catalog import CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, lookup_car_average
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -3767,6 +3768,85 @@ async def seed_test_orders(current_user: dict = Depends(require_roles([UserRole.
         await db.orders.insert_one(doc)
         created.append({"id": oid, "order_code": code, "plate": s["plate"]})
     return {"created": created, "count": len(created)}
+
+
+# ============================================================
+# CUTTING CATALOG · Promedios y materiales
+# ============================================================
+
+@api_router.get("/cutting/materials-catalog")
+async def get_materials_catalog(current_user: dict = Depends(get_current_user)):
+    """Catálogo de materiales agrupados en 3 categorías + rollos físicos."""
+    return {
+        "material_1": MATERIALS_CATALOG["material_1"],
+        "material_2": MATERIALS_CATALOG["material_2"],
+        "material_3": MATERIALS_CATALOG["material_3"],
+        "rolls": ROLLS_LIST,
+    }
+
+
+@api_router.get("/cutting/car-average")
+async def get_car_average(
+    brand: Optional[str] = None,
+    model: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Promedio de material (m) para una marca+modelo. Devuelve null si no hay match."""
+    if not brand and not model:
+        return {"found": False, "brand": brand, "model": model, "promedio_m": None}
+    row = lookup_car_average(brand or "", model or "")
+    if not row:
+        return {"found": False, "brand": brand, "model": model, "promedio_m": None}
+    return {
+        "found": True,
+        "brand": row["brand"],
+        "model": row["model"],
+        "promedio_m": row["promedio_m"],
+    }
+
+
+@api_router.get("/cutting/car-averages")
+async def list_car_averages(current_user: dict = Depends(get_current_user)):
+    """Listado completo de marcas+modelos con promedio (útil para autocompletar en UI)."""
+    return CAR_AVERAGES
+
+
+@api_router.post("/seed/cutting-catalog")
+async def seed_cutting_catalog(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Carga los rollos del xlsx al inventario. Skip si ya existe por nombre (case-insensitive)."""
+    existing = await db.inventory.find({}, {"_id": 0, "name": 1}).to_list(2000)
+    existing_names = {(i.get("name") or "").strip().lower() for i in existing}
+    created = []
+    skipped = []
+    now = datetime.now(timezone.utc).isoformat()
+    for roll_name in ROLLS_LIST:
+        key = roll_name.strip().lower()
+        if key in existing_names:
+            skipped.append(roll_name)
+            continue
+        item = {
+            "id": str(uuid.uuid4()),
+            "name": roll_name,
+            "type": "rollo",
+            "tipo_rollo": roll_name,
+            "total_amount": 0,
+            "unit": "m",
+            "sede_id": None,
+            "created_at": now,
+            "updated_at": now,
+            "created_by": current_user["id"],
+            "created_by_name": current_user["name"],
+        }
+        await db.inventory.insert_one(item)
+        item.pop("_id", None)
+        created.append(roll_name)
+        existing_names.add(key)
+    return {
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+        "created": created,
+        "skipped": skipped,
+    }
 
 
 # Include router and configure CORS
