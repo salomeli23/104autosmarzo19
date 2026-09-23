@@ -13,10 +13,12 @@ import { toast } from 'sonner';
 import {
     FileText, Mail, Loader2, User, Phone, CheckCircle2,
     Receipt, MapPin, Percent, IdCard, ShieldCheck, Search,
+    Download, MailPlus, Edit3,
 } from 'lucide-react';
 
-const RETEFUENTE_PRESETS = [2.5, 6.9];
-const RETEICA_BOGOTA = 0.966;
+const RETEICA_PRESETS = [6.9, 11.4];
+const RETEFUENTE_RATE = 2.5;
+const RETEFUENTE_MIN_TOTAL = 524000; // Retefuente 2.5% solo si total > $524.000
 
 export const FacturacionElectronica = () => {
     const [tab, setTab] = useState('pendientes');
@@ -45,7 +47,7 @@ export const FacturacionElectronica = () => {
 
     const load = useCallback(async () => {
         try {
-            const res = await paymentsAPI.pendingInvoice();
+            const res = await paymentsAPI.pendingInvoice(true); // include sent
             setOrders(res.data);
         } catch (e) {
             toast.error('Error al cargar clientes por facturar');
@@ -69,13 +71,12 @@ export const FacturacionElectronica = () => {
 
     const openRetention = (o) => {
         setRetentionOrder(o);
-        const isBogota = true;
         setRCity('Bogotá');
         setRNoAplica(false);
-        setRApplyReteica(isBogota);
-        setRReteicaRate(String(RETEICA_BOGOTA));
-        setRApplyRetefuente(false);
-        setRRetefuenteRate('2.5');
+        setRApplyReteica(true);
+        setRReteicaRate(String(RETEICA_PRESETS[0]));
+        setRApplyRetefuente(o.total > RETEFUENTE_MIN_TOTAL);
+        setRRetefuenteRate(String(RETEFUENTE_RATE));
         setRUpdateIdentity(false);
         setRNewCedula(o.client_cedula || '');
         setRNewRazonSocial(o.client_razon_social || '');
@@ -122,12 +123,51 @@ export const FacturacionElectronica = () => {
         setSending(o.id);
         try {
             const res = await paymentsAPI.sendInvoiceEmail(o.id);
-            toast.success(`Factura MOCK enviada · ${res.data.invoice_number}`);
+            toast.success(`Factura enviada · ${res.data.invoice_number}`);
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || 'Error al enviar factura');
         } finally {
             setSending(null);
+        }
+    };
+
+    const downloadInvoice = async (o) => {
+        try {
+            const res = await paymentsAPI.downloadInvoicePdf(o.id);
+            const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `factura_${o.invoice_number}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Error al descargar factura');
+        }
+    };
+
+    // Correo edit dialog
+    const [emailEdit, setEmailEdit] = useState(null); // { order, value }
+    const [savingEmail, setSavingEmail] = useState(false);
+    const openEmailEdit = (o) => setEmailEdit({ order: o, value: o.client_email || '' });
+    const closeEmailEdit = () => setEmailEdit(null);
+    const submitEmail = async () => {
+        if (!emailEdit?.value || !emailEdit.value.includes('@')) {
+            toast.error('Correo inválido');
+            return;
+        }
+        setSavingEmail(true);
+        try {
+            await paymentsAPI.updateClientEmail(emailEdit.order.id, emailEdit.value.trim());
+            toast.success('Correo actualizado');
+            closeEmailEdit();
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Error al actualizar correo');
+        } finally {
+            setSavingEmail(false);
         }
     };
 
@@ -218,7 +258,7 @@ export const FacturacionElectronica = () => {
                                             <p className="text-[10px] uppercase text-muted-foreground">Total</p>
                                             <p className="font-mono font-bold">{formatCurrency(o.total)}</p>
                                         </div>
-                                        <div className="flex flex-col gap-2">
+                                        <div className="flex flex-col gap-2 min-w-[180px]">
                                             <Button
                                                 variant={o.retention_applied ? 'outline' : 'default'}
                                                 onClick={() => openRetention(o)}
@@ -228,19 +268,51 @@ export const FacturacionElectronica = () => {
                                                 {o.retention_applied ? 'Modificar retención' : 'Aplicar retención'}
                                             </Button>
                                             <Button
-                                                onClick={() => sendInvoice(o)}
-                                                disabled={
-                                                    sending === o.id ||
-                                                    !o.retention_applied ||
-                                                    (!o.client_email && !emailOverride[o.id])
-                                                }
-                                                data-testid={`send-invoice-btn-${o.id}`}
+                                                variant="outline"
+                                                onClick={() => openEmailEdit(o)}
+                                                data-testid={`fix-email-btn-${o.id}`}
                                             >
-                                                {sending === o.id
-                                                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Enviando...</>
-                                                    : <><Mail className="w-4 h-4 mr-2" /> Enviar Factura (MOCK)</>
-                                                }
+                                                <Edit3 className="w-4 h-4 mr-2" />
+                                                Corregir correo
                                             </Button>
+                                            {o.invoice_sent_at ? (
+                                                <>
+                                                    <Button
+                                                        variant="outline"
+                                                        onClick={() => downloadInvoice(o)}
+                                                        disabled={!o.invoice_number}
+                                                        data-testid={`download-invoice-btn-${o.id}`}
+                                                    >
+                                                        <Download className="w-4 h-4 mr-2" />
+                                                        Descargar factura
+                                                    </Button>
+                                                    <Button
+                                                        onClick={() => sendInvoice(o)}
+                                                        disabled={sending === o.id || (!o.client_email && !emailOverride[o.id])}
+                                                        data-testid={`resend-invoice-btn-${o.id}`}
+                                                    >
+                                                        {sending === o.id
+                                                            ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Reenviando...</>
+                                                            : <><MailPlus className="w-4 h-4 mr-2" /> Reenviar correo</>
+                                                        }
+                                                    </Button>
+                                                </>
+                                            ) : (
+                                                <Button
+                                                    onClick={() => sendInvoice(o)}
+                                                    disabled={
+                                                        sending === o.id ||
+                                                        !o.retention_applied ||
+                                                        (!o.client_email && !emailOverride[o.id])
+                                                    }
+                                                    data-testid={`send-invoice-btn-${o.id}`}
+                                                >
+                                                    {sending === o.id
+                                                        ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Enviando...</>
+                                                        : <><Mail className="w-4 h-4 mr-2" /> Enviar Factura</>
+                                                    }
+                                                </Button>
+                                            )}
                                         </div>
                                     </CardContent>
                                 </Card>
@@ -394,67 +466,70 @@ export const FacturacionElectronica = () => {
                                         <span className="text-sm font-medium">Aplicar Reteica</span>
                                     </label>
                                     {rApplyReteica && (
-                                        <div className="mt-2 flex gap-2 items-center">
+                                        <div className="mt-2 flex gap-2 items-center flex-wrap">
                                             <Percent className="w-3 h-3" />
                                             <Input
                                                 type="number"
-                                                step="0.001"
+                                                step="0.1"
                                                 value={rReteicaRate}
                                                 onChange={(e) => setRReteicaRate(e.target.value)}
                                                 className="w-32"
                                                 data-testid="ret-reteica-rate"
                                             />
-                                            <span className="text-xs text-muted-foreground">Bogotá típico: 0.966%</span>
+                                            {RETEICA_PRESETS.map(p => (
+                                                <Button
+                                                    key={p}
+                                                    type="button"
+                                                    variant={String(p) === rReteicaRate ? 'default' : 'outline'}
+                                                    size="sm"
+                                                    onClick={() => setRReteicaRate(String(p))}
+                                                    className="h-7 text-xs"
+                                                    data-testid={`ret-preset-reteica-${p}`}
+                                                >
+                                                    {p}%
+                                                </Button>
+                                            ))}
                                         </div>
                                     )}
                                 </div>
 
-                                <div className="p-3 rounded-lg border border-cyan-500/40 bg-cyan-500/5">
+                                <div className={`p-3 rounded-lg border ${retentionOrder && retentionOrder.total > RETEFUENTE_MIN_TOTAL ? 'border-cyan-500/40 bg-cyan-500/5' : 'border-muted bg-muted/20 opacity-60'}`}>
                                     <label className="flex items-center gap-2 cursor-pointer">
                                         <input
                                             type="checkbox"
                                             checked={rApplyRetefuente}
                                             onChange={(e) => setRApplyRetefuente(e.target.checked)}
+                                            disabled={!retentionOrder || retentionOrder.total <= RETEFUENTE_MIN_TOTAL}
                                             className="w-4 h-4 accent-cyan-500"
                                             data-testid="ret-retefuente-check"
                                         />
-                                        <span className="text-sm font-medium">Aplicar Retefuente</span>
+                                        <span className="text-sm font-medium">Aplicar Retefuente (2.5%)</span>
                                     </label>
                                     {rApplyRetefuente && (
-                                        <>
-                                            <div className="mt-2 flex gap-2 items-center flex-wrap">
-                                                <Percent className="w-3 h-3" />
-                                                <Input
-                                                    type="number"
-                                                    step="0.1"
-                                                    value={rRetefuenteRate}
-                                                    onChange={(e) => setRRetefuenteRate(e.target.value)}
-                                                    className="w-32"
-                                                    data-testid="ret-retefuente-rate"
-                                                />
-                                                {RETEFUENTE_PRESETS.map(p => (
-                                                    <Button
-                                                        key={p}
-                                                        type="button"
-                                                        variant={String(p) === rRetefuenteRate ? 'default' : 'outline'}
-                                                        size="sm"
-                                                        onClick={() => setRRetefuenteRate(String(p))}
-                                                        className="h-7 text-xs"
-                                                        data-testid={`ret-preset-${p}`}
-                                                    >
-                                                        {p}%
-                                                    </Button>
-                                                ))}
-                                                <Button
-                                                    type="button"
-                                                    variant={rRetefuenteRate === '6.9' ? 'default' : 'outline'}
-                                                    size="sm"
-                                                    onClick={() => setRRetefuenteRate('6.9')}
-                                                    className="h-7 text-xs"
-                                                >6.9%</Button>
-                                            </div>
-                                            <p className="text-[11px] text-muted-foreground mt-1">Servicios 2.5%, honorarios 6.9% (Colombia).</p>
-                                        </>
+                                        <div className="mt-2 flex gap-2 items-center flex-wrap">
+                                            <Percent className="w-3 h-3" />
+                                            <Input
+                                                type="number"
+                                                step="0.1"
+                                                value={rRetefuenteRate}
+                                                onChange={(e) => setRRetefuenteRate(e.target.value)}
+                                                className="w-32"
+                                                data-testid="ret-retefuente-rate"
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant={rRetefuenteRate === '2.5' ? 'default' : 'outline'}
+                                                size="sm"
+                                                onClick={() => setRRetefuenteRate('2.5')}
+                                                className="h-7 text-xs"
+                                                data-testid="ret-preset-retefuente-2.5"
+                                            >2.5%</Button>
+                                        </div>
+                                    )}
+                                    {retentionOrder && retentionOrder.total <= RETEFUENTE_MIN_TOTAL && (
+                                        <p className="text-[11px] text-amber-400 mt-1">
+                                            Retefuente 2.5% aplica solo cuando el total de la factura supera {formatCurrency(RETEFUENTE_MIN_TOTAL)}.
+                                        </p>
                                     )}
                                 </div>
                             </>
@@ -507,6 +582,52 @@ export const FacturacionElectronica = () => {
                         >
                             {savingRet ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                             {rNoAplica ? 'Guardar sin retención' : 'Aplicar retención'}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+            {/* Email Edit Dialog */}
+            <Dialog open={!!emailEdit} onOpenChange={(v) => !v && closeEmailEdit()}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Corregir correo del cliente</DialogTitle>
+                        <DialogDescription asChild>
+                            {emailEdit ? (
+                                <div className="pt-1 flex items-center gap-2 flex-wrap">
+                                    <PlateBadge plate={emailEdit.order.plate} size="md" />
+                                    <span className="text-sm">{emailEdit.order.client_name}</span>
+                                </div>
+                            ) : <span />}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div>
+                            <Label className="text-xs">Correo actual</Label>
+                            <p className="text-sm text-muted-foreground">
+                                {emailEdit?.order?.client_email || <em>Sin correo registrado</em>}
+                            </p>
+                        </div>
+                        <div>
+                            <Label className="text-xs">Nuevo correo *</Label>
+                            <Input
+                                type="email"
+                                value={emailEdit?.value || ''}
+                                onChange={(e) => setEmailEdit(prev => ({ ...prev, value: e.target.value }))}
+                                placeholder="cliente@ejemplo.com"
+                                data-testid="fix-email-input"
+                            />
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                            Este correo se actualiza también en todas las órdenes históricas del cliente.
+                        </p>
+                        <Button
+                            onClick={submitEmail}
+                            disabled={savingEmail}
+                            className="w-full"
+                            data-testid="fix-email-confirm"
+                        >
+                            {savingEmail ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}
+                            Guardar correo
                         </Button>
                     </div>
                 </DialogContent>

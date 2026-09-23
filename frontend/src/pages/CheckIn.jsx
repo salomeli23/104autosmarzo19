@@ -325,14 +325,14 @@ export const CheckIn = () => {
 
     const hasPPFService = () => selectedServices.some(isPPFService);
 
-    // Calculate total (con recargo por tarjeta 5% y IVA 19% si aplica factura)
+    // Calculate total (IVA 19% si aplica factura). El recargo por tarjeta fue removido por decisión de negocio.
     const calculateBreakdown = () => {
         const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
         const extras = applicableExtras();
         const extrasSum = extras.reduce((s, e) => s + (e.price || 0), 0);
         const baseSurcharge = subtotal + extrasSum;
-        const cardSurcharge = paymentMethod === 'tarjeta' ? Math.round(baseSurcharge * 0.05) : 0;
-        const baseTax = baseSurcharge + cardSurcharge;
+        const cardSurcharge = 0; // ← eliminado 5% tarjeta
+        const baseTax = baseSurcharge;
         const iva = requiresInvoice ? Math.round(baseTax * 0.19) : 0;
         const total = baseTax + iva;
         return { subtotal, extras, extrasSum, cardSurcharge, iva, total };
@@ -1238,7 +1238,7 @@ export const CheckIn = () => {
                                     <div className="grid grid-cols-3 gap-1">
                                         {[
                                             { value: 'efectivo', label: 'Efectivo' },
-                                            { value: 'tarjeta', label: 'Tarjeta +5%' },
+                                            { value: 'tarjeta', label: 'Tarjeta' },
                                             { value: 'transferencia', label: 'Transferencia' },
                                         ].map(m => (
                                             <button

@@ -3575,14 +3575,14 @@ async def authorize_release(
 
 @api_router.get("/orders-pending-invoice")
 async def orders_pending_invoice(
+    include_sent: bool = False,
     current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
 ):
-    """Clientes que solicitaron factura electrónica y aún no ha sido enviada."""
-    cursor = db.orders.find(
-        {"requires_invoice": True,
-         "invoice_sent_at": {"$in": [None]}},
-        {"_id": 0},
-    ).sort("ingreso_at", -1).limit(200)
+    """Clientes que solicitaron factura electrónica. Por defecto solo pendientes; con include_sent=true incluye las ya enviadas."""
+    query = {"requires_invoice": True}
+    if not include_sent:
+        query["invoice_sent_at"] = {"$in": [None]}
+    cursor = db.orders.find(query, {"_id": 0}).sort("ingreso_at", -1).limit(300)
     out = []
     async for o in cursor:
         b = _order_balance(o)
@@ -3598,6 +3598,7 @@ async def orders_pending_invoice(
             "status": o.get("status"),
             "ingreso_at": o.get("ingreso_at"),
             "invoice_number": o.get("invoice_number"),
+            "invoice_sent_at": o.get("invoice_sent_at"),
             "retention_applied": bool(o.get("retention_applied")),
             "retention_snapshot": o.get("retention_snapshot"),
             **b,
@@ -3745,6 +3746,61 @@ async def list_retentions(
             "total_retention": round(total_reteica + total_retefuente, 2),
         },
     }
+
+
+class UpdateClientEmail(BaseModel):
+    client_email: str
+
+
+@api_router.patch("/orders/{order_id}/client-email")
+async def update_client_email(
+    order_id: str,
+    data: UpdateClientEmail,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
+):
+    """Actualiza el correo del cliente en la orden y propaga a todas sus órdenes históricas."""
+    email = (data.client_email or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Correo inválido")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one({"id": order_id}, {"$set": {"client_email": email, "updated_at": now}})
+    # Propagate to all orders of same client (by name+cedula)
+    query_or = []
+    if order.get("client_cedula"):
+        query_or.append({"client_cedula": order["client_cedula"]})
+    if order.get("client_name"):
+        query_or.append({"client_name": order["client_name"]})
+    if query_or:
+        await db.orders.update_many(
+            {"$or": query_or, "id": {"$ne": order_id}},
+            {"$set": {"client_email": email, "updated_at": now}},
+        )
+    return {"message": "Correo actualizado", "client_email": email}
+
+
+@api_router.get("/orders/{order_id}/invoice-pdf")
+async def download_invoice_pdf(
+    order_id: str,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
+):
+    """Devuelve el PDF de la Factura Electrónica (MOCK) generada."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if not order.get("invoice_number"):
+        raise HTTPException(status_code=400, detail="La factura aún no ha sido generada")
+    pdf_bytes = build_mock_invoice(order, order["invoice_number"])
+    from fastapi.responses import Response
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="factura_{order["invoice_number"]}.pdf"'
+        },
+    )
 
 
 @api_router.post("/orders/{order_id}/send-invoice-email")
