@@ -1033,7 +1033,7 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     return OrderResponse(**{k: v for k, v in order_doc.items() if k != "_id"})
 
 @api_router.get("/orders", response_model=List[OrderResponse])
-async def get_orders(status: Optional[str] = None, date: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_orders(status: Optional[str] = None, date: Optional[str] = None, current_user: dict = Depends(get_current_user)):  # noqa: F811
     query = {}
     if status:
         query["status"] = status

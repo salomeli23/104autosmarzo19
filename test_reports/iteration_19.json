@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 19 — Card surcharge removal + Facturación Electrónica (Descargar/Corregir/Reenviar) + Retenciones presets 6.9/11.4 & Retefuente 2.5% con gate 524k. Backend: 11/11 pytest passed. Frontend: encontré crash bloqueante (RETEICA_BOGOTA is not defined) que impedía cargar /facturacion-electronica; lo corregí (var rename a RETEICA_PRESETS[0]) y validé UI E2E: botones condicionales, dialog Corregir Correo, presets Reteica 6.9/11.4 (sin 0.966), Retefuente 2.5%. Gate 524k verificado por código (todas las órdenes semilla > 524k, no reproducible con datos actuales pero disabled prop y warning presentes en JSX).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "FacturacionElectronica.jsx", "issue": "ReferenceError: RETEICA_BOGOTA is not defined en useState inicial (L35) y onChange de ciudad (L446). Bloqueaba render de toda la página con Error Boundary. Corregido reemplazando por RETEICA_PRESETS[0].", "selector": "N/A (crash)", "priority": "CRITICAL_FIXED"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration19_invoice_email.py",
+    "/app/test_reports/pytest/iteration19.xml"
+  ],
+  "action_items": [
+    "Revisar por qué RETEICA_BOGOTA quedó como referencia colgante tras el rename a RETEICA_PRESETS — considerar ESLint no-undef en CI para atajar estos casos antes de deploy.",
+    "Agregar en dev-dependencies o CI un job de `yarn build`/lint para detectar undefined identifiers antes de merge (este crash pasó el reload de dev pero rompió runtime)."
+  ],
+  "critical_code_review_comments": [
+    "server.py L3762-3764: validación de email solo checa presencia de '@'. No valida formato completo (regex/EmailStr Pydantic). Considera usar `EmailStr` de pydantic o regex más estricto para evitar valores como 'a@b'.",
+    "server.py L3776-3780: propagación de correo usa $or por client_cedula OR client_name (case-sensitive exact match). Un cliente 'Andrés Rojas' vs 'ANDRÉS ROJAS' no se propagaría. Recomiendo usar regex case-insensitive como se hace en /retentions.",
+    "FacturacionElectronica.jsx L502: `disabled` funciona pero también convendría no permitir seleccionar el preset 2.5% si el gate está activo — actualmente el <button> del preset (L525) no chequea el gate y podría llegar a marcar checkbox por click.",
+    "FacturacionElectronica.jsx (639 líneas): sigue por encima de 500 líneas — extraer RetentionDialog y EmailEditDialog a componentes."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/FacturacionElectronica.jsx (fix: RETEICA_BOGOTA → RETEICA_PRESETS[0], 2 ocurrencias)",
+    "/app/backend/tests/test_iteration19_invoice_email.py (nuevo)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% tras fix del ReferenceError"},
+  "test_credentials": "admin@polarizadosya.com / admin123 · facturacion@polarizadosya.com / factura123",
+  "seed_data_creation": "5 órdenes TEST_it19 inyectadas vía pymongo (una con invoice_number/invoice_sent_at, una pendiente, dos mismo cliente para propagación, una con total < 524000). Cleanup automático al finalizar el módulo.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend endpoints validados: GET /api/orders/{id}/invoice-pdf (200 %PDF cuando hay invoice_number, 400 sin invoice_number, 404 orden inexistente), PATCH /api/orders/{id}/client-email (400 inválido/vacío, 200 + propagación a órdenes del mismo cliente por name/cedula, trim de espacios), GET /api/orders-pending-invoice?include_sent=true (incluye enviadas con invoice_sent_at + invoice_number), POST /api/orders/{id}/apply-retention sin gate en backend (retefuente 2.5% sobre total 400k funciona, reteica 6.9%). Frontend: /facturacion-electronica renderiza correctamente tras fix, botones condicionales presentes (fix-email siempre, download/resend cuando invoice_sent_at, send cuando no), dialog Corregir Correo abre con inputs correctos, dialog Aplicar Retención muestra SOLO presets 6.9/11.4 (Reteica) y 2.5 (Retefuente).",
+  "rca of the issue": "Refactor previo renombró la constante RETEICA_BOGOTA a RETEICA_PRESETS[] pero no actualizó dos referencias en useState inicial de rReteicaRate (L35) y en onChange de ciudad (L446). El bundler de dev no falla (JS es evaluado en runtime), pero al renderizar el componente lanza ReferenceError → Error Boundary. Mitigación aplicada: reemplazar por RETEICA_PRESETS[0]. Prevención: agregar ESLint no-undef y/o yarn build en pipeline pre-merge."
+}

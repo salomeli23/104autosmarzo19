@@ -6,6 +6,28 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-08-26
 
+## Última Sesión (2026-08-26 PM-5) — Iteración 26 (Check-in sin recargo · Botones factura · Presets retención)
+
+### Check-in
+- **Removido el recargo del 5% al pagar con tarjeta**. `calculateBreakdown()` ahora tiene `cardSurcharge=0` fijo. Etiqueta del selector cambió de "Tarjeta +5%" a "Tarjeta".
+
+### Facturación Electrónica — 3 botones nuevos
+- **Corregir correo** (siempre visible): abre dialog con correo actual + nuevo. Al guardar, `PATCH /orders/{id}/client-email` actualiza en la orden y propaga a TODAS las órdenes históricas del cliente (match por client_name o client_cedula).
+- **Descargar factura** (solo si `invoice_sent_at`): `GET /orders/{id}/invoice-pdf` devuelve el PDF MOCK con header `Content-Disposition: attachment`. Descarga con nombre `factura_MOCK-FE-*.pdf`.
+- **Reenviar correo** (solo si ya enviada): re-usa `send-invoice-email`.
+- **Enviar Factura** (solo si NO enviada): sigue bloqueado hasta aplicar retención.
+- `GET /orders-pending-invoice?include_sent=true` incluye las ya facturadas.
+
+### Retenciones — Presets actualizados
+- **Reteica**: presets `6.9%` y `11.4%` (removido 0.966% y warning "Bogotá típico").
+- **Retefuente**: preset único `2.5%`. Checkbox **deshabilitado** si `order.total <= $524.000`. Warning ámbar: "Retefuente 2.5% aplica solo cuando el total supera $524.000".
+
+### Testing
+- iteration_19.json: **11/11 pytest PASS + E2E VERIFIED**. Testing agent detectó y ARREGLÓ un crash (`RETEICA_BOGOTA` colgante en 2 líneas → renombrado a `RETEICA_PRESETS[0]`). Todo verde.
+
+## Fecha de última actualización previa
+2026-08-26
+
 ## Última Sesión (2026-08-26 PM-4) — Iteración 25 (Retenciones + Tab Impuestos)
 
 ### Nuevo flujo en Facturación Electrónica

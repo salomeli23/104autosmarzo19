@@ -32,7 +32,7 @@ export const FacturacionElectronica = () => {
     const [rCity, setRCity] = useState('Bogotá');
     const [rNoAplica, setRNoAplica] = useState(false);
     const [rApplyReteica, setRApplyReteica] = useState(true);
-    const [rReteicaRate, setRReteicaRate] = useState(String(RETEICA_BOGOTA));
+    const [rReteicaRate, setRReteicaRate] = useState(String(RETEICA_PRESETS[0]));
     const [rApplyRetefuente, setRApplyRetefuente] = useState(false);
     const [rRetefuenteRate, setRRetefuenteRate] = useState('2.5');
     const [rUpdateIdentity, setRUpdateIdentity] = useState(false);
@@ -443,7 +443,7 @@ export const FacturacionElectronica = () => {
                                             const bog = isBogota(e.target.value);
                                             setRApplyReteica(bog);
                                             if (!bog) setRReteicaRate('0');
-                                            else if (!parseFloat(rReteicaRate)) setRReteicaRate(String(RETEICA_BOGOTA));
+                                            else if (!parseFloat(rReteicaRate)) setRReteicaRate(String(RETEICA_PRESETS[0]));
                                         }}
                                         placeholder="Bogotá, Medellín..."
                                         data-testid="ret-city-input"
