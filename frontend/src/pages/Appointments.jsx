@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ordersAPI, servicesAPI, slotsAPI, notificationsAPI } from '../lib/api';
+import { ordersAPI, servicesAPI, slotsAPI, notificationsAPI, paymentsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -16,7 +16,7 @@ import { PlateBadge } from '../components/PlateBadge';
 import { CarAvatar } from '../components/CarAvatar';
 import { CAR_BRANDS, CAR_MODELS, formatCurrency, isHoliday, COLOMBIA_HOLIDAYS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle, MessageCircle, Mail, Send, UserCog } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle, MessageCircle, Mail, Send, UserCog, CalendarClock, Lock } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -298,6 +298,77 @@ export const Appointments = () => {
     // Remove service
     const handleRemoveService = (serviceId) => {
         setSelectedServices(prev => prev.filter(s => s.serviceId !== serviceId));
+    };
+
+    // ============================================================
+    // REASIGNAR CITA (posponer / adelantar con password)
+    // ============================================================
+    const [rescheduleOrder, setRescheduleOrder] = useState(null);
+    const [rsDate, setRsDate] = useState(new Date());
+    const [rsSlot, setRsSlot] = useState('');
+    const [rsPassword, setRsPassword] = useState('');
+    const [rsReason, setRsReason] = useState('');
+    const [rsLoading, setRsLoading] = useState(false);
+    const [rsSlotsAvailability, setRsSlotsAvailability] = useState(null);
+
+    const openReschedule = async (order) => {
+        setRescheduleOrder(order);
+        setRsDate(order.date ? new Date(order.date + 'T00:00:00') : new Date());
+        setRsSlot(order.time_slot || '');
+        setRsPassword('');
+        setRsReason('');
+        // Cargar disponibilidad para la fecha actual de la orden
+        try {
+            const res = await slotsAPI.getAvailability(order.date || format(new Date(), 'yyyy-MM-dd'));
+            setRsSlotsAvailability(res.data);
+        } catch (e) {
+            setRsSlotsAvailability(null);
+        }
+    };
+
+    const closeReschedule = () => setRescheduleOrder(null);
+
+    const handleRsDateChange = async (newDate) => {
+        if (!newDate) return;
+        setRsDate(newDate);
+        setRsSlot('');
+        try {
+            const res = await slotsAPI.getAvailability(format(newDate, 'yyyy-MM-dd'));
+            setRsSlotsAvailability(res.data);
+        } catch (e) {
+            setRsSlotsAvailability(null);
+        }
+    };
+
+    const submitReschedule = async () => {
+        if (!rsSlot) {
+            toast.error('Selecciona una nueva franja');
+            return;
+        }
+        if (!rsPassword.trim()) {
+            toast.error('Ingresa la contraseña de autorización');
+            return;
+        }
+        setRsLoading(true);
+        try {
+            const res = await paymentsAPI.reschedule(rescheduleOrder.id, {
+                new_date: format(rsDate, 'yyyy-MM-dd'),
+                new_time_slot: rsSlot,
+                password: rsPassword.trim(),
+                reason: rsReason || null,
+            });
+            toast.success(
+                res.data.email_sent
+                    ? `Cita reagendada a ${res.data.new_date} ${res.data.new_time} · Correo enviado`
+                    : `Cita reagendada a ${res.data.new_date} ${res.data.new_time}`
+            );
+            closeReschedule();
+            fetchOrders();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Error al reagendar');
+        } finally {
+            setRsLoading(false);
+        }
     };
 
     const resetForm = () => {
@@ -1413,6 +1484,18 @@ export const Appointments = () => {
                                                                             <ServiceBadge key={idx} service={s.service || s} />
                                                                         ))}
                                                                     </div>
+                                                                    {order.status === 'agendado' && (
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            onClick={(e) => { e.stopPropagation(); openReschedule(order); }}
+                                                                            className="border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/10"
+                                                                            data-testid={`reschedule-btn-${order.id}`}
+                                                                        >
+                                                                            <CalendarClock className="w-3 h-3 mr-1" />
+                                                                            Reasignar
+                                                                        </Button>
+                                                                    )}
                                                                     <OrderStatusBadge status={order.status} />
                                                                 </div>
                                                             </div>
@@ -1428,6 +1511,136 @@ export const Appointments = () => {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Dialog Reasignar Cita */}
+            <Dialog open={!!rescheduleOrder} onOpenChange={(v) => !v && closeReschedule()}>
+                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <CalendarClock className="w-5 h-5 text-cyan-400" />
+                            Reasignar Cita
+                        </DialogTitle>
+                        <DialogDescription asChild>
+                            {rescheduleOrder ? (
+                                <div className="pt-1 space-y-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <PlateBadge plate={rescheduleOrder.plate} size="md" />
+                                        <span className="text-sm">{rescheduleOrder.client_name}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        Actual: <b>{rescheduleOrder.date}</b> · <b className="text-cyan-400">{rescheduleOrder.scheduled_time || rescheduleOrder.time_slot}</b>
+                                    </p>
+                                </div>
+                            ) : <span />}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <div>
+                            <Label>Nueva Fecha *</Label>
+                            <div className="flex justify-center border rounded-lg p-2 overflow-x-auto">
+                                <Calendar
+                                    mode="single"
+                                    selected={rsDate}
+                                    onSelect={handleRsDateChange}
+                                    locale={es}
+                                    disabled={disabledDays}
+                                    className="rounded-md"
+                                />
+                            </div>
+                            <p className="text-xs text-muted-foreground text-center mt-1">
+                                Nueva fecha: <b className="text-cyan-400">{format(rsDate, "EEEE, d 'de' MMMM yyyy", { locale: es })}</b>
+                            </p>
+                        </div>
+
+                        <div>
+                            <Label className="flex items-center gap-1"><Clock className="w-3 h-3" /> Nueva Franja *</Label>
+                            <div className="grid grid-cols-1 gap-2 mt-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setRsSlot('prioridad')}
+                                    className={`p-2 rounded-lg border text-left text-sm transition-all ${
+                                        rsSlot === 'prioridad'
+                                            ? 'border-amber-500 bg-amber-500/10 text-amber-400'
+                                            : 'border-border hover:border-amber-500/50'
+                                    }`}
+                                    data-testid="rs-slot-prioridad"
+                                >
+                                    ⚡ <b>Prioridad</b> · se agenda inmediatamente (sin franja)
+                                </button>
+                                {(rsSlotsAvailability?.slots || []).map(slot => (
+                                    <button
+                                        key={slot.id}
+                                        type="button"
+                                        onClick={() => setRsSlot(slot.id)}
+                                        disabled={slot.remaining <= 0}
+                                        className={`p-2 rounded-lg border text-left text-sm transition-all ${
+                                            rsSlot === slot.id
+                                                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-400'
+                                                : slot.remaining <= 0
+                                                ? 'border-muted bg-muted/30 opacity-50 cursor-not-allowed'
+                                                : 'border-border hover:border-cyan-500/50'
+                                        }`}
+                                        data-testid={`rs-slot-${slot.id}`}
+                                    >
+                                        <div className="flex justify-between items-center">
+                                            <span><b>{slot.label}</b></span>
+                                            <span className={`text-xs ${slot.remaining <= 0 ? 'text-red-400' : 'text-muted-foreground'}`}>
+                                                {slot.remaining <= 0 ? 'Sin cupos' : `${slot.remaining} cupo(s)`}
+                                            </span>
+                                        </div>
+                                        <p className="text-[11px] text-muted-foreground mt-0.5">{slot.start} - {slot.end}</p>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div>
+                            <Label className="text-xs">Motivo (opcional)</Label>
+                            <Textarea
+                                value={rsReason}
+                                onChange={(e) => setRsReason(e.target.value)}
+                                placeholder="Ej: Cliente llamó a posponer, urgencia familiar..."
+                                rows={2}
+                                data-testid="rs-reason-input"
+                            />
+                        </div>
+
+                        <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                            <Label className="flex items-center gap-1 text-amber-400">
+                                <Lock className="w-4 h-4" />
+                                Contraseña de autorización *
+                            </Label>
+                            <Input
+                                type="password"
+                                inputMode="numeric"
+                                autoComplete="off"
+                                maxLength={10}
+                                value={rsPassword}
+                                onChange={(e) => setRsPassword(e.target.value.replace(/\D/g, ''))}
+                                placeholder="Ingresa la contraseña"
+                                className="mt-2"
+                                data-testid="rs-password-input"
+                            />
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                                Solo administradores tienen esta contraseña. Configurable en /settings.
+                            </p>
+                        </div>
+
+                        <Button
+                            onClick={submitReschedule}
+                            disabled={rsLoading || !rsSlot || !rsPassword.trim()}
+                            className="w-full brand-glow"
+                            data-testid="rs-confirm-btn"
+                        >
+                            {rsLoading ? (
+                                <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" /> Reagendando...</>
+                            ) : (
+                                <><CalendarClock className="w-4 h-4 mr-2" /> Reagendar y enviar correo</>
+                            )}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 };

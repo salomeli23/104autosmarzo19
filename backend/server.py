@@ -343,6 +343,10 @@ class OrderResponse(BaseModel):
     # Cita por prioridad
     is_priority: Optional[bool] = False
     priority_reason: Optional[str] = None
+    # Reagendación
+    rescheduled_at: Optional[str] = None
+    rescheduled_by: Optional[str] = None
+    reschedule_count: Optional[int] = 0
     # Postventa / Garantía
     is_postventa: Optional[bool] = False
     postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
@@ -3750,6 +3754,112 @@ async def list_retentions(
 
 class UpdateClientEmail(BaseModel):
     client_email: str
+
+
+class RescheduleAppointment(BaseModel):
+    new_date: str          # YYYY-MM-DD
+    new_time_slot: str     # franja_X o 'prioridad'
+    password: str          # contraseña de autorización para reagendar
+    reason: Optional[str] = None
+
+
+@api_router.post("/orders/{order_id}/reschedule")
+async def reschedule_appointment(
+    order_id: str,
+    data: RescheduleAppointment,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Reasigna (pospone o adelanta) una cita agendada. Requiere contraseña.
+
+    - Actualiza date, time_slot y recalcula scheduled_time.
+    - Envía correo con la cita actualizada al cliente.
+    """
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") != OrderStatus.AGENDADO.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Solo se puede reasignar una cita en estado AGENDADO. Estado actual: {order.get('status')}",
+        )
+
+    # Validar contraseña (configurable en /settings · default 861123)
+    pin_settings = await db.settings.find_one({"key": "reschedule_pin"}, {"_id": 0})
+    expected_pin = (pin_settings or {}).get("value", "861123")
+    if str(data.password).strip() != str(expected_pin).strip():
+        raise HTTPException(status_code=400, detail="Contraseña de reagendación inválida")
+
+    # Parse new date
+    try:
+        new_date = datetime.strptime(data.new_date, "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Fecha inválida (formato YYYY-MM-DD)")
+
+    old_date = order.get("date")
+    old_time = order.get("scheduled_time")
+    old_slot = order.get("time_slot")
+
+    # Recalcular scheduled_time (prioridad → hora actual Colombia; franja → queue position)
+    if data.new_time_slot == "prioridad":
+        col_now = get_colombia_time()
+        new_scheduled_time = col_now.strftime("%H:%M")
+        is_priority = True
+    else:
+        new_scheduled_time = await calculate_scheduled_time(data.new_date, data.new_time_slot)
+        is_priority = False
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "date": data.new_date,
+            "time_slot": data.new_time_slot,
+            "scheduled_time": new_scheduled_time,
+            "is_priority": is_priority,
+            "rescheduled_at": now,
+            "rescheduled_by": current_user["name"],
+            "reschedule_count": int(order.get("reschedule_count") or 0) + 1,
+            "reschedule_history": [
+                *(order.get("reschedule_history") or []),
+                {
+                    "from_date": old_date, "from_time": old_time, "from_slot": old_slot,
+                    "to_date": data.new_date, "to_time": new_scheduled_time, "to_slot": data.new_time_slot,
+                    "at": now, "by": current_user["name"],
+                    "reason": data.reason,
+                },
+            ],
+            "updated_at": now,
+        }},
+    )
+
+    await log_order_history(
+        order_id, "CITA_REAGENDADA",
+        old_date or "", data.new_date,
+        current_user["id"], current_user["name"],
+        {"old_time": old_time, "new_time": new_scheduled_time, "reason": data.reason},
+    )
+
+    # Enviar correo con la cita actualizada
+    email_id = None
+    if order.get("client_email"):
+        try:
+            order_after = await db.orders.find_one({"id": order_id}, {"_id": 0})
+            html = build_appointment_confirmation_html(order_after, qr_cid="qr-code")
+            email_id = await _send_email_with_attachments(
+                order["client_email"],
+                f"Cita reagendada · Nueva hora {new_scheduled_time} · #{order.get('order_code')} · PolarizadosYA!",
+                html,
+                [qr_attachment(order.get("order_code", ""), cid="qr-code"), *brand_attachments()],
+            )
+        except Exception as e:
+            logger.error(f"[reschedule-email] {e}")
+
+    return {
+        "message": "Cita reagendada",
+        "old_date": old_date, "old_time": old_time,
+        "new_date": data.new_date, "new_time": new_scheduled_time,
+        "email_sent": bool(email_id),
+    }
 
 
 @api_router.patch("/orders/{order_id}/client-email")

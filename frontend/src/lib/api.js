@@ -267,6 +267,7 @@ export const paymentsAPI = {
     sendInvoiceEmail: (orderId) => api.post(`/orders/${orderId}/send-invoice-email`),
     downloadInvoicePdf: (orderId) => api.get(`/orders/${orderId}/invoice-pdf`, { responseType: 'blob' }),
     updateClientEmail: (orderId, email) => api.patch(`/orders/${orderId}/client-email`, { client_email: email }),
+    reschedule: (orderId, data) => api.post(`/orders/${orderId}/reschedule`, data),
     applyRetention: (orderId, data) => api.post(`/orders/${orderId}/apply-retention`, data),
     listRetentions: (q) => api.get('/retentions', { params: q ? { q } : {} }),
     sendIngresoReceipt: (orderId) => api.post(`/orders/${orderId}/send-ingreso-receipt`),
