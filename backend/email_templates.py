@@ -4,11 +4,37 @@ Genera HTML para:
 - Confirmación de cita (con QR inline via CID)
 - Recibo de ingreso (check-in)
 - Factura electrónica MOCK
+
+Assets en /app/backend/assets/:
+- logo.png (logo blanco sobre fondo negro)
+- car_hero.png (SUV negro con luces rojas)
 """
 from io import BytesIO
+from pathlib import Path
 from typing import List, Optional
 
 import qrcode
+
+ASSETS_DIR = Path(__file__).parent / "assets"
+
+
+def _load_asset_bytes(name: str) -> Optional[bytes]:
+    p = ASSETS_DIR / name
+    if not p.exists():
+        return None
+    return p.read_bytes()
+
+
+def brand_attachments() -> List[dict]:
+    """Attachments con CID para logo + hero del auto. Siempre los mismos, reutilizables."""
+    out = []
+    logo = _load_asset_bytes("logo.png")
+    if logo:
+        out.append({"filename": "logo.png", "content": list(logo), "content_id": "brand-logo"})
+    car = _load_asset_bytes("car_hero.png")
+    if car:
+        out.append({"filename": "car_hero.png", "content": list(car), "content_id": "brand-car"})
+    return out
 
 
 # ============================================================
@@ -62,8 +88,10 @@ def _fmt_date(iso: str) -> str:
 _BASE_CSS = """
   body { background:#0a0a0a; color:#e5e5e5; font-family:'Helvetica Neue',Arial,sans-serif; margin:0; padding:0; }
   .wrap { max-width:600px; margin:0 auto; background:#0a0a0a; padding:0; }
-  .hero { padding:28px 24px 0; }
-  .brand-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
+  .hero { padding:0 24px 0; }
+  .hero-banner { width:100%; height:180px; background:#0a0a0a center/cover no-repeat; border-radius:0 0 18px 18px; }
+  .brand-row { display:flex; justify-content:space-between; align-items:center; padding:18px 0 12px; }
+  .brand-logo { height:44px; }
   .logo { color:#ffffff; font-size:22px; font-weight:900; letter-spacing:0.5px; }
   .logo small { display:block; font-size:9px; font-weight:400; letter-spacing:2px; color:#888; margin-top:2px; }
   .tag { text-align:right; color:#ffffff; font-size:11px; letter-spacing:1.5px; }
@@ -100,6 +128,7 @@ _BASE_CSS = """
   .footer-lbl { color:#777; font-size:9px; letter-spacing:1.5px; margin-bottom:3px; }
   .footer-val { color:#fff; font-size:12px; font-weight:600; }
   .footer-btm { text-align:center; color:#666; font-size:10px; padding:12px 0 18px; }
+  .footer-logo { height:28px; display:block; margin:0 auto 8px; }
 """
 
 _ICONS_ROW = """
@@ -142,6 +171,22 @@ def _wrap(title_badge: str, title: str, subtitle: str, body: str, notes: Optiona
           {items}
         </div>"""
 
+    logo_html = (
+        "<img src='cid:brand-logo' alt='PolarizadosYA!' class='brand-logo' />"
+        if _load_asset_bytes("logo.png")
+        else "<div class='logo'>POLARIZADOS YA!<small>TU SEGURIDAD Y CONFORT ES NUESTRO TRABAJO</small></div>"
+    )
+    car_html = (
+        "<div class='hero-banner' style=\"background-image:url('cid:brand-car');\"></div>"
+        if _load_asset_bytes("car_hero.png")
+        else ""
+    )
+    logo_footer_html = (
+        "<img src='cid:brand-logo' alt='PolarizadosYA!' class='footer-logo' />"
+        if _load_asset_bytes("logo.png")
+        else "<div style='color:#fff;font-weight:700;'>POLARIZADOS YA!</div>"
+    )
+
     return f"""<!DOCTYPE html>
 <html lang='es'>
 <head>
@@ -151,9 +196,10 @@ def _wrap(title_badge: str, title: str, subtitle: str, body: str, notes: Optiona
 </head>
 <body>
   <div class='wrap'>
+    {car_html}
     <div class='hero'>
       <div class='brand-row'>
-        <div class='logo'>POLARIZADOS YA!<small>TU SEGURIDAD Y CONFORT ES NUESTRO TRABAJO</small></div>
+        {logo_html}
         <div class='tag'>{title_badge.split('|')[0]}<span>{title_badge.split('|')[1] if '|' in title_badge else ''}</span></div>
       </div>
       <div class='thanks'>— GRACIAS POR ELEGIRNOS</div>
@@ -185,7 +231,10 @@ def _wrap(title_badge: str, title: str, subtitle: str, body: str, notes: Optiona
       </div>
     </div>
 
-    <div class='footer-btm'>POLARIZADOS YA! · polarizadosya.com</div>
+    <div class='footer-btm'>
+      {logo_footer_html}
+      polarizadosya.com
+    </div>
   </div>
 </body>
 </html>"""

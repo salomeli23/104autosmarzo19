@@ -28,6 +28,7 @@ from email_templates import (
     build_ingreso_html,
     build_invoice_html,
     qr_attachment,
+    brand_attachments,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -1224,7 +1225,7 @@ async def send_notification(data: NotificationRequest, current_user: dict = Depe
                     "to": [email],
                     "subject": f"¡Tu cita está confirmada! #{order.get('order_code', '')} · PolarizadosYA!",
                     "html": html_content,
-                    "attachments": [qr_attachment(order.get('order_code', ''), cid="qr-code")],
+                    "attachments": [qr_attachment(order.get('order_code', ''), cid="qr-code"), *brand_attachments()],
                 }
                 email_result = await asyncio.to_thread(resend.Emails.send, params)
                 results["email"] = {"success": True, "email_id": email_result.get("id"), "sent_to": email}
@@ -1673,6 +1674,7 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
             order_after = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
             pdf_bytes = build_ingreso_receipt(order_after)
             attachments = [_pdf_attachment(f"recibo_ingreso_{order.get('order_code')}.pdf", pdf_bytes)]
+            attachments.extend(brand_attachments())
             front = order_after.get("profile_photo_url")
             front_att = _photo_attachment("foto_frontal.jpg", front) if front else None
             if front_att:
@@ -3830,7 +3832,7 @@ async def send_invoice_email(
         order["client_email"],
         f"Tu factura electrónica {invoice_number} · PolarizadosYA!",
         html,
-        [_pdf_attachment(f"factura_{invoice_number}.pdf", pdf_bytes)],
+        [_pdf_attachment(f"factura_{invoice_number}.pdf", pdf_bytes), *brand_attachments()],
     )
     now = datetime.now(timezone.utc).isoformat()
     await db.orders.update_one(
@@ -3867,6 +3869,7 @@ async def send_ingreso_receipt(
     pdf_bytes = build_ingreso_receipt(order)
 
     attachments = [_pdf_attachment(f"recibo_ingreso_{order.get('order_code')}.pdf", pdf_bytes)]
+    attachments.extend(brand_attachments())
     # Adjuntar fotos 360 (limitar a 8 para no exceder ~25MB)
     photos = (order.get("inspection_photos") or [])[:8]
     for i, ph in enumerate(photos, start=1):

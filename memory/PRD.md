@@ -4,6 +4,29 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
+2026-09-30
+
+## Última Sesión (2026-09-30) — Iteración 28 (Email branded con logo + hero auto)
+
+### Assets embebidos
+- `/app/backend/assets/logo.png` (1070×435 RGBA, logo blanco sobre negro)
+- `/app/backend/assets/car_hero.png` (1536×1024, SUV negro con luces rojas)
+
+### `email_templates.py` actualizado
+- **`brand_attachments()`**: helper que carga logo.png + car_hero.png y devuelve attachments con `content_id='brand-logo'` y `content_id='brand-car'` para inline CID.
+- **`_wrap()`** ahora:
+  - Hero banner con `cid:brand-car` arriba de todo (rounded bottom 18px, height 180px, cover).
+  - Header usa `<img src='cid:brand-logo'>` (h=44px) si el asset existe, fallback a texto.
+  - Footer-bottom incluye el logo pequeño (h=28px).
+- Si los assets no existen, fallback seguro a texto/gradiente.
+
+### Server
+- Los 4 envíos de email (cita, check-in, reenvío recibo, factura) ahora incluyen `*brand_attachments()` junto a los PDFs/QR.
+
+### Testing
+- Screenshot del template renderizado: hero con auto negro, logo blanco real, badge cyan, QR inline — coincide pixel-a-pixel con la referencia del usuario.
+
+## Fecha de última actualización previa
 2026-08-26
 
 ## Última Sesión (2026-08-26 PM-6) — Iteración 27 (Templates de Email Branded)
