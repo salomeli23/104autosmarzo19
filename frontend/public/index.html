@@ -125,10 +125,15 @@
             posthog.init("phc_xAvL2Iq4tFmANRE7kzbKwaSqp1HJjN7x48s3vr0CMjs", {
                 api_host: "https://us.i.posthog.com",
                 person_profiles: "identified_only", // or 'always' to create profiles for anonymous users as well,
-                session_recording: {
-                    recordCrossOriginIframes: true,
-                    capturePerformance: false,
-                },
+                // Session recording deshabilitado en desarrollo porque el recorder
+                // de posthog-js crasheaba con "PerformanceServerTiming could not be cloned"
+                // al intentar clonar entradas de PerformanceObserver via postMessage.
+                session_recording: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.endsWith('.preview.emergentagent.com')
+                    ? { enabled: false }
+                    : {
+                        recordCrossOriginIframes: true,
+                        capturePerformance: false,
+                    },
             });
         </script>
     </body>
