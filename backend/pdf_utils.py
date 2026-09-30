@@ -197,6 +197,23 @@ def build_ingreso_receipt(order: dict) -> bytes:
         getSampleStyleSheet()["Normal"],
     ))
 
+    # Advertencia de garantía de opacidad
+    story.append(Spacer(1, 0.3 * cm))
+    warn_style = ParagraphStyle(
+        "Warn", parent=getSampleStyleSheet()["Normal"],
+        textColor=colors.HexColor("#92400e"), fontSize=9, leading=12,
+    )
+    warn_title_style = ParagraphStyle(
+        "WarnTitle", parent=warn_style,
+        textColor=colors.HexColor("#78350f"), fontSize=10, spaceAfter=3,
+    )
+    story.append(Paragraph("<b>⚠ ADVERTENCIA DE GARANTÍA</b>", warn_title_style))
+    story.append(Paragraph(
+        "<b>1.</b> Dentro de la garantía no aplica el cambio de porcentaje.<br/>"
+        "<b>2.</b> El cliente acepta el porcentaje de opacidad, bajo su responsabilidad y la garantía no incluye cambio de opacidad.",
+        warn_style,
+    ))
+
     doc.build(story)
     return buf.getvalue()
 

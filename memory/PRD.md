@@ -6,6 +6,25 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-09-30
 
+## Última Sesión (2026-09-30 PM-3) — Iteración 30 (Advertencia de Garantía en Check-in + Email + PDF)
+
+### Texto legal añadido
+1. Dentro de la garantía no aplica el cambio de porcentaje.
+2. El cliente acepta el porcentaje de opacidad, bajo su responsabilidad y la garantía no incluye cambio de opacidad.
+
+### Lugares donde aparece
+- **Check-in frontend** (`CheckIn.jsx`): card ámbar justo después del pad de firma, antes del botón "Aprobar Ingreso". Incluye icono `AlertTriangle` y nota "Esta advertencia queda registrada con tu firma y se adjuntará en el recibo de ingreso".
+- **Email de recibo de ingreso** (`email_templates.py → build_ingreso_html`): card ámbar con `border-left: 3px solid #f59e0b`, título "⚠ ADVERTENCIA DE GARANTÍA" y los 2 puntos numerados. Footer: "Firmado digitalmente por el cliente al ingreso. Válido como constancia de aceptación."
+- **PDF del recibo** (`pdf_utils.py → build_ingreso_receipt`): sección ámbar al final con los mismos 2 puntos.
+
+### Testing
+- HTML del email renderizado y verificado por screenshot: advertencia visible con texto exacto.
+- PDF generado OK (3260 bytes).
+- Backend reiniciado y operativo.
+
+## Fecha de última actualización previa
+2026-09-30
+
 ## Última Sesión (2026-09-30 PM-2) — Iteración 29 (Fix PostHog session_recording overlay)
 
 ### Bug
