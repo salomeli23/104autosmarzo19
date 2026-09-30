@@ -6,6 +6,21 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-09-30
 
+## Última Sesión (2026-09-30 PM-2) — Iteración 29 (Fix PostHog session_recording overlay)
+
+### Bug
+Overlay rojo de React dev "Uncaught runtime errors: Failed to execute 'postMessage' on 'Window': PerformanceServerTiming object could not be cloned" — causado por `posthog-recorder.js` intentando clonar objetos no clonables del PerformanceObserver.
+
+### Fix
+- `/app/frontend/public/index.html` — `posthog.init()` ahora deshabilita `session_recording` cuando el hostname es `localhost`, `127.0.0.1` o `*.preview.emergentagent.com`. En producción (polarizados.space) se mantiene activo con `capturePerformance: false`.
+- PostHog tracking de eventos sigue funcionando (window.posthog disponible); solo el session recorder se apaga en dev/preview.
+
+### Testing
+- iteration_20.json: **E2E VERIFIED**. 7 rutas navegadas (login, dashboard, pagos, technician, facturacion-electronica, autos-salida, cutting, appointments) sin overlay ni pageerror. Condición de hostname revisada — producción mantendrá recording activo.
+
+## Fecha de última actualización previa
+2026-09-30
+
 ## Última Sesión (2026-09-30) — Iteración 28 (Email branded con logo + hero auto)
 
 ### Assets embebidos
