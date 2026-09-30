@@ -6,6 +6,34 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-08-26
 
+## Última Sesión (2026-08-26 PM-6) — Iteración 27 (Templates de Email Branded)
+
+### Nuevo módulo `/app/backend/email_templates.py`
+Templates dark branded según diseño del usuario. Todos comparten:
+- Logo "POLARIZADOS YA!" + tagline en la cabecera
+- Badge de estado en esquina superior derecha (CITA CONFIRMADA #CODE / RECIBO DE INGRESO / FACTURA ELECTRÓNICA)
+- Título principal grande + subtítulo
+- 4 iconos de valores (Mayor Seguridad · Confort Térmico · Privacidad y Estilo · Servicio Profesional)
+- Cards oscuras con bordes cyan
+- "Notas importantes" con bullets numerados
+- Footer: Sede 138 (310 601 8633) · Postventa (317 801 6319) · WWW.POLARIZADOSYA.COM
+
+### 3 templates específicos
+1. **Cita confirmada** (`build_appointment_confirmation_html`): código + hora + fecha, cliente, vehículo, fecha, servicio, total (con nota IVA), QR inline (CID), 3 notas.
+2. **Recibo de ingreso** (`build_ingreso_html`): código + hora, cliente, vehículo, servicios contratados con precio, Total/Abonado/Saldo pendiente, indicador de adjuntos (PDF + N fotos 360).
+3. **Factura electrónica MOCK** (`build_invoice_html`): número factura, orden, cliente+NIT, razón social, detalle de servicios, desglose Subtotal − Reteica − Retefuente = Total a pagar, banner ámbar MOCK.
+
+### QR Inline (CID)
+- Helper `qr_attachment(code, cid)` genera PNG bytes y lo adjunta con `content_id`. Referencia HTML `<img src='cid:qr-code'>` para mostrar dentro del email (Resend soporta CID nativo).
+
+### Endpoints actualizados
+- `send_appointment_notification`: nuevo subject "¡Tu cita está confirmada! #CODE · PolarizadosYA!" con QR adjunto.
+- `approve_ingreso` y `send-ingreso-receipt`: nuevo subject "¡Recibo de ingreso! #CODE · PolarizadosYA!" con PDF + fotos + template dark.
+- `send-invoice-email`: nuevo subject "Tu factura electrónica MOCK-FE-... · PolarizadosYA!" con PDF + template dark + desglose retenciones.
+
+## Fecha de última actualización previa
+2026-08-26
+
 ## Última Sesión (2026-08-26 PM-5) — Iteración 26 (Check-in sin recargo · Botones factura · Presets retención)
 
 ### Check-in

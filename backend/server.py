@@ -23,6 +23,12 @@ import resend
 import re
 from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice
 from cutting_catalog import CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, lookup_car_average
+from email_templates import (
+    build_appointment_confirmation_html,
+    build_ingreso_html,
+    build_invoice_html,
+    qr_attachment,
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -1212,12 +1218,13 @@ async def send_notification(data: NotificationRequest, current_user: dict = Depe
         email = data.email or order.get("client_email")
         if email and RESEND_API_KEY:
             try:
-                html_content = generate_appointment_email_html(order)
+                html_content = build_appointment_confirmation_html(order, qr_cid="qr-code")
                 params = {
                     "from": SENDER_EMAIL,
                     "to": [email],
-                    "subject": f"Polarizados Manager - Confirmación de Cita #{order.get('order_code', '')}",
-                    "html": html_content
+                    "subject": f"¡Tu cita está confirmada! #{order.get('order_code', '')} · PolarizadosYA!",
+                    "html": html_content,
+                    "attachments": [qr_attachment(order.get('order_code', ''), cid="qr-code")],
                 }
                 email_result = await asyncio.to_thread(resend.Emails.send, params)
                 results["email"] = {"success": True, "email_id": email_result.get("id"), "sent_to": email}
@@ -1665,25 +1672,16 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         try:
             order_after = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
             pdf_bytes = build_ingreso_receipt(order_after)
-            b = _order_balance(order_after)
             attachments = [_pdf_attachment(f"recibo_ingreso_{order.get('order_code')}.pdf", pdf_bytes)]
             front = order_after.get("profile_photo_url")
             front_att = _photo_attachment("foto_frontal.jpg", front) if front else None
             if front_att:
                 attachments.append(front_att)
-            html = (
-                f"<div style='font-family:Arial,sans-serif;color:#0f172a;'>"
-                f"<h2 style='color:#00e0d1'>Recibo de ingreso de tu vehículo</h2>"
-                f"<p>Hola <b>{order.get('client_name')}</b>,</p>"
-                f"<p>Confirmamos el ingreso del vehículo <b>{(order.get('plate') or '').upper()}</b>. "
-                f"Adjuntamos el recibo firmado.</p>"
-                f"<p>Saldo pendiente: <b>${b['balance']:,.0f}</b>.</p>"
-                f"<p style='color:#64748b;font-size:12px'>— PolarizadosYA!</p>"
-                f"</div>"
-            )
+            photo_count = 1 if front_att else 0
+            html = build_ingreso_html(order_after, pdf_attached=True, photo_count=photo_count)
             eid = await _send_email_with_attachments(
                 order["client_email"],
-                f"Recibo de ingreso · Orden {order.get('order_code')}",
+                f"¡Recibo de ingreso! #{order.get('order_code')} · PolarizadosYA!",
                 html, attachments,
             )
             email_sent = bool(eid)
@@ -3827,20 +3825,10 @@ async def send_invoice_email(
     invoice_number = order.get("invoice_number") or f"MOCK-FE-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{order.get('order_code','')}"
     pdf_bytes = build_mock_invoice(order, invoice_number)
 
-    html = (
-        f"<div style='font-family:Arial,sans-serif;color:#0f172a;'>"
-        f"<h2 style='color:#00e0d1'>Factura Electrónica (MOCK)</h2>"
-        f"<p>Hola <b>{order.get('client_name')}</b>,</p>"
-        f"<p>Adjuntamos la factura electrónica <b>{invoice_number}</b> de la orden "
-        f"<b>{order.get('order_code')}</b>.</p>"
-        f"<p style='color:#dc2626;font-size:12px'><b>Nota:</b> Este es un documento de prueba (MOCK). "
-        f"La versión oficial se enviará cuando conectemos con Siigo.</p>"
-        f"<p style='color:#64748b;font-size:12px'>— PolarizadosYA!</p>"
-        f"</div>"
-    )
+    html = build_invoice_html(order, invoice_number, is_mock=True)
     email_id = await _send_email_with_attachments(
         order["client_email"],
-        f"Factura Electrónica {invoice_number}",
+        f"Tu factura electrónica {invoice_number} · PolarizadosYA!",
         html,
         [_pdf_attachment(f"factura_{invoice_number}.pdf", pdf_bytes)],
     )
@@ -3877,7 +3865,6 @@ async def send_ingreso_receipt(
         raise HTTPException(status_code=400, detail="El cliente no tiene correo registrado")
 
     pdf_bytes = build_ingreso_receipt(order)
-    b = _order_balance(order)
 
     attachments = [_pdf_attachment(f"recibo_ingreso_{order.get('order_code')}.pdf", pdf_bytes)]
     # Adjuntar fotos 360 (limitar a 8 para no exceder ~25MB)
@@ -3891,20 +3878,11 @@ async def send_ingreso_receipt(
     if front_att:
         attachments.insert(1, front_att)
 
-    html = (
-        f"<div style='font-family:Arial,sans-serif;color:#0f172a;'>"
-        f"<h2 style='color:#00e0d1'>Recibo de ingreso de tu vehículo</h2>"
-        f"<p>Hola <b>{order.get('client_name')}</b>,</p>"
-        f"<p>Confirmamos el ingreso del vehículo <b>{(order.get('plate') or '').upper()}</b> "
-        f"({order.get('brand', '')} {order.get('model', '')}).</p>"
-        f"<p>Adjuntamos el recibo firmado y las fotos de la Revisión 360°.</p>"
-        f"<p>Saldo pendiente: <b>${b['balance']:,.0f}</b>.</p>"
-        f"<p style='color:#64748b;font-size:12px'>— PolarizadosYA!</p>"
-        f"</div>"
-    )
+    photo_count = len(photos) + (1 if front_att else 0)
+    html = build_ingreso_html(order, pdf_attached=True, photo_count=photo_count)
     email_id = await _send_email_with_attachments(
         order["client_email"],
-        f"Recibo de ingreso · Orden {order.get('order_code')}",
+        f"¡Recibo de ingreso! #{order.get('order_code')} · PolarizadosYA!",
         html,
         attachments,
     )
