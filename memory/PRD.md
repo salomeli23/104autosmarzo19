@@ -6,6 +6,28 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-09-30
 
+## Última Sesión (2026-09-30 PM-4) — Iteración 31 (Reasignar cita con password 861123)
+
+### Backend — `POST /api/orders/{id}/reschedule`
+- Body: `{new_date, new_time_slot, password, reason?}`.
+- Valida password contra setting `reschedule_pin` (default **861123**, configurable en /settings vía DB).
+- Solo permite si `status='agendado'`. Recalcula `scheduled_time` (franja → queue position; prioridad → hora actual Colombia).
+- Guarda `reschedule_count`, `rescheduled_at`, `rescheduled_by`, y `reschedule_history[]` (from/to date/time/slot, at, by, reason).
+- Log en `order_history` con action `CITA_REAGENDADA`.
+- Envía email al cliente con la cita actualizada usando el template branded dark + QR inline (asunto: "Cita reagendada · Nueva hora HH:MM · #CODE · PolarizadosYA!").
+
+### Frontend — `/appointments`
+- Botón "Reasignar" (cyan outline, CalendarClock icon) solo visible cuando `status='agendado'`. `data-testid=reschedule-btn-{id}`.
+- Dialog con: PlateBadge + cliente + fecha/hora actual, calendario, selector de franja (Prioridad ⚡ + slots con cupos), motivo opcional, input de contraseña con candado.
+- Botón "Reagendar y enviar correo" disabled hasta tener franja + password.
+- data-testids: `rs-slot-prioridad`, `rs-slot-{id}`, `rs-reason-input`, `rs-password-input`, `rs-confirm-btn`.
+
+### Testing
+- iteration_21.json: **6/6 pytest PASS + frontend E2E VERIFIED**. Validado: password vacío 400 · incorrecto 400 · correcto 200 (email_sent=true, count=1, history guardado) · prioridad usa hora Colombia · no-agendado rechazado. UI: dialog funciona, toast con password incorrecto.
+
+## Fecha de última actualización previa
+2026-09-30
+
 ## Última Sesión (2026-09-30 PM-3) — Iteración 30 (Advertencia de Garantía en Check-in + Email + PDF)
 
 ### Texto legal añadido
