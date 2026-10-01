@@ -86,8 +86,18 @@ def _services_table(services):
         if pct:
             detail_bits.append(" ".join(f"{k}:{v}" for k, v in pct.items()))
         if s.get("ppf_scope"):
-            detail_bits.append(f"PPF: {s['ppf_scope']}")
-        if s.get("ppf_parts_description"):
+            scope_lbl = "Full Body" if s["ppf_scope"] == "full" else "Partes"
+            detail_bits.append(f"PPF: {scope_lbl}")
+        if s.get("ppf_finish"):
+            detail_bits.append(f"Acabado: {str(s['ppf_finish']).capitalize()}")
+        if s.get("ppf_color"):
+            detail_bits.append(f"Color: {s['ppf_color']}")
+        if s.get("ppf_zones"):
+            detail_bits.append("Zonas: " + ", ".join(str(z).capitalize() for z in s["ppf_zones"]))
+        if s.get("ppf_parts"):
+            detail_bits.append("Partes: " + ", ".join(s["ppf_parts"]))
+        # Solo mostrar descripción libre si no hay campos estructurados (órdenes antiguas)
+        if s.get("ppf_parts_description") and not (s.get("ppf_finish") or s.get("ppf_parts")):
             detail_bits.append(s["ppf_parts_description"])
         for ex in s.get("extras") or []:
             detail_bits.append(f"+ {ex.get('nombre')} ({_fmt_money(ex.get('price'))})")

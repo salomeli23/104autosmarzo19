@@ -232,9 +232,13 @@ class ServiceItem(BaseModel):
     description: Optional[str] = None
     parts: Optional[List[str]] = None  # Partes del vehículo para polarizado (panoramico, luneta, etc.)
     part_percentages: Optional[Dict[str, str]] = None  # {part_id: '35%', ...} para polarizado/ultrasecure
-    # PPF-specific (Full o Partes)
+    # PPF-specific (Full Body o Partes)
     ppf_scope: Optional[str] = None  # 'full' | 'partes'
     ppf_parts_description: Optional[str] = None  # texto libre describiendo las partes
+    ppf_finish: Optional[str] = None  # 'brillante' | 'mate'
+    ppf_color: Optional[str] = None  # color escrito por el asesor
+    ppf_zones: Optional[List[str]] = None  # ['interior', 'exterior'] (solo plan partes)
+    ppf_parts: Optional[List[str]] = None  # ['Bomper', 'Capot', ...] (solo plan partes)
     # Extras aplicados a este servicio (id de service_extras y precio congelado al momento)
     extras: Optional[List[Dict[str, Any]]] = None  # [{id, nombre, price}]
 

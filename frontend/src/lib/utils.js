@@ -256,6 +256,12 @@ export const VEHICLE_PARTS = [
     { id: 'custodias', label: 'Custodias', name: 'Custodias' },
 ];
 
+// PPF: partes disponibles para el plan por piezas (selector predictivo en Check-in)
+export const PPF_PARTS = [
+    'Bomper', 'Capot', 'Guardafangos', 'Espejos', 'Farolas', 'Boceles',
+    'Parales', 'Triángulos', 'Spoiler', 'Techo', 'Difusores', 'Tacómetro',
+];
+
 export const INSPECTION_AREAS = [
     { id: 'capot', name: 'Capot' },
     { id: 'parabrisas', name: 'Parabrisas' },

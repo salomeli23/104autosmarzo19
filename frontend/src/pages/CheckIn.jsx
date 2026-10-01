@@ -14,7 +14,7 @@ import { QRDisplay } from '../components/QRDisplay';
 import { SignaturePad } from '../components/SignaturePad';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
-import { formatCurrency, VEHICLE_PARTS } from '../lib/utils';
+import { formatCurrency, VEHICLE_PARTS, PPF_PARTS } from '../lib/utils';
 import { generateOrderPDF } from '../components/OrderPDFGenerator';
 import { Inspection360Inline } from '../components/Inspection360Inline';
 import { toast } from 'sonner';
@@ -55,6 +55,8 @@ export const CheckIn = () => {
     const [validatingDiscount, setValidatingDiscount] = useState(false);
     // Overrides de precio de extras (por id) para permitir editar el Sunroof en Check-in
     const [extraPriceOverrides, setExtraPriceOverrides] = useState({});
+    // Input transitorio del selector predictivo de partes PPF: { serviceId: texto }
+    const [ppfPartInputs, setPpfPartInputs] = useState({});
     
     // Risk Agreement Modal
     const [showRiskAgreement, setShowRiskAgreement] = useState(false);
@@ -116,6 +118,11 @@ export const CheckIn = () => {
                 parts: s.parts || [],
                 part_percentages: s.part_percentages || {},
                 extras: s.extras || [],
+                ppf_scope: s.ppf_scope || null,
+                ppf_finish: s.ppf_finish || null,
+                ppf_color: s.ppf_color || '',
+                ppf_zones: s.ppf_zones || [],
+                ppf_parts: s.ppf_parts || [],
             })) || [];
             setSelectedServices(initialServices);
             // Precargar precios editables (sunroof) desde los extras que vienen del agendamiento
@@ -345,6 +352,53 @@ export const CheckIn = () => {
 
     const hasPPFService = () => selectedServices.some(isPPFService);
 
+    // ===== PPF helpers =====
+    const updateSvcPPF = (serviceId, patch) => {
+        setSelectedServices(prev => prev.map(s => s.serviceId === serviceId ? { ...s, ...patch } : s));
+    };
+    const handlePpfScopeChange = (serviceId, scope) => {
+        // Al cambiar de plan se limpian los campos del otro plan
+        const patch = { ppf_scope: scope };
+        if (scope === 'full') {
+            patch.ppf_zones = [];
+            patch.ppf_parts = [];
+        }
+        updateSvcPPF(serviceId, patch);
+        setPpfPartInputs(prev => ({ ...prev, [serviceId]: '' }));
+    };
+    const togglePpfZone = (serviceId, zone) => {
+        const svc = selectedServices.find(s => s.serviceId === serviceId);
+        const zones = new Set(svc?.ppf_zones || []);
+        if (zones.has(zone)) zones.delete(zone); else zones.add(zone);
+        updateSvcPPF(serviceId, { ppf_zones: Array.from(zones) });
+    };
+    const addPpfPart = (serviceId, part) => {
+        const p = (part || '').trim();
+        if (!p) return;
+        const svc = selectedServices.find(s => s.serviceId === serviceId);
+        const parts = svc?.ppf_parts || [];
+        if (parts.some(x => x.toLowerCase() === p.toLowerCase())) {
+            setPpfPartInputs(prev => ({ ...prev, [serviceId]: '' }));
+            return;
+        }
+        // Capitaliza la primera letra
+        const label = p.charAt(0).toUpperCase() + p.slice(1);
+        updateSvcPPF(serviceId, { ppf_parts: [...parts, label] });
+        setPpfPartInputs(prev => ({ ...prev, [serviceId]: '' }));
+    };
+    const removePpfPart = (serviceId, part) => {
+        const svc = selectedServices.find(s => s.serviceId === serviceId);
+        updateSvcPPF(serviceId, { ppf_parts: (svc?.ppf_parts || []).filter(x => x !== part) });
+    };
+    const getPpfPartSuggestions = (serviceId) => {
+        const q = (ppfPartInputs[serviceId] || '').trim().toLowerCase();
+        const svc = selectedServices.find(s => s.serviceId === serviceId);
+        const selected = (svc?.ppf_parts || []).map(x => x.toLowerCase());
+        const base = PPF_PARTS.filter(p => !selected.includes(p.toLowerCase()));
+        if (!q) return base.slice(0, 8);
+        return base.filter(p => p.toLowerCase().includes(q)).slice(0, 8);
+    };
+
     // Calculate total (IVA 19% si aplica factura). El recargo por tarjeta fue removido por decisión de negocio.
     const calculateBreakdown = () => {
         const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
@@ -483,18 +537,31 @@ export const CheckIn = () => {
             const baseGross = subtotalGross + extrasGross;
             const ivaGross = requiresInvoice ? Math.round(baseGross * 0.19) : 0;
             const grossFinalValue = baseGross + ivaGross;
-            const servicesData = selectedServices.map(svc => ({
-                service: svc.serviceId,
-                price: svc.price,
-                description: `${svc.category} - ${svc.serviceName}`,
-                parts: svc.parts || [],
-                part_percentages: svc.part_percentages || {},
-                ppf_scope: svc.ppf_scope || null,
-                ppf_parts_description: svc.ppf_parts_description || null,
-                extras: isPPFService(svc) || svc.parts?.some(p => bk.extras.find(e => e.trigger_part === p))
-                    ? bk.extras.filter(e => svc.parts?.includes(e.trigger_part)).map(e => ({ id: e.id, nombre: e.nombre, price: e.price }))
-                    : null,
-            }));
+            const servicesData = selectedServices.map(svc => {
+                const ppfDesc = isPPFService(svc) ? (
+                    svc.ppf_scope === 'full'
+                        ? `Full Body · ${svc.ppf_finish ? svc.ppf_finish.charAt(0).toUpperCase() + svc.ppf_finish.slice(1) : ''}${svc.ppf_color ? ` · Color: ${svc.ppf_color}` : ''}`
+                        : svc.ppf_scope === 'partes'
+                            ? `Partes (${(svc.ppf_zones || []).map(z => z.charAt(0).toUpperCase() + z.slice(1)).join(' + ') || 'sin zona'}) · ${svc.ppf_finish ? svc.ppf_finish.charAt(0).toUpperCase() + svc.ppf_finish.slice(1) : ''}${svc.ppf_color ? ` · Color: ${svc.ppf_color}` : ''} · ${(svc.ppf_parts || []).join(', ')}`
+                            : null
+                ) : null;
+                return {
+                    service: svc.serviceId,
+                    price: svc.price,
+                    description: `${svc.category} - ${svc.serviceName}`,
+                    parts: svc.parts || [],
+                    part_percentages: svc.part_percentages || {},
+                    ppf_scope: svc.ppf_scope || null,
+                    ppf_parts_description: ppfDesc,
+                    ppf_finish: isPPFService(svc) ? (svc.ppf_finish || null) : null,
+                    ppf_color: isPPFService(svc) ? (svc.ppf_color || null) : null,
+                    ppf_zones: isPPFService(svc) ? (svc.ppf_zones || []) : null,
+                    ppf_parts: isPPFService(svc) ? (svc.ppf_parts || []) : null,
+                    extras: isPPFService(svc) || svc.parts?.some(p => bk.extras.find(e => e.trigger_part === p))
+                        ? bk.extras.filter(e => svc.parts?.includes(e.trigger_part)).map(e => ({ id: e.id, nombre: e.nombre, price: e.price }))
+                        : null,
+                };
+            });
 
             await ordersAPI.approveIngreso({
                 order_id: order.id,
@@ -1093,22 +1160,23 @@ export const CheckIn = () => {
                                                         </Button>
                                                     </div>
                                                 </div>
-                                                {/* PPF: Full o Partes específicas */}
+                                                {/* PPF: Full Body o Partes */}
                                                 {isPPFService(svc) && (
-                                                    <div className="mt-3 pt-3 border-t border-border/50 space-y-2 bg-blue-500/5 -mx-3 -mb-3 px-3 pb-3 rounded-b-lg" data-testid={`ppf-block-${svc.serviceId}`}>
+                                                    <div className="mt-3 pt-3 border-t border-border/50 space-y-3 bg-blue-500/5 -mx-3 -mb-3 px-3 pb-3 rounded-b-lg" data-testid={`ppf-block-${svc.serviceId}`}>
                                                         <p className="text-xs font-medium text-blue-300 flex items-center gap-1">
                                                             <Package className="w-3 h-3" />
                                                             PPF — Alcance del servicio
                                                         </p>
+                                                        {/* Plan */}
                                                         <div className="grid grid-cols-2 gap-1">
                                                             {[
-                                                                { value: 'full', label: 'Full completo' },
-                                                                { value: 'partes', label: 'Solo partes' },
+                                                                { value: 'full', label: 'Full Body' },
+                                                                { value: 'partes', label: 'Partes / Piezas' },
                                                             ].map(opt => (
                                                                 <button
                                                                     key={opt.value}
                                                                     type="button"
-                                                                    onClick={() => setSelectedServices(prev => prev.map(s => s.serviceId === svc.serviceId ? { ...s, ppf_scope: opt.value } : s))}
+                                                                    onClick={() => handlePpfScopeChange(svc.serviceId, opt.value)}
                                                                     className={`text-xs px-2 py-1.5 rounded border transition-colors ${
                                                                         svc.ppf_scope === opt.value
                                                                             ? 'bg-blue-500/25 border-blue-500/60 text-blue-200 font-medium'
@@ -1120,14 +1188,120 @@ export const CheckIn = () => {
                                                                 </button>
                                                             ))}
                                                         </div>
+
+                                                        {/* Acabado + Color (ambos planes) */}
+                                                        {svc.ppf_scope && (
+                                                            <div className="space-y-2">
+                                                                <p className="text-[11px] text-blue-200/80">Acabado</p>
+                                                                <div className="grid grid-cols-2 gap-1">
+                                                                    {[
+                                                                        { value: 'brillante', label: 'Brillante' },
+                                                                        { value: 'mate', label: 'Mate' },
+                                                                    ].map(opt => (
+                                                                        <button
+                                                                            key={opt.value}
+                                                                            type="button"
+                                                                            onClick={() => updateSvcPPF(svc.serviceId, { ppf_finish: opt.value })}
+                                                                            className={`text-xs px-2 py-1.5 rounded border transition-colors ${
+                                                                                svc.ppf_finish === opt.value
+                                                                                    ? 'bg-blue-500/25 border-blue-500/60 text-blue-200 font-medium'
+                                                                                    : 'border-input hover:border-blue-500/40 text-muted-foreground'
+                                                                            }`}
+                                                                            data-testid={`ppf-finish-${svc.serviceId}-${opt.value}`}
+                                                                        >
+                                                                            {opt.label}
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                                <Input
+                                                                    value={svc.ppf_color || ''}
+                                                                    onChange={(e) => updateSvcPPF(svc.serviceId, { ppf_color: e.target.value })}
+                                                                    placeholder="Escribe el color (Ej: Negro, Gris Nardo, Rojo...)"
+                                                                    className="h-8 text-xs"
+                                                                    data-testid={`ppf-color-${svc.serviceId}`}
+                                                                />
+                                                            </div>
+                                                        )}
+
+                                                        {/* Zonas + Partes (solo plan partes) */}
                                                         {svc.ppf_scope === 'partes' && (
-                                                            <textarea
-                                                                value={svc.ppf_parts_description || ''}
-                                                                onChange={(e) => setSelectedServices(prev => prev.map(s => s.serviceId === svc.serviceId ? { ...s, ppf_parts_description: e.target.value } : s))}
-                                                                placeholder="Describe las partes: capó, estribos, paragolpes, espejos, techo, guardafangos..."
-                                                                className="w-full text-xs p-2 rounded border border-input bg-background min-h-[60px]"
-                                                                data-testid={`ppf-parts-desc-${svc.serviceId}`}
-                                                            />
+                                                            <div className="space-y-2">
+                                                                <p className="text-[11px] text-blue-200/80">Zona</p>
+                                                                <div className="grid grid-cols-2 gap-1">
+                                                                    {[
+                                                                        { value: 'interior', label: 'Interior' },
+                                                                        { value: 'exterior', label: 'Exterior' },
+                                                                    ].map(opt => {
+                                                                        const active = (svc.ppf_zones || []).includes(opt.value);
+                                                                        return (
+                                                                            <button
+                                                                                key={opt.value}
+                                                                                type="button"
+                                                                                onClick={() => togglePpfZone(svc.serviceId, opt.value)}
+                                                                                className={`text-xs px-2 py-1.5 rounded border transition-colors ${
+                                                                                    active
+                                                                                        ? 'bg-blue-500/25 border-blue-500/60 text-blue-200 font-medium'
+                                                                                        : 'border-input hover:border-blue-500/40 text-muted-foreground'
+                                                                                }`}
+                                                                                data-testid={`ppf-zone-${svc.serviceId}-${opt.value}`}
+                                                                            >
+                                                                                {opt.label}
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+
+                                                                <p className="text-[11px] text-blue-200/80">Partes</p>
+                                                                {/* Chips de partes seleccionadas */}
+                                                                {(svc.ppf_parts || []).length > 0 && (
+                                                                    <div className="flex flex-wrap gap-1" data-testid={`ppf-parts-chips-${svc.serviceId}`}>
+                                                                        {(svc.ppf_parts || []).map(part => (
+                                                                            <span key={part} className="inline-flex items-center gap-1 text-xs bg-blue-500/20 text-blue-200 border border-blue-500/40 px-2 py-0.5 rounded">
+                                                                                {part}
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => removePpfPart(svc.serviceId, part)}
+                                                                                    className="text-blue-300 hover:text-red-400"
+                                                                                    data-testid={`ppf-part-remove-${svc.serviceId}-${part}`}
+                                                                                >
+                                                                                    ×
+                                                                                </button>
+                                                                            </span>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                                {/* Selector predictivo */}
+                                                                <div className="relative">
+                                                                    <Input
+                                                                        value={ppfPartInputs[svc.serviceId] || ''}
+                                                                        onChange={(e) => setPpfPartInputs(prev => ({ ...prev, [svc.serviceId]: e.target.value }))}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Enter') {
+                                                                                e.preventDefault();
+                                                                                addPpfPart(svc.serviceId, ppfPartInputs[svc.serviceId]);
+                                                                            }
+                                                                        }}
+                                                                        placeholder="Escribe para buscar: bomper, capot, espejos..."
+                                                                        className="h-8 text-xs"
+                                                                        data-testid={`ppf-part-input-${svc.serviceId}`}
+                                                                    />
+                                                                    {getPpfPartSuggestions(svc.serviceId).length > 0 && (
+                                                                        <div className="mt-1 flex flex-wrap gap-1" data-testid={`ppf-part-suggestions-${svc.serviceId}`}>
+                                                                            {getPpfPartSuggestions(svc.serviceId).map(part => (
+                                                                                <button
+                                                                                    key={part}
+                                                                                    type="button"
+                                                                                    onClick={() => addPpfPart(svc.serviceId, part)}
+                                                                                    className="text-[11px] px-2 py-0.5 rounded border border-input text-muted-foreground hover:border-blue-500/50 hover:text-blue-200 transition-colors"
+                                                                                    data-testid={`ppf-part-suggestion-${svc.serviceId}-${part}`}
+                                                                                >
+                                                                                    + {part}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
                                                         )}
                                                         <p className="text-[11px] text-muted-foreground">
                                                             Ajusta el precio del PPF arriba según lo negociado con el cliente.

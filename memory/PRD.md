@@ -6,7 +6,28 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-10-01
 
-## Última Sesión (2026-10-01) — Iteración 22 (Marcas eléctricas + Códigos de Descuento)
+## Última Sesión (2026-10-01 PM) — Nueva sección PPF en Check-in (plan/acabado/color/zonas/partes)
+
+### Comportamiento nuevo del bloque PPF en Check-in (`CheckIn.jsx`)
+- **Plan "Full Body"** → Acabado (Brillante / Mate) + campo de texto para escribir el color.
+- **Plan "Partes / Piezas"** → Zona (Interior / Exterior, multi-selección) + Acabado (Brillante / Mate) + Color + **selector predictivo de partes** con chips y sugerencias.
+- Al cambiar de plan se limpian los campos del otro plan.
+- Partes predefinidas (`PPF_PARTS` en `utils.js`): Bomper, Capot, Guardafangos, Espejos, Farolas, Boceles, Parales, Triángulos, Spoiler, Techo, Difusores, Tacómetro. Enter permite agregar partes personalizadas.
+- data-testids: `ppf-scope-{serviceId}-{full|partes}`, `ppf-finish-{serviceId}-{brillante|mate}`, `ppf-color-{serviceId}`, `ppf-zone-{serviceId}-{interior|exterior}`, `ppf-part-input-{serviceId}`, `ppf-part-suggestions-{serviceId}`, `ppf-part-suggestion-{serviceId}-{part}`, `ppf-parts-chips-{serviceId}`, `ppf-part-remove-{serviceId}-{part}`.
+
+### Datos persistidos por servicio (`ServiceItem` en `server.py`)
+- `ppf_scope` ('full'|'partes'), `ppf_finish` ('brillante'|'mate'), `ppf_color`, `ppf_zones` (['interior','exterior']), `ppf_parts` (lista de partes), `ppf_parts_description` (autogenerada: "Partes (Exterior) · Mate · Color: Negro · Bomper, Capot").
+
+### PDF del recibo (`pdf_utils.py`)
+- Muestra detalle estructurado: "PPF: Full Body|Partes / Acabado / Color / Zonas / Partes". La descripción libre solo se muestra en órdenes antiguas sin campos estructurados (evita duplicación).
+
+### Testing
+- Screenshot E2E: plan Partes (Mate + Negro + Exterior + chips Bomper/Capot + sugerencias) y plan Full Body (solo Brillante + color). OK.
+- Backend curl: approve-ingreso con nuevos campos → persistidos correctamente en la orden.
+- PDF generado y texto extraído: detalle PPF correcto sin duplicación.
+- Lint: sin F811 nuevos.
+
+## Sesión anterior (2026-10-01 AM) — Iteración 22 (Marcas eléctricas + Códigos de Descuento)
 
 ### Marcas eléctricas / híbridas agregadas en Agendamiento (`/app/frontend/src/lib/utils.js`)
 - Tesla (Model 3/Y/S/X, Cybertruck, Roadster), Deepal (S07/S05/L07/E07), BYD (Yuan Plus/Atto 3, Dolphin, Seal, Han, Tang, Song Plus, Shark), MG (ZS EV, MG4, Marvel R, Cyberster), Zeekr, NIO, XPeng, Volvo (XC40/C40/EX30/EX90), Polestar, Porsche (Taycan, Macan Electric), Dongfeng, Changan, JAC, GWM (Ora, Haval HEV, Tank), Jetour, Chery, JMC, Maxus (eDeliver, Mifa 9).
