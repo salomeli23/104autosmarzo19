@@ -4,6 +4,56 @@
 Diseñar y desarrollar una aplicación web responsive para la gestión de agendamiento y operación de servicios técnicos automotrices. La aplicación debe permitir administrar servicios como Polarizado, Nanocerámica, etc. con roles de usuario y un flujo operativo completo desde el agendamiento hasta la entrega.
 
 ## Fecha de última actualización
+2026-10-01
+
+## Última Sesión (2026-10-01) — Iteración 22 (Marcas eléctricas + Códigos de Descuento)
+
+### Marcas eléctricas / híbridas agregadas en Agendamiento (`/app/frontend/src/lib/utils.js`)
+- Tesla (Model 3/Y/S/X, Cybertruck, Roadster), Deepal (S07/S05/L07/E07), BYD (Yuan Plus/Atto 3, Dolphin, Seal, Han, Tang, Song Plus, Shark), MG (ZS EV, MG4, Marvel R, Cyberster), Zeekr, NIO, XPeng, Volvo (XC40/C40/EX30/EX90), Polestar, Porsche (Taycan, Macan Electric), Dongfeng, Changan, JAC, GWM (Ora, Haval HEV, Tank), Jetour, Chery, JMC, Maxus (eDeliver, Mifa 9).
+- También se agregaron variantes eléctricas a marcas existentes (Ioniq 5/6 en Hyundai, EV6/EV9 en Kia, bZ4X en Toyota, Mustang Mach-E en Ford, ID.3/4/5/Buzz en VW, iX/i4/i5/i7 en BMW, EQA/EQB/EQC/EQE/EQS en Mercedes, Q4/Q6/Q8 e-tron en Audi, 500e en Fiat, Leaf/Ariya en Nissan, etc.).
+
+### Códigos de Descuento (nueva colección `discount_codes`)
+**Modelo**: `{ id, code, discount_type: 'percentage'|'fixed', discount_value, expires_at (YYYY-MM-DD opcional), active, notes, usage_count, last_used_at, created_at, created_by, created_by_name, updated_at }`.
+
+**Password administrativo**: `william123` (constante `DISCOUNT_ADMIN_PASSWORD` en `server.py`).
+
+**Endpoints** (`/api/discount-codes`):
+- `POST /admin/verify` — valida password admin (returns `{ok:true}` o 403).
+- `GET /` — lista (admin UI). Expone flag `expired` calculado por zona Colombia.
+- `POST /` — crear (requiere `admin_password`). Rechaza duplicados y valida tipo/valor/fecha.
+- `PATCH /{id}` — actualizar activo/valor/tipo/vencimiento/notas (requiere `admin_password`).
+- `DELETE /{id}?admin_password=…` — eliminar.
+- `GET /validate?code=X&subtotal=1000000` — devuelve `{code, discount_type, discount_value, expires_at, discount_amount, new_total}`. 404 si no existe, 400 si inactivo/vencido.
+
+**Aplicación en Órdenes**:
+- `OrderCreate.discount_code` opcional → al crear la orden, backend valida, calcula `discount_amount`, guarda `discount_code`, `discount_amount`, `discount_type`, `discount_value`, `discount_applied_at`, `discount_applied_stage='appointment'`, y `negotiated_value_before_discount`. El `negotiated_value` persistido queda NETO (ya con descuento aplicado).
+- `IngresoApproval.discount_code` opcional:
+  - Si la orden ya tiene `discount_code` desde agendamiento → **400** "Esta orden ya tiene aplicado el código X. No se puede aplicar otro código."
+  - Si no, valida y aplica. Guarda `discount_applied_stage='checkin'` y `final_value_before_discount`.
+  - Si la orden ya tiene descuento desde cita y NO viene `discount_code` nuevo → **re-aplica** el descuento del agendamiento al `final_value` bruto nuevo (que ya puede incluir upsell/extras adicionales).
+- `usage_count` del código se incrementa al aplicar en orden.
+
+### UI
+- **Appointments.jsx**: en el diálogo "Agendar Cita" se agregó bloque "Código de descuento (opcional)" con input + botón `Aplicar`/`Quitar`. Al aplicar, muestra línea verde en el resumen con `-$X` y el nuevo total.
+  - data-testids: `appointment-discount-input`, `appointment-discount-apply-btn`, `appointment-discount-remove-btn`, `appointment-discount-summary`, `appointment-discount-applied-msg`.
+- **CheckIn.jsx**: `calculateBreakdown()` ahora deduce descuento antes de IVA. Si la orden viene con `discount_code` desde cita, se precarga `discountApplied` con `from_appointment=true` y se bloquea el input mostrando el mensaje "Esta orden ya tiene aplicado el código X desde el agendamiento". Si no, se muestra input con Aplicar/Quitar. El `handleSubmit` envía `final_value` BRUTO (sin descuento) + `discount_code` (solo si es nuevo), y el backend hace el math.
+  - data-testids: `checkin-discount-input`, `checkin-discount-apply-btn`, `checkin-discount-remove-btn`, `checkin-discount-from-appointment`, `total-discount`.
+- **FacturacionElectronica.jsx**: nuevo tab "Descuentos" (grid-cols-3 TabsList) protegido por `william123`. Muestra cards con estado Activo/Inactivo/Vencido, usos, vencimiento, y botones Desactivar/Eliminar. Botón "Nuevo código" abre dialog con tipo (porcentaje/fijo), valor, vencimiento y notas.
+  - data-testids: `tab-descuentos`, `disc-admin-password-input`, `disc-admin-verify-btn`, `disc-create-btn`, `dc-code-input`, `dc-type-percentage`, `dc-type-fixed`, `dc-value-input`, `dc-expires-input`, `dc-notes-input`, `dc-save-btn`, `disc-code-card-{CODE}`, `disc-toggle-{CODE}`, `disc-delete-{CODE}`.
+
+### Testing (iteración 22)
+- Backend: **24/24 pytest PASS** cubriendo admin verify, CRUD de códigos, validate, aplicación en create_order (con fijo y porcentaje), rechazo de código vencido/inactivo, check-in que bloquea cuando ya existe código, re-aplicación de descuento de cita en check-in, PATCH toggle, DELETE y increment usage_count.
+- Frontend: tab Descuentos accedido con `william123`, creación de código TESTUI (15% percentage, vence 2026-12-31) con card Desactivar/Eliminar visible. En /appointments el input + botón Aplicar están presentes con guardas (requiere servicio seleccionado). En CheckIn, cuando orden trae descuento desde cita se muestra el testid `checkin-discount-from-appointment`.
+
+### Archivos modificados
+- `/app/backend/server.py`: nuevos modelos DiscountCodeCreate/Update/AdminAuth, helpers `_normalize_code`, `_is_discount_expired`, `_compute_discount_amount`, `_resolve_discount_code`, campos `discount_type/discount_value/discount_applied_at/discount_applied_stage` en OrderResponse, lógica discount en create_order y approve_ingreso, endpoints `/api/discount-codes/*`.
+- `/app/frontend/src/lib/utils.js`: 17 marcas eléctricas/híbridas nuevas + variantes EV en marcas existentes.
+- `/app/frontend/src/lib/api.js`: `discountCodesAPI`.
+- `/app/frontend/src/pages/Appointments.jsx`: estado `discountApplied`, `handleValidateDiscount`, UI de descuento en el dialog.
+- `/app/frontend/src/pages/CheckIn.jsx`: cálculo de descuento en breakdown, preload de código desde orden, UI de descuento, envío de final_value bruto.
+- `/app/frontend/src/pages/FacturacionElectronica.jsx`: tab Descuentos + dialog Crear.
+
+## Fecha de última actualización previa
 2026-09-30
 
 ## Última Sesión (2026-09-30 PM-4) — Iteración 31 (Reasignar cita con password 861123)
