@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ordersAPI, servicesAPI, slotsAPI, notificationsAPI, paymentsAPI } from '../lib/api';
+import { ordersAPI, servicesAPI, slotsAPI, notificationsAPI, paymentsAPI, discountCodesAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -63,7 +63,11 @@ export const Appointments = () => {
         appointment_type: 'franja', // 'franja' | 'prioridad'
         authorization_code: '',
         priority_reason: '',
+        discount_code: '',
     });
+    // Estado del código de descuento validado
+    const [discountApplied, setDiscountApplied] = useState(null); // { code, discount_type, discount_value, discount_amount, new_total }
+    const [validatingDiscount, setValidatingDiscount] = useState(false);
 
     // Fetch service catalog on mount
     useEffect(() => {
@@ -386,12 +390,44 @@ export const Appointments = () => {
             appointment_type: 'franja',
             authorization_code: '',
             priority_reason: '',
+            discount_code: '',
         });
         setSelectedServices([]);
         setCustomServiceName('');
         setCustomServicePrice('');
         setBrandSuggestions([]);
         setModelSuggestions([]);
+        setDiscountApplied(null);
+    };
+
+    // Validar código de descuento sobre el subtotal actual
+    const handleValidateDiscount = async () => {
+        const code = (formData.discount_code || '').trim();
+        if (!code) {
+            toast.error('Ingresa un código de descuento');
+            return;
+        }
+        const subtotal = calculateTotal();
+        if (subtotal <= 0) {
+            toast.error('Agrega al menos un servicio antes de validar el código');
+            return;
+        }
+        setValidatingDiscount(true);
+        try {
+            const res = await discountCodesAPI.validate(code, subtotal);
+            setDiscountApplied(res.data);
+            toast.success(`Código ${res.data.code} aplicado: -${formatCurrency(res.data.discount_amount)}`);
+        } catch (e) {
+            setDiscountApplied(null);
+            toast.error(e.response?.data?.detail || 'Código inválido');
+        } finally {
+            setValidatingDiscount(false);
+        }
+    };
+
+    const handleRemoveDiscount = () => {
+        setDiscountApplied(null);
+        setFormData(prev => ({ ...prev, discount_code: '' }));
     };
 
     const handleSubmit = async (e) => {
@@ -466,6 +502,7 @@ export const Appointments = () => {
                 is_priority: isPriority,
                 authorization_code: isPriority ? formData.authorization_code.trim() : null,
                 priority_reason: isPriority ? (formData.priority_reason || null) : null,
+                discount_code: discountApplied ? discountApplied.code : null,
             };
 
             const response = await ordersAPI.create(submitData);
@@ -1270,7 +1307,68 @@ export const Appointments = () => {
                                             <span>Total:</span>
                                             <span className="text-primary">{formatCurrency(calculateTotal())}</span>
                                         </div>
+                                        {discountApplied && (
+                                            <div className="pt-2 mt-2 border-t border-emerald-500/30 space-y-1 text-sm" data-testid="appointment-discount-summary">
+                                                <div className="flex justify-between text-emerald-300">
+                                                    <span>Descuento ({discountApplied.code}
+                                                        {discountApplied.discount_type === 'percentage' ? ` · ${discountApplied.discount_value}%` : ''})
+                                                    </span>
+                                                    <span className="font-mono">-{formatCurrency(discountApplied.discount_amount)}</span>
+                                                </div>
+                                                <div className="flex justify-between font-bold text-emerald-300">
+                                                    <span>Total con descuento:</span>
+                                                    <span>{formatCurrency(discountApplied.new_total)}</span>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
+                                )}
+                            </div>
+
+                            {/* Código de descuento */}
+                            <div className="space-y-2 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5">
+                                <Label htmlFor="discount_code" className="flex items-center gap-2 text-emerald-400">
+                                    <DollarSign className="w-4 h-4" />
+                                    Código de descuento (opcional)
+                                </Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        id="discount_code"
+                                        value={formData.discount_code}
+                                        onChange={(e) => {
+                                            const v = e.target.value.toUpperCase();
+                                            setFormData(prev => ({ ...prev, discount_code: v }));
+                                            if (discountApplied && v !== discountApplied.code) setDiscountApplied(null);
+                                        }}
+                                        placeholder="Ej: PROMO10"
+                                        disabled={!!discountApplied}
+                                        data-testid="appointment-discount-input"
+                                    />
+                                    {discountApplied ? (
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            onClick={handleRemoveDiscount}
+                                            data-testid="appointment-discount-remove-btn"
+                                        >
+                                            Quitar
+                                        </Button>
+                                    ) : (
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            onClick={handleValidateDiscount}
+                                            disabled={validatingDiscount || !formData.discount_code || calculateTotal() <= 0}
+                                            data-testid="appointment-discount-apply-btn"
+                                        >
+                                            {validatingDiscount ? 'Validando...' : 'Aplicar'}
+                                        </Button>
+                                    )}
+                                </div>
+                                {discountApplied && (
+                                    <p className="text-xs text-emerald-300" data-testid="appointment-discount-applied-msg">
+                                        Descuento aplicado: -{formatCurrency(discountApplied.discount_amount)} · Total: {formatCurrency(discountApplied.new_total)}
+                                    </p>
                                 )}
                             </div>
 
@@ -1354,7 +1452,7 @@ export const Appointments = () => {
                                 }
                             >
                                 <DollarSign className="w-4 h-4 mr-2" />
-                                Agendar Cita - {formatCurrency(calculateTotal())}
+                                Agendar Cita - {formatCurrency(discountApplied ? discountApplied.new_total : calculateTotal())}
                             </Button>
                         </form>
                     </DialogContent>

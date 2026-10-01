@@ -274,4 +274,14 @@ export const paymentsAPI = {
     seedTestOrders: () => api.post('/seed/test-orders'),
 };
 
+// Códigos de descuento
+export const discountCodesAPI = {
+    verifyAdmin: (admin_password) => api.post('/discount-codes/admin/verify', { admin_password }),
+    list: (include_inactive = true) => api.get('/discount-codes', { params: { include_inactive } }),
+    create: (data) => api.post('/discount-codes', data),
+    update: (id, data) => api.patch(`/discount-codes/${id}`, data),
+    delete: (id, admin_password) => api.delete(`/discount-codes/${id}`, { params: { admin_password } }),
+    validate: (code, subtotal) => api.get('/discount-codes/validate', { params: { code, subtotal } }),
+};
+
 export default api;

@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { paymentsAPI } from '../lib/api';
+import { paymentsAPI, discountCodesAPI } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { PlateBadge } from '../components/PlateBadge';
 import { formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
 import {
     FileText, Mail, Loader2, User, Phone, CheckCircle2,
     Receipt, MapPin, Percent, IdCard, ShieldCheck, Search,
-    Download, MailPlus, Edit3,
+    Download, MailPlus, Edit3, Tag, Lock, Plus, Trash2, Calendar, Power,
 } from 'lucide-react';
 
 const RETEICA_PRESETS = [6.9, 11.4];
@@ -45,6 +45,21 @@ export const FacturacionElectronica = () => {
     const [retSummary, setRetSummary] = useState({ count: 0, total_reteica: 0, total_retefuente: 0, total_retention: 0 });
     const [retQ, setRetQ] = useState('');
 
+    // ====== Códigos de descuento (admin, protegido por william123) ======
+    const [discAuthed, setDiscAuthed] = useState(false);
+    const [discPasswordInput, setDiscPasswordInput] = useState('');
+    const [discVerifying, setDiscVerifying] = useState(false);
+    const [discCodes, setDiscCodes] = useState([]);
+    const [discLoading, setDiscLoading] = useState(false);
+    // Dialog de crear
+    const [showDiscCreate, setShowDiscCreate] = useState(false);
+    const [dcCode, setDcCode] = useState('');
+    const [dcType, setDcType] = useState('percentage');
+    const [dcValue, setDcValue] = useState('');
+    const [dcExpires, setDcExpires] = useState('');
+    const [dcNotes, setDcNotes] = useState('');
+    const [dcSaving, setDcSaving] = useState(false);
+
     const load = useCallback(async () => {
         try {
             const res = await paymentsAPI.pendingInvoice(true); // include sent
@@ -68,6 +83,98 @@ export const FacturacionElectronica = () => {
 
     useEffect(() => { load(); }, [load]);
     useEffect(() => { if (tab === 'impuestos') loadRetentions(); }, [tab, loadRetentions]);
+
+    // ====== Discount codes: funciones ======
+    const loadDiscCodes = useCallback(async () => {
+        setDiscLoading(true);
+        try {
+            const res = await discountCodesAPI.list(true);
+            setDiscCodes(res.data || []);
+        } catch (e) {
+            toast.error('Error al cargar códigos de descuento');
+        } finally {
+            setDiscLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (tab === 'descuentos' && discAuthed) {
+            loadDiscCodes();
+        }
+    }, [tab, discAuthed, loadDiscCodes]);
+
+    const handleDiscAdminVerify = async () => {
+        if (!discPasswordInput) {
+            toast.error('Ingresa la contraseña de administración');
+            return;
+        }
+        setDiscVerifying(true);
+        try {
+            await discountCodesAPI.verifyAdmin(discPasswordInput);
+            setDiscAuthed(true);
+            toast.success('Acceso autorizado');
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Contraseña inválida');
+            setDiscAuthed(false);
+        } finally {
+            setDiscVerifying(false);
+        }
+    };
+
+    const resetDiscCreate = () => {
+        setDcCode('');
+        setDcType('percentage');
+        setDcValue('');
+        setDcExpires('');
+        setDcNotes('');
+    };
+
+    const handleCreateDiscount = async () => {
+        if (!dcCode.trim()) { toast.error('Código requerido'); return; }
+        if (!dcValue || parseFloat(dcValue) <= 0) { toast.error('Valor debe ser > 0'); return; }
+        if (dcType === 'percentage' && parseFloat(dcValue) > 100) { toast.error('El porcentaje no puede ser mayor a 100'); return; }
+        setDcSaving(true);
+        try {
+            await discountCodesAPI.create({
+                code: dcCode.trim().toUpperCase(),
+                discount_type: dcType,
+                discount_value: parseFloat(dcValue),
+                expires_at: dcExpires || null,
+                active: true,
+                notes: dcNotes || null,
+                admin_password: discPasswordInput,
+            });
+            toast.success('Código creado');
+            setShowDiscCreate(false);
+            resetDiscCreate();
+            loadDiscCodes();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Error al crear código');
+        } finally {
+            setDcSaving(false);
+        }
+    };
+
+    const handleToggleDiscount = async (code) => {
+        try {
+            await discountCodesAPI.update(code.id, { active: !code.active, admin_password: discPasswordInput });
+            toast.success(code.active ? 'Código desactivado' : 'Código activado');
+            loadDiscCodes();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Error al actualizar');
+        }
+    };
+
+    const handleDeleteDiscount = async (code) => {
+        if (!window.confirm(`¿Eliminar código ${code.code}? Esta acción no se puede deshacer.`)) return;
+        try {
+            await discountCodesAPI.delete(code.id, discPasswordInput);
+            toast.success('Código eliminado');
+            loadDiscCodes();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Error al eliminar');
+        }
+    };
 
     const openRetention = (o) => {
         setRetentionOrder(o);
@@ -183,12 +290,15 @@ export const FacturacionElectronica = () => {
             </div>
 
             <Tabs value={tab} onValueChange={setTab} className="w-full">
-                <TabsList className="grid grid-cols-2 w-full max-w-md">
+                <TabsList className="grid grid-cols-3 w-full max-w-xl">
                     <TabsTrigger value="pendientes" data-testid="tab-pendientes">
                         <FileText className="w-4 h-4 mr-2" /> Pendientes
                     </TabsTrigger>
                     <TabsTrigger value="impuestos" data-testid="tab-impuestos">
                         <Receipt className="w-4 h-4 mr-2" /> Impuestos
+                    </TabsTrigger>
+                    <TabsTrigger value="descuentos" data-testid="tab-descuentos">
+                        <Tag className="w-4 h-4 mr-2" /> Descuentos
                     </TabsTrigger>
                 </TabsList>
 
@@ -401,6 +511,115 @@ export const FacturacionElectronica = () => {
                                 </Card>
                             ))}
                         </div>
+                    )}
+                </TabsContent>
+
+                {/* DESCUENTOS TAB */}
+                <TabsContent value="descuentos" className="mt-4 space-y-3">
+                    {!discAuthed ? (
+                        <Card className="border-emerald-500/40 bg-emerald-500/5 max-w-md mx-auto">
+                            <CardContent className="p-6 space-y-4">
+                                <div className="flex items-center gap-3">
+                                    <Lock className="w-6 h-6 text-emerald-400" />
+                                    <div>
+                                        <p className="font-medium text-emerald-300">Zona administrativa</p>
+                                        <p className="text-sm text-muted-foreground">Ingresa la contraseña para administrar códigos de descuento</p>
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="disc-admin-pwd">Contraseña</Label>
+                                    <Input
+                                        id="disc-admin-pwd"
+                                        type="password"
+                                        value={discPasswordInput}
+                                        onChange={(e) => setDiscPasswordInput(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handleDiscAdminVerify(); }}
+                                        placeholder="Contraseña de administración"
+                                        data-testid="disc-admin-password-input"
+                                    />
+                                </div>
+                                <Button
+                                    onClick={handleDiscAdminVerify}
+                                    disabled={discVerifying || !discPasswordInput}
+                                    className="w-full"
+                                    data-testid="disc-admin-verify-btn"
+                                >
+                                    {discVerifying ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+                                    Ingresar
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    ) : (
+                        <>
+                            <Card className="border-emerald-500/40 bg-emerald-500/5">
+                                <CardContent className="p-4 flex items-center justify-between gap-3 flex-wrap">
+                                    <div className="flex items-start gap-3 text-sm">
+                                        <Tag className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                                        <div>
+                                            <p className="font-medium text-emerald-400">Códigos de descuento</p>
+                                            <p className="text-muted-foreground">Crea códigos fijos o porcentuales. Se aplican en Agendamiento o Check-in.</p>
+                                        </div>
+                                    </div>
+                                    <Button onClick={() => setShowDiscCreate(true)} data-testid="disc-create-btn">
+                                        <Plus className="w-4 h-4 mr-2" /> Nuevo código
+                                    </Button>
+                                </CardContent>
+                            </Card>
+
+                            {discLoading ? (
+                                <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin" /></div>
+                            ) : discCodes.length === 0 ? (
+                                <Card>
+                                    <CardContent className="p-8 text-center text-muted-foreground">
+                                        No hay códigos de descuento. Crea el primero con el botón &quot;Nuevo código&quot;.
+                                    </CardContent>
+                                </Card>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {discCodes.map(c => {
+                                        const expired = !!c.expired;
+                                        const inactive = !c.active;
+                                        return (
+                                            <Card key={c.id} className={`${expired ? 'border-red-500/40' : inactive ? 'border-amber-500/40' : 'border-emerald-500/40'}`} data-testid={`disc-code-card-${c.code}`}>
+                                                <CardContent className="p-4 space-y-2">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <Tag className="w-5 h-5 text-emerald-400" />
+                                                            <span className="font-mono text-lg font-bold">{c.code}</span>
+                                                        </div>
+                                                        <div className="flex gap-1">
+                                                            {inactive && <Badge variant="outline" className="border-amber-500 text-amber-500">Inactivo</Badge>}
+                                                            {expired && <Badge variant="outline" className="border-red-500 text-red-500">Vencido</Badge>}
+                                                            {!inactive && !expired && <Badge variant="outline" className="border-emerald-500 text-emerald-500">Activo</Badge>}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-sm">
+                                                        <span className="text-muted-foreground">Descuento: </span>
+                                                        <span className="font-bold text-emerald-300">
+                                                            {c.discount_type === 'percentage' ? `${c.discount_value}%` : formatCurrency(c.discount_value)}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground flex items-center gap-1">
+                                                        <Calendar className="w-3 h-3" />
+                                                        Vence: {c.expires_at || 'sin vencimiento'}
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground">Usos: {c.usage_count || 0}</div>
+                                                    {c.notes && <div className="text-xs text-muted-foreground italic">{c.notes}</div>}
+                                                    <div className="flex gap-2 pt-2">
+                                                        <Button size="sm" variant="outline" onClick={() => handleToggleDiscount(c)} data-testid={`disc-toggle-${c.code}`}>
+                                                            <Power className="w-3 h-3 mr-1" /> {c.active ? 'Desactivar' : 'Activar'}
+                                                        </Button>
+                                                        <Button size="sm" variant="outline" className="text-red-500" onClick={() => handleDeleteDiscount(c)} data-testid={`disc-delete-${c.code}`}>
+                                                            <Trash2 className="w-3 h-3 mr-1" /> Eliminar
+                                                        </Button>
+                                                    </div>
+                                                </CardContent>
+                                            </Card>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </>
                     )}
                 </TabsContent>
             </Tabs>
@@ -630,6 +849,92 @@ export const FacturacionElectronica = () => {
                             Guardar correo
                         </Button>
                     </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* CREATE DISCOUNT DIALOG */}
+            <Dialog open={showDiscCreate} onOpenChange={(v) => { if (!v) { setShowDiscCreate(false); resetDiscCreate(); } }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2"><Tag className="w-5 h-5 text-emerald-400" /> Nuevo código de descuento</DialogTitle>
+                        <DialogDescription>Define el código, el tipo de descuento y una fecha opcional de vencimiento.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div>
+                            <Label htmlFor="dc-code">Código *</Label>
+                            <Input
+                                id="dc-code"
+                                value={dcCode}
+                                onChange={(e) => setDcCode(e.target.value.toUpperCase())}
+                                placeholder="Ej: PROMO10"
+                                data-testid="dc-code-input"
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <Label>Tipo *</Label>
+                                <div className="flex gap-2 mt-1">
+                                    <Button
+                                        type="button"
+                                        variant={dcType === 'percentage' ? 'default' : 'outline'}
+                                        size="sm"
+                                        onClick={() => setDcType('percentage')}
+                                        data-testid="dc-type-percentage"
+                                    >
+                                        <Percent className="w-3 h-3 mr-1" /> Porcentaje
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant={dcType === 'fixed' ? 'default' : 'outline'}
+                                        size="sm"
+                                        onClick={() => setDcType('fixed')}
+                                        data-testid="dc-type-fixed"
+                                    >
+                                        $ Fijo
+                                    </Button>
+                                </div>
+                            </div>
+                            <div>
+                                <Label htmlFor="dc-value">Valor *</Label>
+                                <Input
+                                    id="dc-value"
+                                    type="number"
+                                    value={dcValue}
+                                    onChange={(e) => setDcValue(e.target.value)}
+                                    placeholder={dcType === 'percentage' ? '10' : '50000'}
+                                    data-testid="dc-value-input"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <Label htmlFor="dc-expires">Vencimiento *</Label>
+                            <Input
+                                id="dc-expires"
+                                type="date"
+                                value={dcExpires}
+                                onChange={(e) => setDcExpires(e.target.value)}
+                                data-testid="dc-expires-input"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">Después de esta fecha el código dejará de ser válido.</p>
+                        </div>
+                        <div>
+                            <Label htmlFor="dc-notes">Notas (opcional)</Label>
+                            <Input
+                                id="dc-notes"
+                                value={dcNotes}
+                                onChange={(e) => setDcNotes(e.target.value)}
+                                placeholder="Ej: Campaña enero"
+                                data-testid="dc-notes-input"
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => { setShowDiscCreate(false); resetDiscCreate(); }}>Cancelar</Button>
+                        <Button onClick={handleCreateDiscount} disabled={dcSaving} data-testid="dc-save-btn">
+                            {dcSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
+                            Crear código
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>

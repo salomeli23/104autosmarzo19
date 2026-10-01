@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { ordersAPI, servicesAPI, serviceExtrasAPI } from '../lib/api';
+import { ordersAPI, servicesAPI, serviceExtrasAPI, discountCodesAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -49,6 +49,10 @@ export const CheckIn = () => {
     const [sendingPhotos, setSendingPhotos] = useState(false);
     const [paymentMethod, setPaymentMethod] = useState('efectivo'); // efectivo | tarjeta | transferencia
     const [requiresInvoice, setRequiresInvoice] = useState(false);
+    // Código de descuento
+    const [discountCodeInput, setDiscountCodeInput] = useState('');
+    const [discountApplied, setDiscountApplied] = useState(null); // { code, discount_type, discount_value, discount_amount, new_total }
+    const [validatingDiscount, setValidatingDiscount] = useState(false);
     // Overrides de precio de extras (por id) para permitir editar el Sunroof en Check-in
     const [extraPriceOverrides, setExtraPriceOverrides] = useState({});
     
@@ -125,6 +129,22 @@ export const CheckIn = () => {
             });
             if (Object.keys(overrides).length) setExtraPriceOverrides(overrides);
             setCedulaNumber(orderRes.data.client_cedula || '');
+            
+            // Precargar descuento aplicado en el agendamiento (si existe)
+            if (orderRes.data.discount_code) {
+                setDiscountCodeInput(orderRes.data.discount_code);
+                setDiscountApplied({
+                    code: orderRes.data.discount_code,
+                    discount_type: orderRes.data.discount_type,
+                    discount_value: orderRes.data.discount_value,
+                    discount_amount: orderRes.data.discount_amount,
+                    new_total: null,
+                    from_appointment: true,
+                });
+            } else {
+                setDiscountCodeInput('');
+                setDiscountApplied(null);
+            }
             
             setStep(2);
             toast.success('Orden encontrada');
@@ -332,12 +352,61 @@ export const CheckIn = () => {
         const extrasSum = extras.reduce((s, e) => s + (e.price || 0), 0);
         const baseSurcharge = subtotal + extrasSum;
         const cardSurcharge = 0; // ← eliminado 5% tarjeta
-        const baseTax = baseSurcharge;
+        // Aplicar descuento antes de IVA (descuento sobre subtotal+extras)
+        let discountAmount = 0;
+        if (discountApplied) {
+            if (discountApplied.discount_type === 'percentage') {
+                discountAmount = Math.round(baseSurcharge * (parseFloat(discountApplied.discount_value) || 0) / 100);
+            } else {
+                discountAmount = Math.round(parseFloat(discountApplied.discount_value) || 0);
+            }
+            if (discountAmount > baseSurcharge) discountAmount = baseSurcharge;
+        }
+        const baseTax = Math.max(baseSurcharge - discountAmount, 0);
         const iva = requiresInvoice ? Math.round(baseTax * 0.19) : 0;
         const total = baseTax + iva;
-        return { subtotal, extras, extrasSum, cardSurcharge, iva, total };
+        return { subtotal, extras, extrasSum, cardSurcharge, discountAmount, iva, total };
     };
     const calculateTotal = () => calculateBreakdown().total;
+
+    // Validar código de descuento (solo si la orden no tiene uno aplicado)
+    const handleValidateDiscount = async () => {
+        if (order?.discount_code) {
+            toast.error('Esta orden ya tiene un código aplicado desde el agendamiento');
+            return;
+        }
+        const code = (discountCodeInput || '').trim();
+        if (!code) {
+            toast.error('Ingresa un código de descuento');
+            return;
+        }
+        const bk = (() => {
+            const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
+            const extras = applicableExtras();
+            const extrasSum = extras.reduce((s, e) => s + (e.price || 0), 0);
+            return subtotal + extrasSum;
+        })();
+        if (bk <= 0) {
+            toast.error('Agrega al menos un servicio antes de validar el código');
+            return;
+        }
+        setValidatingDiscount(true);
+        try {
+            const res = await discountCodesAPI.validate(code, bk);
+            setDiscountApplied(res.data);
+            toast.success(`Código ${res.data.code} aplicado: -${formatCurrency(res.data.discount_amount)}`);
+        } catch (e) {
+            setDiscountApplied(null);
+            toast.error(e.response?.data?.detail || 'Código inválido');
+        } finally {
+            setValidatingDiscount(false);
+        }
+    };
+
+    const handleRemoveDiscount = () => {
+        setDiscountApplied(null);
+        setDiscountCodeInput('');
+    };
 
     // Check if any selected service is polarizado/ultrasecure
     const hasPolarizadoService = () => {
@@ -408,6 +477,12 @@ export const CheckIn = () => {
         setLoading(true);
         try {
             const bk = calculateBreakdown();
+            // Enviar valor BRUTO (sin descuento) y dejar que backend aplique el descuento
+            const subtotalGross = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
+            const extrasGross = bk.extras.reduce((s, e) => s + (e.price || 0), 0);
+            const baseGross = subtotalGross + extrasGross;
+            const ivaGross = requiresInvoice ? Math.round(baseGross * 0.19) : 0;
+            const grossFinalValue = baseGross + ivaGross;
             const servicesData = selectedServices.map(svc => ({
                 service: svc.serviceId,
                 price: svc.price,
@@ -424,13 +499,14 @@ export const CheckIn = () => {
             await ordersAPI.approveIngreso({
                 order_id: order.id,
                 services: servicesData,
-                final_value: total,
+                final_value: grossFinalValue,
                 signature_url: signature,
                 cedula_number: cedulaNumber,
                 risk_agreement_accepted: riskAgreementAccepted,
                 profile_photo_url: profilePhoto,
                 payment_method: paymentMethod,
                 requires_invoice: requiresInvoice,
+                discount_code: (discountApplied && !discountApplied.from_appointment) ? discountApplied.code : null,
             });
 
             toast.success('Ingreso aprobado exitosamente');
@@ -1321,6 +1397,16 @@ export const CheckIn = () => {
                                                 <span className="font-mono">+{formatCurrency(bk.iva)}</span>
                                             </div>
                                         )}
+                                        {bk.discountAmount > 0 && discountApplied && (
+                                            <div className="flex justify-between text-sm text-emerald-300" data-testid="total-discount">
+                                                <span>
+                                                    Descuento ({discountApplied.code}
+                                                    {discountApplied.discount_type === 'percentage' ? ` · ${discountApplied.discount_value}%` : ''}
+                                                    {discountApplied.from_appointment ? ' · desde cita' : ''})
+                                                </span>
+                                                <span className="font-mono">-{formatCurrency(bk.discountAmount)}</span>
+                                            </div>
+                                        )}
                                         <div className="flex justify-between items-center pt-2 border-t border-cyan-500/20">
                                             <span className="font-medium">Total:</span>
                                             <span className="text-2xl font-bold text-primary" data-testid="total-value">{formatCurrency(bk.total)}</span>
@@ -1328,6 +1414,59 @@ export const CheckIn = () => {
                                     </div>
                                 );
                             })()}
+
+                            {/* Código de descuento */}
+                            <div className="mt-3 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 space-y-2" data-testid="checkin-discount-block">
+                                <Label className="text-sm font-medium text-emerald-300 flex items-center gap-2">
+                                    <DollarSign className="w-4 h-4" /> Código de descuento (opcional)
+                                </Label>
+                                {order?.discount_code && discountApplied?.from_appointment ? (
+                                    <div className="text-xs text-emerald-200" data-testid="checkin-discount-from-appointment">
+                                        Esta orden ya tiene aplicado el código <b>{order.discount_code}</b> desde el agendamiento. No se puede aplicar otro.
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex gap-2">
+                                            <Input
+                                                value={discountCodeInput}
+                                                onChange={(e) => {
+                                                    const v = e.target.value.toUpperCase();
+                                                    setDiscountCodeInput(v);
+                                                    if (discountApplied && v !== discountApplied.code) setDiscountApplied(null);
+                                                }}
+                                                placeholder="Ej: PROMO10"
+                                                disabled={!!discountApplied}
+                                                data-testid="checkin-discount-input"
+                                            />
+                                            {discountApplied ? (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    onClick={handleRemoveDiscount}
+                                                    data-testid="checkin-discount-remove-btn"
+                                                >
+                                                    Quitar
+                                                </Button>
+                                            ) : (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    onClick={handleValidateDiscount}
+                                                    disabled={validatingDiscount || !discountCodeInput}
+                                                    data-testid="checkin-discount-apply-btn"
+                                                >
+                                                    {validatingDiscount ? 'Validando...' : 'Aplicar'}
+                                                </Button>
+                                            )}
+                                        </div>
+                                        {discountApplied && !discountApplied.from_appointment && (
+                                            <p className="text-xs text-emerald-300" data-testid="checkin-discount-applied-msg">
+                                                Descuento aplicado: {discountApplied.code} · -{formatCurrency(calculateBreakdown().discountAmount)}
+                                            </p>
+                                        )}
+                                    </>
+                                )}
+                            </div>
                         </CardContent>
                     </Card>
 

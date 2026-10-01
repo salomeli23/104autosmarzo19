@@ -258,6 +258,8 @@ class OrderCreate(BaseModel):
     is_priority: Optional[bool] = False
     authorization_code: Optional[str] = None
     priority_reason: Optional[str] = None
+    # Código de descuento (opcional)
+    discount_code: Optional[str] = None
     # Postventa / Garantía
     is_postventa: Optional[bool] = False
     postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
@@ -310,6 +312,10 @@ class OrderResponse(BaseModel):
     payment_reference: Optional[str] = None
     discount_code: Optional[str] = None
     discount_amount: Optional[float] = None
+    discount_type: Optional[str] = None  # 'percentage' | 'fixed'
+    discount_value: Optional[float] = None
+    discount_applied_at: Optional[str] = None
+    discount_applied_stage: Optional[str] = None  # 'appointment' | 'checkin'
     paid_at: Optional[str] = None
     # Entrega data
     delivery_photo_url: Optional[str] = None
@@ -372,6 +378,7 @@ class IngresoApproval(BaseModel):
     profile_photo_url: Optional[str] = None  # foto frontal del vehículo (requerida en /checkin)
     payment_method: Optional[str] = None  # 'efectivo' | 'tarjeta' | 'transferencia'
     requires_invoice: bool = False  # si True, se añadió IVA 19%
+    discount_code: Optional[str] = None  # código de descuento opcional (solo si la orden no tiene uno)
 
 class InspectionData(BaseModel):
     order_id: str
@@ -415,6 +422,71 @@ class NotificationRequest(BaseModel):
     send_email: bool = False
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
+
+# ==================== DISCOUNT CODES ====================
+DISCOUNT_ADMIN_PASSWORD = "william123"
+
+class DiscountCodeCreate(BaseModel):
+    code: str
+    discount_type: str  # 'percentage' | 'fixed'
+    discount_value: float
+    expires_at: Optional[str] = None  # ISO date 'YYYY-MM-DD'
+    active: bool = True
+    admin_password: str
+    notes: Optional[str] = None
+
+class DiscountCodeUpdate(BaseModel):
+    discount_type: Optional[str] = None
+    discount_value: Optional[float] = None
+    expires_at: Optional[str] = None
+    active: Optional[bool] = None
+    notes: Optional[str] = None
+    admin_password: str
+
+class DiscountAdminAuth(BaseModel):
+    admin_password: str
+
+def _normalize_code(code: str) -> str:
+    return (code or "").strip().upper()
+
+def _is_discount_expired(doc: dict) -> bool:
+    exp = (doc or {}).get("expires_at")
+    if not exp:
+        return False
+    try:
+        # Format YYYY-MM-DD => expired al terminar ese día
+        exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
+        today = get_colombia_time().date()
+        return today > exp_date
+    except Exception:
+        return False
+
+def _compute_discount_amount(subtotal: float, dtype: str, dvalue: float) -> float:
+    """Devuelve el monto absoluto a descontar (nunca mayor al subtotal)."""
+    try:
+        subtotal = float(subtotal or 0)
+        dvalue = float(dvalue or 0)
+    except Exception:
+        return 0.0
+    if subtotal <= 0 or dvalue <= 0:
+        return 0.0
+    if (dtype or "").lower() == "percentage":
+        return round(min(subtotal * dvalue / 100.0, subtotal), 2)
+    return round(min(dvalue, subtotal), 2)
+
+async def _resolve_discount_code(code: str) -> Optional[dict]:
+    """Busca un código activo y vigente. Devuelve el documento o None."""
+    norm = _normalize_code(code)
+    if not norm:
+        return None
+    doc = await db.discount_codes.find_one({"code": norm}, {"_id": 0})
+    if not doc:
+        return None
+    if not doc.get("active", True):
+        return None
+    if _is_discount_expired(doc):
+        return None
+    return doc
 
 # ==================== AUTH ENDPOINTS ====================
 @api_router.post("/auth/register", response_model=TokenResponse)
@@ -973,6 +1045,20 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     order_code = generate_order_code()
     qr_code = generate_qr_code(order_code)
     
+    # Resolver código de descuento (si se envió)
+    disc_doc = None
+    disc_amount = 0.0
+    if order.discount_code:
+        disc_doc = await _resolve_discount_code(order.discount_code)
+        if not disc_doc:
+            raise HTTPException(status_code=400, detail="Código de descuento inválido, inactivo o vencido")
+        disc_amount = _compute_discount_amount(
+            order.negotiated_value, disc_doc.get("discount_type"), disc_doc.get("discount_value")
+        )
+    
+    # Valor negociado neto (ya con descuento aplicado)
+    net_value = round(max(float(order.negotiated_value) - disc_amount, 0), 2)
+    
     # Cita por PRIORIDAD: se agenda con la hora actual de Colombia y se
     # habilita el check-in inmediato (no se aplica gate de scheduled_time).
     if order.is_priority:
@@ -1002,7 +1088,8 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "is_priority": bool(order.is_priority),
         "priority_reason": order.priority_reason if order.is_priority else None,
         "services": [s.model_dump() for s in order.services],
-        "negotiated_value": order.negotiated_value,
+        "negotiated_value": net_value,
+        "negotiated_value_before_discount": float(order.negotiated_value),
         "final_value": None,
         "status": OrderStatus.AGENDADO.value,
         "notes": order.notes,
@@ -1023,8 +1110,12 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "technician_notes": None,
         "payment_method": None,
         "payment_reference": None,
-        "discount_code": None,
-        "discount_amount": None,
+        "discount_code": disc_doc.get("code") if disc_doc else None,
+        "discount_amount": disc_amount if disc_doc else None,
+        "discount_type": disc_doc.get("discount_type") if disc_doc else None,
+        "discount_value": disc_doc.get("discount_value") if disc_doc else None,
+        "discount_applied_at": datetime.now(timezone.utc).isoformat() if disc_doc else None,
+        "discount_applied_stage": "appointment" if disc_doc else None,
         "paid_at": None,
         "delivery_photo_url": None,
         "delivered_at": None,
@@ -1040,6 +1131,16 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "updated_at": None
     }
     await db.orders.insert_one(order_doc)
+    
+    # Incrementar contador de uso del código de descuento
+    if disc_doc:
+        try:
+            await db.discount_codes.update_one(
+                {"code": disc_doc["code"]},
+                {"$inc": {"usage_count": 1}, "$set": {"last_used_at": datetime.now(timezone.utc).isoformat()}}
+            )
+        except Exception as _e:
+            logger.warning(f"[discount] no se pudo incrementar uso de {disc_doc.get('code')}: {_e}")
     
     return OrderResponse(**{k: v for k, v in order_doc.items() if k != "_id"})
 
@@ -1639,9 +1740,37 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
     if not data.profile_photo_url:
         raise HTTPException(status_code=400, detail="La foto frontal del vehículo es requerida")
     
+    # ===== Código de descuento en check-in =====
+    # Si la orden ya tiene un código aplicado (desde agendamiento), no se puede aplicar otro.
+    final_value_raw = float(data.final_value or 0)
+    disc_doc_ci = None
+    disc_amount_ci = 0.0
+    existing_disc = order.get("discount_code")
+    if data.discount_code:
+        if existing_disc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Esta orden ya tiene aplicado el código {existing_disc}. No se puede aplicar otro código.",
+            )
+        disc_doc_ci = await _resolve_discount_code(data.discount_code)
+        if not disc_doc_ci:
+            raise HTTPException(status_code=400, detail="Código de descuento inválido, inactivo o vencido")
+        disc_amount_ci = _compute_discount_amount(
+            final_value_raw, disc_doc_ci.get("discount_type"), disc_doc_ci.get("discount_value")
+        )
+    elif existing_disc:
+        # Reaplicar el descuento existente del agendamiento sobre el final_value bruto nuevo
+        disc_amount_ci = _compute_discount_amount(
+            final_value_raw, order.get("discount_type"), order.get("discount_value")
+        )
+    
+    # final_value neto (después de aplicar descuento, si corresponde)
+    net_final_value = round(max(final_value_raw - disc_amount_ci, 0), 2)
+    
     update_data = {
         "services": [s.model_dump() for s in data.services],
-        "final_value": data.final_value,
+        "final_value": net_final_value,
+        "final_value_before_discount": final_value_raw if (disc_doc_ci or existing_disc) else order.get("final_value_before_discount"),
         "signature_url": data.signature_url,
         "client_cedula": data.cedula_number,
         "risk_agreement_accepted": data.risk_agreement_accepted,
@@ -1652,8 +1781,30 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         "ingreso_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
+    if disc_doc_ci:
+        update_data.update({
+            "discount_code": disc_doc_ci.get("code"),
+            "discount_amount": disc_amount_ci,
+            "discount_type": disc_doc_ci.get("discount_type"),
+            "discount_value": disc_doc_ci.get("discount_value"),
+            "discount_applied_at": datetime.now(timezone.utc).isoformat(),
+            "discount_applied_stage": "checkin",
+        })
+    elif existing_disc:
+        # Actualizar monto del descuento ya existente para reflejar el nuevo final_value_before_discount
+        update_data["discount_amount"] = disc_amount_ci
     
     await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
+    
+    # Incrementar uso del código si se aplicó en check-in
+    if disc_doc_ci:
+        try:
+            await db.discount_codes.update_one(
+                {"code": disc_doc_ci["code"]},
+                {"$inc": {"usage_count": 1}, "$set": {"last_used_at": datetime.now(timezone.utc).isoformat()}}
+            )
+        except Exception as _e:
+            logger.warning(f"[discount] no se pudo incrementar uso de {disc_doc_ci.get('code')}: {_e}")
     
     # Log history
     await log_order_history(
@@ -4146,6 +4297,149 @@ async def seed_cutting_catalog(current_user: dict = Depends(require_roles([UserR
         "skipped_count": len(skipped),
         "created": created,
         "skipped": skipped,
+    }
+
+
+# ==================== DISCOUNT CODES ENDPOINTS ====================
+def _require_discount_admin(password: str):
+    if not password or password.strip() != DISCOUNT_ADMIN_PASSWORD:
+        raise HTTPException(status_code=403, detail="Contraseña de administración inválida")
+
+def _public_discount_doc(doc: dict) -> dict:
+    """Serializa un documento de código quitando _id."""
+    if not doc:
+        return doc
+    out = {k: v for k, v in doc.items() if k != "_id"}
+    out["expired"] = _is_discount_expired(doc)
+    return out
+
+@api_router.post("/discount-codes/admin/verify")
+async def discount_admin_verify(data: DiscountAdminAuth, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.FACTURACION]))):
+    """Verifica la contraseña de administración de códigos (william123)."""
+    _require_discount_admin(data.admin_password)
+    return {"ok": True}
+
+@api_router.get("/discount-codes")
+async def list_discount_codes(
+    include_inactive: bool = True,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.FACTURACION]))
+):
+    q = {} if include_inactive else {"active": True}
+    docs = await db.discount_codes.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [_public_discount_doc(d) for d in docs]
+
+@api_router.post("/discount-codes")
+async def create_discount_code(
+    data: DiscountCodeCreate,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.FACTURACION]))
+):
+    _require_discount_admin(data.admin_password)
+    code = _normalize_code(data.code)
+    if not code:
+        raise HTTPException(status_code=400, detail="El código no puede estar vacío")
+    if (data.discount_type or "").lower() not in ("percentage", "fixed"):
+        raise HTTPException(status_code=400, detail="discount_type debe ser 'percentage' o 'fixed'")
+    if data.discount_value is None or float(data.discount_value) <= 0:
+        raise HTTPException(status_code=400, detail="El valor del descuento debe ser mayor a 0")
+    if data.discount_type.lower() == "percentage" and float(data.discount_value) > 100:
+        raise HTTPException(status_code=400, detail="El porcentaje no puede ser mayor a 100")
+    if data.expires_at:
+        try:
+            datetime.strptime(data.expires_at, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Formato de fecha inválido (use YYYY-MM-DD)")
+    existing = await db.discount_codes.find_one({"code": code})
+    if existing:
+        raise HTTPException(status_code=409, detail=f"El código {code} ya existe")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "code": code,
+        "discount_type": data.discount_type.lower(),
+        "discount_value": float(data.discount_value),
+        "expires_at": data.expires_at,
+        "active": bool(data.active),
+        "notes": data.notes,
+        "usage_count": 0,
+        "last_used_at": None,
+        "created_at": now,
+        "created_by": current_user["id"],
+        "created_by_name": current_user.get("name") or current_user.get("email"),
+        "updated_at": None,
+    }
+    await db.discount_codes.insert_one(doc)
+    return _public_discount_doc(doc)
+
+@api_router.patch("/discount-codes/{code_id}")
+async def update_discount_code(
+    code_id: str,
+    data: DiscountCodeUpdate,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.FACTURACION]))
+):
+    _require_discount_admin(data.admin_password)
+    existing = await db.discount_codes.find_one({"id": code_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Código no encontrado")
+    update: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if data.discount_type is not None:
+        if data.discount_type.lower() not in ("percentage", "fixed"):
+            raise HTTPException(status_code=400, detail="discount_type inválido")
+        update["discount_type"] = data.discount_type.lower()
+    if data.discount_value is not None:
+        if float(data.discount_value) <= 0:
+            raise HTTPException(status_code=400, detail="El valor debe ser mayor a 0")
+        update["discount_value"] = float(data.discount_value)
+    if data.expires_at is not None:
+        if data.expires_at == "":
+            update["expires_at"] = None
+        else:
+            try:
+                datetime.strptime(data.expires_at, "%Y-%m-%d")
+            except Exception:
+                raise HTTPException(status_code=400, detail="Formato de fecha inválido (use YYYY-MM-DD)")
+            update["expires_at"] = data.expires_at
+    if data.active is not None:
+        update["active"] = bool(data.active)
+    if data.notes is not None:
+        update["notes"] = data.notes
+    await db.discount_codes.update_one({"id": code_id}, {"$set": update})
+    doc = await db.discount_codes.find_one({"id": code_id}, {"_id": 0})
+    return _public_discount_doc(doc)
+
+@api_router.delete("/discount-codes/{code_id}")
+async def delete_discount_code(
+    code_id: str,
+    admin_password: str,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.FACTURACION]))
+):
+    _require_discount_admin(admin_password)
+    res = await db.discount_codes.delete_one({"id": code_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Código no encontrado")
+    return {"ok": True}
+
+@api_router.get("/discount-codes/validate")
+async def validate_discount_code(
+    code: str,
+    subtotal: float = 0.0,
+    current_user: dict = Depends(get_current_user),
+):
+    """Valida un código y devuelve el monto a descontar sobre un subtotal."""
+    doc = await db.discount_codes.find_one({"code": _normalize_code(code)}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Código no encontrado")
+    if not doc.get("active", True):
+        raise HTTPException(status_code=400, detail="El código está inactivo")
+    if _is_discount_expired(doc):
+        raise HTTPException(status_code=400, detail="El código está vencido")
+    amount = _compute_discount_amount(subtotal, doc.get("discount_type"), doc.get("discount_value"))
+    return {
+        "code": doc.get("code"),
+        "discount_type": doc.get("discount_type"),
+        "discount_value": doc.get("discount_value"),
+        "expires_at": doc.get("expires_at"),
+        "discount_amount": amount,
+        "new_total": round(max(float(subtotal or 0) - amount, 0), 2),
     }
 
 
