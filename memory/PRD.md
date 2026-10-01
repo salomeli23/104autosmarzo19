@@ -6,7 +6,22 @@ Diseñar y desarrollar una aplicación web responsive para la gestión de agenda
 ## Fecha de última actualización
 2026-10-01
 
-## Última Sesión (2026-10-01 PM) — Nueva sección PPF en Check-in (plan/acabado/color/zonas/partes)
+## Última Sesión (2026-10-01 PM-2) — Catálogo PPF simplificado a 2 opciones
+
+### Cambio
+- El catálogo PPF ya NO muestra las variantes Matte / Brillante / Negro Mate / Vinilo / Graph.
+- `SERVICES_CATALOG["ppf"]` en `server.py` ahora tiene solo 2 servicios: `ppf_full_body` ("Full Body") y `ppf_partes` ("Partes / Piezas").
+- En Check-in, al agregar `ppf_full_body` se preestablece `ppf_scope='full'`; al agregar `ppf_partes`, `ppf_scope='partes'` (`handleServiceToggle`).
+- El bloque PPF muestra etiqueta fija "Plan: Full Body" o "Plan: Partes / Piezas" (data-testid `ppf-plan-label-{serviceId}`) en lugar del selector de plan, y sigue pidiendo acabado (Brillante/Mate), color, y para partes: zonas + selector predictivo.
+- La precarga desde la orden deriva `ppf_scope` del serviceId cuando falta.
+- Órdenes antiguas con servicios ppf_matte/ppf_brillante/etc. conservan el selector de plan en el bloque (retrocompatible).
+- La detección de corte sigue funcionando: `"ppf" in svc_desc` en `get_cutting_pending` y keyword `ppf` en `assign_technician`.
+
+### Testing
+- `GET /api/services/catalog` retorna solo Full Body y Partes / Piezas en PPF.
+- Screenshot E2E: acordeón PPF con 2 checkboxes; al seleccionar Partes/Piezas aparece Plan fijo + Acabado + Color + Zona + selector predictivo con chips. OK.
+
+## Sesión anterior (2026-10-01 PM) — Nueva sección PPF en Check-in (plan/acabado/color/zonas/partes)
 
 ### Comportamiento nuevo del bloque PPF en Check-in (`CheckIn.jsx`)
 - **Plan "Full Body"** → Acabado (Brillante / Mate) + campo de texto para escribir el color.

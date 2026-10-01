@@ -118,7 +118,7 @@ export const CheckIn = () => {
                 parts: s.parts || [],
                 part_percentages: s.part_percentages || {},
                 extras: s.extras || [],
-                ppf_scope: s.ppf_scope || null,
+                ppf_scope: s.ppf_scope || (s.service === 'ppf_full_body' ? 'full' : s.service === 'ppf_partes' ? 'partes' : null),
                 ppf_finish: s.ppf_finish || null,
                 ppf_color: s.ppf_color || '',
                 ppf_zones: s.ppf_zones || [],
@@ -222,12 +222,17 @@ export const CheckIn = () => {
             if (exists) {
                 return prev.filter(s => s.serviceId !== serviceId);
             } else {
+                // PPF: el plan viene definido por la opción elegida en el catálogo
+                const ppfPreset = serviceId === 'ppf_full_body' ? { ppf_scope: 'full' }
+                    : serviceId === 'ppf_partes' ? { ppf_scope: 'partes' }
+                    : {};
                 return [...prev, { 
                     serviceId, 
                     serviceName, 
                     category: categoryName, 
                     price: 0,
-                    parts: serviceRequiresParts(serviceId) ? [] : undefined
+                    parts: serviceRequiresParts(serviceId) ? [] : undefined,
+                    ...ppfPreset
                 }];
             }
         });
@@ -1167,27 +1172,33 @@ export const CheckIn = () => {
                                                             <Package className="w-3 h-3" />
                                                             PPF — Alcance del servicio
                                                         </p>
-                                                        {/* Plan */}
-                                                        <div className="grid grid-cols-2 gap-1">
-                                                            {[
-                                                                { value: 'full', label: 'Full Body' },
-                                                                { value: 'partes', label: 'Partes / Piezas' },
-                                                            ].map(opt => (
-                                                                <button
-                                                                    key={opt.value}
-                                                                    type="button"
-                                                                    onClick={() => handlePpfScopeChange(svc.serviceId, opt.value)}
-                                                                    className={`text-xs px-2 py-1.5 rounded border transition-colors ${
-                                                                        svc.ppf_scope === opt.value
-                                                                            ? 'bg-blue-500/25 border-blue-500/60 text-blue-200 font-medium'
-                                                                            : 'border-input hover:border-blue-500/40 text-muted-foreground'
-                                                                    }`}
-                                                                    data-testid={`ppf-scope-${svc.serviceId}-${opt.value}`}
-                                                                >
-                                                                    {opt.label}
-                                                                </button>
-                                                            ))}
-                                                        </div>
+                                                        {/* Plan: si el servicio ya define el plan (catálogo nuevo), mostrar etiqueta fija */}
+                                                        {(svc.serviceId === 'ppf_full_body' || svc.serviceId === 'ppf_partes') ? (
+                                                            <p className="text-xs text-blue-200" data-testid={`ppf-plan-label-${svc.serviceId}`}>
+                                                                Plan: <b>{svc.serviceId === 'ppf_full_body' ? 'Full Body' : 'Partes / Piezas'}</b>
+                                                            </p>
+                                                        ) : (
+                                                            <div className="grid grid-cols-2 gap-1">
+                                                                {[
+                                                                    { value: 'full', label: 'Full Body' },
+                                                                    { value: 'partes', label: 'Partes / Piezas' },
+                                                                ].map(opt => (
+                                                                    <button
+                                                                        key={opt.value}
+                                                                        type="button"
+                                                                        onClick={() => handlePpfScopeChange(svc.serviceId, opt.value)}
+                                                                        className={`text-xs px-2 py-1.5 rounded border transition-colors ${
+                                                                            svc.ppf_scope === opt.value
+                                                                                ? 'bg-blue-500/25 border-blue-500/60 text-blue-200 font-medium'
+                                                                                : 'border-input hover:border-blue-500/40 text-muted-foreground'
+                                                                        }`}
+                                                                        data-testid={`ppf-scope-${svc.serviceId}-${opt.value}`}
+                                                                    >
+                                                                        {opt.label}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        )}
 
                                                         {/* Acabado + Color (ambos planes) */}
                                                         {svc.ppf_scope && (

@@ -2314,11 +2314,8 @@ SERVICES_CATALOG = {
     "ppf": {
         "name": "PPF",
         "services": [
-            {"id": "ppf_matte", "name": "Matte"},
-            {"id": "ppf_brillante", "name": "Brillante"},
-            {"id": "ppf_negro_mate", "name": "Negro Mate"},
-            {"id": "ppf_vinilo", "name": "Vinilo"},
-            {"id": "ppf_graph", "name": "Graph"},
+            {"id": "ppf_full_body", "name": "Full Body"},
+            {"id": "ppf_partes", "name": "Partes / Piezas"},
         ]
     },
     "accesorios": {
