@@ -1,0 +1,8 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": { "builder": "RAILPACK", "buildCommand": "CI=false npm run build" },
+  "deploy": {
+    "startCommand": "npx serve -s build -l $PORT",
+    "healthcheckPath": "/"
+  }
+}

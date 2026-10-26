@@ -428,7 +428,7 @@ class NotificationRequest(BaseModel):
     email: Optional[EmailStr] = None
 
 # ==================== DISCOUNT CODES ====================
-DISCOUNT_ADMIN_PASSWORD = "william123"
+DISCOUNT_ADMIN_PASSWORD = os.environ.get('DISCOUNT_ADMIN_PASSWORD', '')
 
 class DiscountCodeCreate(BaseModel):
     code: str
@@ -494,7 +494,7 @@ async def _resolve_discount_code(code: str) -> Optional[dict]:
 
 # ==================== AUTH ENDPOINTS ====================
 @api_router.post("/auth/register", response_model=TokenResponse)
-async def register(user_data: UserCreate):
+async def register(user_data: UserCreate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     existing = await db.users.find_one({"email": user_data.email})
     if existing:
         raise HTTPException(status_code=400, detail="El email ya está registrado")
@@ -2547,9 +2547,15 @@ async def update_completion_pin(data: BookingPinUpdate, current_user: dict = Dep
     return {"message": "PIN de completar servicio actualizado correctamente", "pin": pin}
 
 # ==================== SEED DATA ====================
+def _require_seed_enabled():
+    # Public seed endpoints only work when ALLOW_SEED=true (keep it off in production)
+    if os.environ.get('ALLOW_SEED', '').lower() != 'true':
+        raise HTTPException(status_code=403, detail="Seed deshabilitado")
+
 @api_router.post("/seed/users")
 async def seed_test_users():
     """Create test users for each role (only works if users don't exist)"""
+    _require_seed_enabled()
     test_users = [
         {"email": "admin@polarizadosya.com", "name": "Admin PolarizadosYA", "role": "admin", "password": "admin123"},
         {"email": "asesor@polarizadosya.com", "name": "Carlos Asesor", "role": "asesor", "password": "asesor123"},
@@ -2581,6 +2587,7 @@ async def seed_test_users():
 @api_router.post("/seed/bahias")
 async def seed_bahias():
     """Create test bahias (garages/bays) for vehicle assignment"""
+    _require_seed_enabled()
     bahias = [
         {"id": "bahia_1", "name": "Bahía 1", "description": "Polarizado Premium", "capacity": 1, "active": True},
         {"id": "bahia_2", "name": "Bahía 2", "description": "Polarizado Estándar", "capacity": 1, "active": True},
@@ -4303,7 +4310,7 @@ async def seed_cutting_catalog(current_user: dict = Depends(require_roles([UserR
 
 # ==================== DISCOUNT CODES ENDPOINTS ====================
 def _require_discount_admin(password: str):
-    if not password or password.strip() != DISCOUNT_ADMIN_PASSWORD:
+    if not DISCOUNT_ADMIN_PASSWORD or not password or password.strip() != DISCOUNT_ADMIN_PASSWORD:
         raise HTTPException(status_code=403, detail="Contraseña de administración inválida")
 
 def _public_discount_doc(doc: dict) -> dict:
