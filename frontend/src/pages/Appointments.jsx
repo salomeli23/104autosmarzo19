@@ -15,6 +15,7 @@ import { QRDisplay } from '../components/QRDisplay';
 import { PlateBadge } from '../components/PlateBadge';
 import { CarAvatar } from '../components/CarAvatar';
 import { PlateInput } from '../components/PlateInput';
+import { PostventaServicesTable, newPostventaRow } from '../components/PostventaServicesTable';
 import { AppointmentConfirmDialog } from '../components/AppointmentConfirmDialog';
 import { CAR_BRANDS, CAR_MODELS, formatCurrency, isHoliday, COLOMBIA_HOLIDAYS } from '../lib/utils';
 import { toast } from 'sonner';
@@ -40,6 +41,8 @@ export const Appointments = () => {
     
     // Services with individual prices
     const [selectedServices, setSelectedServices] = useState([]);
+    // Servicios de una cita de postventa (tabla editable, el valor puede ser 0)
+    const [postventaServices, setPostventaServices] = useState([]);
     
     // Custom service input
     const [customServiceName, setCustomServiceName] = useState('');
@@ -131,6 +134,9 @@ export const Appointments = () => {
 
     // Calculate total from selected services
     const calculateTotal = () => {
+        if (formData.appointment_type === 'postventa') {
+            return postventaServices.reduce((sum, row) => sum + (parseFloat(row.price) || 0), 0);
+        }
         return selectedServices.reduce((sum, svc) => {
             const base = svc.price || 0;
             const sunroofExtra = (svc.parts || []).includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
@@ -411,6 +417,7 @@ export const Appointments = () => {
         askedLookupsRef.current = new Set();
         setExistingMatch(null);
         setSelectedServices([]);
+        setPostventaServices([]);
         setCustomServiceName('');
         setCustomServicePrice('');
         setBrandSuggestions([]);
@@ -497,7 +504,31 @@ export const Appointments = () => {
         setExistingMatch(null);
     };
 
+    // Al elegir Postventa la tabla arranca con una fila lista para llenar
+    useEffect(() => {
+        if (formData.appointment_type === 'postventa' && postventaServices.length === 0) {
+            setPostventaServices([newPostventaRow()]);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [formData.appointment_type]);
+
     const buildServicesData = () => {
+        if (formData.appointment_type === 'postventa') {
+            const catalogServices = Object.values(serviceCatalog).flatMap(cat => cat.services || []);
+            const rows = postventaServices.filter(row => row.name.trim());
+            if (rows.length === 0) {
+                return [{ service: 'postventa', description: `Postventa - ${formData.postventa_motivo.trim()}`, price: 0 }];
+            }
+            return rows.map(row => {
+                const name = row.name.trim();
+                const match = catalogServices.find(s => s.name.toLowerCase() === name.toLowerCase());
+                return {
+                    service: match ? match.id : 'postventa',
+                    description: `Postventa - ${name}`,
+                    price: parseFloat(row.price) || 0,
+                };
+            });
+        }
         const servicesData = selectedServices.map(svc => {
             const parts = svc.parts || [];
             const sunroofPrice = parts.includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
@@ -560,6 +591,14 @@ export const Appointments = () => {
                 return;
             }
         } else if (isPostventa) {
+            if (postventaServices.some(row => !row.name.trim())) {
+                toast.error('Escribe el nombre de cada servicio de postventa o quita la fila vacía');
+                return;
+            }
+            if (postventaServices.some(row => (parseFloat(row.price) || 0) < 0)) {
+                toast.error('El valor de los servicios no puede ser negativo');
+                return;
+            }
             if (!formData.postventa_motivo.trim()) {
                 toast.error('Describe el motivo de la postventa');
                 return;
@@ -663,11 +702,12 @@ export const Appointments = () => {
             {
                 title: 'Servicios',
                 rows: [
-                    ...selectedServices.map(svc => {
-                        const sunroof = (svc.parts || []).includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
-                        return { label: svc.serviceName, value: formatCurrency((svc.price || 0) + sunroof) };
-                    }),
-                    ...(selectedServices.length === 0 ? [{ label: 'Servicio', value: 'Postventa (sin costo)' }] : []),
+                    ...(type === 'postventa'
+                        ? buildServicesData().map(svc => ({ label: svc.description.replace(/^Postventa - /, ''), value: formatCurrency(svc.price) }))
+                        : selectedServices.map(svc => {
+                            const sunroof = (svc.parts || []).includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
+                            return { label: svc.serviceName, value: formatCurrency((svc.price || 0) + sunroof) };
+                        })),
                     { label: `Descuento ${discountApplied?.code || ''}`, value: discountApplied ? `-${formatCurrency(discountApplied.discount_amount)}` : null },
                     { label: 'Total', value: formatCurrency(total), highlight: true },
                 ],
@@ -1227,6 +1267,22 @@ export const Appointments = () => {
                             </div>
 
                             {/* Services by Category */}
+                            {formData.appointment_type === 'postventa' ? (
+                            <div className="space-y-4">
+                                <h3 className="font-heading text-lg flex items-center gap-2">
+                                    <Package className="w-4 h-4" />
+                                    Servicios de Postventa
+                                </h3>
+                                <p className="text-sm text-muted-foreground -mt-2">
+                                    Agrega los servicios que se harán. El valor puede ser $0 (por ejemplo, una garantía).
+                                </p>
+                                <PostventaServicesTable
+                                    rows={postventaServices}
+                                    onChange={setPostventaServices}
+                                    catalog={serviceCatalog}
+                                />
+                            </div>
+                            ) : (
                             <div className="space-y-4">
                                 <h3 className="font-heading text-lg flex items-center gap-2">
                                     <Package className="w-4 h-4" />
@@ -1492,6 +1548,7 @@ export const Appointments = () => {
                                     </div>
                                 )}
                             </div>
+                            )}
 
                             {/* Código de descuento */}
                             <div className="space-y-2 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5">
