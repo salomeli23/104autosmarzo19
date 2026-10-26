@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { VehicleStatusBadge } from '../components/VehicleStatusBadge';
+import { InspectedVehiclesView } from '../components/InspectedVehiclesView';
 import { toast } from 'sonner';
-import { Plus, Car, Search, User, Phone, Mail, UserPlus, Wrench } from 'lucide-react';
+import { Plus, Car, Search, User, Phone, Mail, UserPlus, Wrench, ClipboardCheck } from 'lucide-react';
 
 // Lista de marcas y modelos
 const CAR_BRANDS = [
@@ -55,6 +56,7 @@ const STATUS_FILTERS = [
 ];
 
 export const Vehicles = () => {
+    const [view, setView] = useState('gestion'); // 'gestion' | 'ingresados'
     const [vehicles, setVehicles] = useState([]);
     const [technicians, setTechnicians] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -251,6 +253,22 @@ export const Vehicles = () => {
                 </Dialog>
             </div>
 
+            <Tabs value={view} onValueChange={setView}>
+                <TabsList className="grid grid-cols-2 w-full sm:w-auto sm:inline-grid">
+                    <TabsTrigger value="gestion" data-testid="vehicles-tab-gestion">
+                        <Car className="w-4 h-4 mr-2" />
+                        Gestión
+                    </TabsTrigger>
+                    <TabsTrigger value="ingresados" data-testid="vehicles-tab-ingresados">
+                        <ClipboardCheck className="w-4 h-4 mr-2" />
+                        Ingresados (Revisión 360°)
+                    </TabsTrigger>
+                </TabsList>
+            </Tabs>
+
+            {view === 'ingresados' && <InspectedVehiclesView />}
+
+            {view === 'gestion' && (<>
             {/* Filters */}
             <div className="flex flex-col sm:flex-row gap-4">
                 <div className="relative flex-1 max-w-md">
@@ -380,6 +398,7 @@ export const Vehicles = () => {
                     ))}
                 </div>
             )}
+            </>)}
         </div>
     );
 };

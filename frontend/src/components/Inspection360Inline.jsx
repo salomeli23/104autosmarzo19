@@ -6,13 +6,14 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { CameraCapture } from './CameraCapture';
+import { VideoCapture } from './VideoCapture';
+import { ConfirmTwiceDialog } from './ConfirmTwiceDialog';
 import { INSPECTION_AREAS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Camera, Image as ImageIcon, AlertTriangle, Check, ArrowLeft, SkipForward } from 'lucide-react';
+import { Camera, Image as ImageIcon, AlertTriangle, Check, ArrowLeft, SkipForward, Video } from 'lucide-react';
 
 const CONDITIONS = [
     { value: 'good', label: 'Bueno', color: 'text-blue-500' },
-    { value: 'fair', label: 'Regular', color: 'text-yellow-500' },
     { value: 'poor', label: 'Malo', color: 'text-red-500' },
 ];
 
@@ -24,8 +25,10 @@ const CONDITIONS = [
  *   onSkip:   user chose to defer the 360 to /inspections
  */
 export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
-    const [subStep, setSubStep] = useState(1); // 1 = photos, 2 = checklist
+    const [subStep, setSubStep] = useState(1); // 1 = photos, 2 = video, 3 = checklist
     const [photos, setPhotos] = useState([]);
+    const [video, setVideo] = useState(null); // { blob, url }
+    const [confirmOpen, setConfirmOpen] = useState(false);
     const [generalNotes, setGeneralNotes] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [items, setItems] = useState(
@@ -54,8 +57,14 @@ export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
             setSubStep(1);
             return;
         }
+        if (!video) {
+            toast.error('Grabe el video de 20 segundos del vehículo');
+            setSubStep(2);
+            return;
+        }
         setSubmitting(true);
         try {
+            const { data: uploaded } = await inspectionsAPI.uploadVideo(order.id, video.blob);
             await inspectionsAPI.create({
                 vehicle_id: order.id,
                 items: items.map(it => ({
@@ -66,6 +75,7 @@ export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
                 })),
                 general_notes: generalNotes,
                 photos,
+                video_url: uploaded.video_url,
             });
             toast.success('Revisión 360° completada');
             onComplete?.({ ...order, photos_count: photos.length });
@@ -83,15 +93,19 @@ export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
                 <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="font-heading text-lg">Revisión 360° — Paso {subStep} de 2</p>
+                            <p className="font-heading text-lg">Revisión 360° — Paso {subStep} de 3</p>
                             <p className="text-sm text-muted-foreground">
-                                {subStep === 1 ? 'Captura fotos del vehículo' : 'Marca el estado de cada área'}
+                                {subStep === 1 ? 'Captura fotos del vehículo' : subStep === 2 ? 'Graba un video de 20 segundos' : 'Marca el estado de cada área'}
                             </p>
                         </div>
                         <div className="flex items-center gap-3 text-sm">
                             <span className="flex items-center gap-1">
                                 <ImageIcon className="w-4 h-4 text-muted-foreground" />
                                 {photos.length}/20
+                            </span>
+                            <span className={`flex items-center gap-1 ${video ? 'text-blue-500' : 'text-muted-foreground'}`}>
+                                <Video className="w-4 h-4" />
+                                {video ? '1/1' : '0/1'}
                             </span>
                             {damageCount > 0 && (
                                 <span className="flex items-center gap-1 text-yellow-500">
@@ -138,6 +152,43 @@ export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
                             onClick={() => setSubStep(2)}
                             disabled={photos.length === 0}
                             className="sm:flex-1 brand-glow"
+                            data-testid="inspection-to-video-inline-btn"
+                        >
+                            Continuar al Video
+                        </Button>
+                    </div>
+                </div>
+            )}
+
+            {subStep === 2 && (
+                <div className="space-y-4" data-testid="inspection-video-step">
+                    <Card className="bg-primary/5 border-primary/20">
+                        <CardContent className="p-4 flex items-start gap-3">
+                            <Video className="w-5 h-5 text-primary mt-0.5" />
+                            <div>
+                                <p className="font-medium">Video del vehículo</p>
+                                <p className="text-sm text-muted-foreground">
+                                    Graba un recorrido de 20 segundos alrededor del vehículo.
+                                </p>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <VideoCapture video={video} onVideoChange={setVideo} durationSeconds={20} />
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                        <Button
+                            variant="outline"
+                            onClick={() => setSubStep(1)}
+                            className="sm:flex-1"
+                        >
+                            <ArrowLeft className="w-4 h-4 mr-2" />
+                            Atrás
+                        </Button>
+                        <Button
+                            onClick={() => setSubStep(3)}
+                            disabled={!video}
+                            className="sm:flex-1 brand-glow"
                             data-testid="inspection-to-checklist-inline-btn"
                         >
                             Continuar al Checklist
@@ -146,7 +197,7 @@ export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
                 </div>
             )}
 
-            {subStep === 2 && (
+            {subStep === 3 && (
                 <div className="space-y-3" data-testid="inspection-checklist-step">
                     <div className="space-y-2 max-h-[420px] overflow-y-auto pr-2">
                         {items.map((item, idx) => (
@@ -172,7 +223,7 @@ export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
                                             Daño
                                         </button>
                                     </div>
-                                    <div className="grid grid-cols-3 gap-1">
+                                    <div className="grid grid-cols-2 gap-1">
                                         {CONDITIONS.map(c => (
                                             <Button
                                                 key={c.value}
@@ -213,14 +264,14 @@ export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
                     <div className="flex flex-col sm:flex-row gap-2">
                         <Button
                             variant="outline"
-                            onClick={() => setSubStep(1)}
+                            onClick={() => setSubStep(2)}
                             className="sm:flex-1"
                         >
                             <ArrowLeft className="w-4 h-4 mr-2" />
                             Atrás
                         </Button>
                         <Button
-                            onClick={handleSubmit}
+                            onClick={() => setConfirmOpen(true)}
                             disabled={submitting}
                             className="sm:flex-1 brand-glow"
                             data-testid="submit-inspection-inline-btn"
@@ -235,6 +286,8 @@ export const Inspection360Inline = ({ order, onComplete, onSkip }) => {
                     </div>
                 </div>
             )}
+
+            <ConfirmTwiceDialog open={confirmOpen} onOpenChange={setConfirmOpen} onConfirm={handleSubmit} />
         </div>
     );
 };

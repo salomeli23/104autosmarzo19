@@ -188,6 +188,17 @@ export const inspectionsAPI = {
         video_url: data.video_url || null,
         notes: data.general_notes || ''
     }),
+    uploadVideo: (orderId, blob) => {
+        const form = new FormData();
+        const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+        form.append('file', blob, `revision360.${ext}`);
+        return api.post(`/orders/${orderId}/inspection-video`, form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 120000,
+        });
+    },
+    getVideo: (orderId) => api.get(`/orders/${orderId}/inspection-video`, { responseType: 'blob', timeout: 120000 }),
+    getInspectedVehicles: () => api.get('/inspected-vehicles'),
 };
 
 export const quotesAPI = {

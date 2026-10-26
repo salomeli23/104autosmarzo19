@@ -1,5 +1,7 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Response as FastAPIResponse
+from bson import Binary as BsonBinary
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -1892,6 +1894,67 @@ async def save_inspection(data: InspectionData, current_user: dict = Depends(req
     )
     
     return {"message": "Inspección guardada exitosamente"}
+
+# Video de la Revisión 360° — se guarda en su propia colección para no inflar
+# el documento de la orden (GET /orders devuelve órdenes completas).
+MAX_INSPECTION_VIDEO_BYTES = 15 * 1024 * 1024
+
+@api_router.post("/orders/{order_id}/inspection-video")
+async def upload_inspection_video(
+    order_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR])),
+):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0, "id": 1})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="El video está vacío")
+    if len(data) > MAX_INSPECTION_VIDEO_BYTES:
+        raise HTTPException(status_code=413, detail="El video supera el tamaño máximo (15 MB)")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.inspection_videos.update_one(
+        {"order_id": order_id},
+        {"$set": {
+            "order_id": order_id,
+            "data": BsonBinary(data),
+            "content_type": file.content_type or "video/webm",
+            "size": len(data),
+            "uploaded_by": current_user["id"],
+            "created_at": now,
+        }},
+        upsert=True,
+    )
+    video_url = f"/orders/{order_id}/inspection-video"
+    await db.orders.update_one({"id": order_id}, {"$set": {"inspection_video_url": video_url, "updated_at": now}})
+    return {"video_url": video_url, "size": len(data)}
+
+@api_router.get("/orders/{order_id}/inspection-video")
+async def get_inspection_video(order_id: str, current_user: dict = Depends(get_current_user)):
+    doc = await db.inspection_videos.find_one({"order_id": order_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Esta orden no tiene video de revisión")
+    return FastAPIResponse(content=bytes(doc["data"]), media_type=doc.get("content_type") or "video/webm")
+
+@api_router.get("/inspected-vehicles")
+async def get_inspected_vehicles(
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Vehículos con Revisión 360° completada (sin las fotos, solo el conteo)."""
+    pipeline = [
+        {"$match": {"inspection_at": {"$ne": None}}},
+        {"$sort": {"inspection_at": -1}},
+        {"$limit": 500},
+        {"$project": {
+            "_id": 0, "id": 1, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "year": 1,
+            "color": 1, "client_name": 1, "client_phone": 1, "status": 1,
+            "inspection_at": 1, "inspection_notes": 1, "inspection_video_url": 1,
+            "photos_count": {"$size": {"$ifNull": ["$inspection_photos", []]}},
+        }},
+    ]
+    return await db.orders.aggregate(pipeline).to_list(500)
 
 # ============================================================
 # Pre-Asignación de Técnico (Autos por Asignar) — antes de Corte

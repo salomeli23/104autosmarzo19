@@ -8,14 +8,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
 import { CameraCapture } from '../components/CameraCapture';
+import { VideoCapture } from '../components/VideoCapture';
+import { ConfirmTwiceDialog } from '../components/ConfirmTwiceDialog';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { INSPECTION_AREAS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Plus, ClipboardCheck, Car, AlertTriangle, Check, Camera, Image, Mail, Send } from 'lucide-react';
+import { Plus, ClipboardCheck, Car, AlertTriangle, Check, Camera, Image, Mail, Send, Video } from 'lucide-react';
 
 const CONDITIONS = [
     { value: 'good', label: 'Bueno', color: 'text-blue-500' },
-    { value: 'fair', label: 'Regular', color: 'text-yellow-500' },
     { value: 'poor', label: 'Malo', color: 'text-red-500' },
 ];
 
@@ -26,6 +27,9 @@ export const Inspections = () => {
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [step, setStep] = useState(1);
     const [photos, setPhotos] = useState([]);
+    const [video, setVideo] = useState(null); // { blob, url }
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
     const [inspectionItems, setInspectionItems] = useState(
         INSPECTION_AREAS.map(area => ({
             area: area.id,
@@ -69,8 +73,15 @@ export const Inspections = () => {
             toast.error('Selecciona una orden');
             return;
         }
+        if (!video) {
+            toast.error('Grabe el video de 20 segundos del vehículo');
+            setStep(3);
+            return;
+        }
 
+        setSubmitting(true);
         try {
+            const { data: uploaded } = await inspectionsAPI.uploadVideo(selectedOrder.id, video.blob);
             await inspectionsAPI.create({
                 vehicle_id: selectedOrder.id,
                 items: inspectionItems.map(item => ({
@@ -81,6 +92,7 @@ export const Inspections = () => {
                 })),
                 general_notes: generalNotes,
                 photos: photos,
+                video_url: uploaded.video_url,
             });
             toast.success('Revisión 360° completada');
             // Offer to send photos by email if there are any photos
@@ -93,6 +105,8 @@ export const Inspections = () => {
             fetchOrders();
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al guardar la revisión');
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -115,6 +129,8 @@ export const Inspections = () => {
         setSelectedOrder(null);
         setStep(1);
         setPhotos([]);
+        if (video?.url) URL.revokeObjectURL(video.url);
+        setVideo(null);
         setInspectionItems(
             INSPECTION_AREAS.map(area => ({
                 area: area.id,
@@ -149,12 +165,13 @@ export const Inspections = () => {
                     <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                         <DialogHeader>
                             <DialogTitle className="font-heading text-xl">
-                                Revisión 360° - Paso {step} de 3
+                                Revisión 360° - Paso {step} de 4
                             </DialogTitle>
                             <DialogDescription>
                                 {step === 1 && 'Seleccione el vehículo a inspeccionar'}
                                 {step === 2 && 'Capture fotos del vehículo'}
-                                {step === 3 && 'Registre el estado de cada área'}
+                                {step === 3 && 'Grabe un video de 20 segundos del vehículo'}
+                                {step === 4 && 'Registre el estado de cada área'}
                             </DialogDescription>
                         </DialogHeader>
 
@@ -282,6 +299,45 @@ export const Inspections = () => {
                                     <Button
                                         onClick={() => setStep(3)}
                                         className="flex-1"
+                                        data-testid="inspection-to-video-btn"
+                                    >
+                                        Continuar al Video
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Step 3: Video de 20 segundos */}
+                        {step === 3 && (
+                            <div className="space-y-4">
+                                <Card className="bg-primary/5 border-primary/20">
+                                    <CardContent className="p-4">
+                                        <div className="flex items-start gap-3">
+                                            <Video className="w-5 h-5 text-primary mt-0.5" />
+                                            <div>
+                                                <p className="font-medium">Video del vehículo</p>
+                                                <p className="text-sm text-muted-foreground">
+                                                    Graba un recorrido de 20 segundos alrededor del vehículo.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </CardContent>
+                                </Card>
+
+                                <VideoCapture video={video} onVideoChange={setVideo} durationSeconds={20} />
+
+                                <div className="flex gap-2">
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => setStep(2)}
+                                        className="flex-1"
+                                    >
+                                        Atrás
+                                    </Button>
+                                    <Button
+                                        onClick={() => setStep(4)}
+                                        disabled={!video}
+                                        className="flex-1"
                                         data-testid="inspection-to-checklist-btn"
                                     >
                                         Continuar al Checklist
@@ -290,8 +346,8 @@ export const Inspections = () => {
                             </div>
                         )}
 
-                        {/* Step 3: Inspection Checklist */}
-                        {step === 3 && (
+                        {/* Step 4: Inspection Checklist */}
+                        {step === 4 && (
                             <div className="space-y-4">
                                 {/* Summary */}
                                 <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
@@ -337,7 +393,7 @@ export const Inspections = () => {
                                                         </Label>
                                                     </div>
                                                 </div>
-                                                <div className="grid grid-cols-4 gap-1">
+                                                <div className="grid grid-cols-2 gap-1">
                                                     {CONDITIONS.map((condition) => (
                                                         <Button
                                                             key={condition.value}
@@ -380,18 +436,19 @@ export const Inspections = () => {
                                 <div className="flex gap-2">
                                     <Button
                                         variant="outline"
-                                        onClick={() => setStep(2)}
+                                        onClick={() => setStep(3)}
                                         className="flex-1"
                                     >
                                         Atrás
                                     </Button>
                                     <Button
-                                        onClick={handleSubmit}
+                                        onClick={() => setConfirmOpen(true)}
+                                        disabled={submitting}
                                         className="flex-1 brand-glow"
                                         data-testid="inspection-submit-btn"
                                     >
                                         <Check className="w-4 h-4 mr-2" />
-                                        Completar Ingreso
+                                        {submitting ? 'Guardando...' : 'Completar Ingreso'}
                                     </Button>
                                 </div>
                             </div>
@@ -466,6 +523,8 @@ export const Inspections = () => {
                     )}
                 </CardContent>
             </Card>
+
+            <ConfirmTwiceDialog open={confirmOpen} onOpenChange={setConfirmOpen} onConfirm={handleSubmit} />
 
             {/* Send Photos Email Dialog */}
             <Dialog open={sendEmailDialog} onOpenChange={setSendEmailDialog}>
