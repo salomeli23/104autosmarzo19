@@ -80,6 +80,7 @@ export const ordersAPI = {
     
     // Postventa / Garantía
     historyByPlate: (plate) => api.get(`/orders/history-by-plate/${encodeURIComponent(plate)}`),
+    lookupExisting: ({ plate, document }) => api.get('/clients/lookup', { params: { plate: plate || undefined, document: document || undefined } }),
 };
 
 // Alerts

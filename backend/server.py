@@ -1025,6 +1025,12 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
             raise HTTPException(status_code=400, detail="Código de autorización requerido para citas por prioridad")
         if str(order.authorization_code).strip() != str(expected_priority).strip():
             raise HTTPException(status_code=400, detail="Código de autorización inválido")
+    elif order.is_postventa and order.authorization_code is not None:
+        # Postventa agendada desde "Nueva Cita": contraseña propia (default 00000)
+        pv_settings = await db.settings.find_one({"key": "postventa_pin"}, {"_id": 0})
+        expected_postventa = (pv_settings or {}).get("value", "00000")
+        if str(order.authorization_code).strip() != str(expected_postventa).strip():
+            raise HTTPException(status_code=400, detail="Contraseña de postventa incorrecta")
     else:
         if not order.confirmation_pin:
             raise HTTPException(status_code=400, detail="PIN de confirmación requerido")
@@ -3210,6 +3216,54 @@ async def get_orders_by_plate(plate: str, current_user: dict = Depends(get_curre
         "orders": summary,
         "total_orders": len(summary),
     }
+
+
+def _lookup_summary(orders: list) -> Optional[dict]:
+    if not orders:
+        return None
+    last = orders[0]
+    return {
+        "total_orders": len(orders),
+        "last_order": {
+            "id": last.get("id"),
+            "order_code": last.get("order_code"),
+            "date": last.get("date"),
+            "status": last.get("status"),
+            "plate": last.get("plate"),
+            "services": [s.get("description") or s.get("service") for s in (last.get("services") or [])],
+        },
+        "client_data": {
+            "client_name": last.get("client_name"),
+            "client_phone": last.get("client_phone"),
+            "client_email": last.get("client_email"),
+            "client_cedula": last.get("client_cedula"),
+            "plate": last.get("plate"),
+            "brand": last.get("brand"),
+            "model": last.get("model"),
+        },
+    }
+
+
+@api_router.get("/clients/lookup")
+async def lookup_existing_client(
+    plate: Optional[str] = None,
+    document: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Detecta si una placa o un documento ya tienen órdenes registradas (para Nueva Cita)."""
+    projection = {"_id": 0, "id": 1, "order_code": 1, "date": 1, "status": 1, "plate": 1, "services": 1,
+                  "client_name": 1, "client_phone": 1, "client_email": 1, "client_cedula": 1, "brand": 1, "model": 1}
+    base = {"status": {"$nin": ["desistimiento"]}}
+    result = {"plate": None, "document": None}
+    plate_upper = (plate or "").strip().upper()
+    if plate_upper:
+        orders = await db.orders.find({**base, "plate": plate_upper}, projection).sort("created_at", -1).to_list(50)
+        result["plate"] = _lookup_summary(orders)
+    doc = (document or "").strip()
+    if doc:
+        orders = await db.orders.find({**base, "client_cedula": doc}, projection).sort("created_at", -1).to_list(50)
+        result["document"] = _lookup_summary(orders)
+    return result
 
 
 # ==================== INVENTORY MODULE ====================

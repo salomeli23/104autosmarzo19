@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { VehicleStatusBadge } from '../components/VehicleStatusBadge';
 import { InspectedVehiclesView } from '../components/InspectedVehiclesView';
 import { toast } from 'sonner';
-import { Plus, Car, Search, User, Phone, Mail, UserPlus, Wrench, ClipboardCheck } from 'lucide-react';
+import { Plus, Car, Search, User, Phone, Mail, UserPlus, Wrench, ClipboardCheck, AlertTriangle } from 'lucide-react';
 
 // Lista de marcas y modelos
 const CAR_BRANDS = [
@@ -54,6 +54,20 @@ const STATUS_FILTERS = [
     { value: 'en_proceso', label: 'En Proceso' },
     { value: 'finalizado', label: 'Finalizados' },
 ];
+
+const FINISHED_STATUSES = ['servicio_completado', 'terminado_falta_pago', 'terminado_pagado', 'entregado', 'desistimiento'];
+
+// Qué le falta al vehículo: Revisión 360° o técnico asignado
+const getPendingAlert = (vehicle) => {
+    if (vehicle.status === 'ingresado' && !vehicle.inspection_at) {
+        return { label: 'Falta Revisión 360°', className: 'bg-amber-500/10 text-amber-500 border-amber-500/30', testId: 'missing-360' };
+    }
+    const hasTechnician = vehicle.assigned_technician_id || vehicle.pre_assigned_technician_id || (vehicle.route_slots || []).length > 0;
+    if (vehicle.inspection_at && !hasTechnician && !FINISHED_STATUSES.includes(vehicle.status)) {
+        return { label: 'Revisión 360° lista · Falta asignar técnico', className: 'bg-orange-500/10 text-orange-500 border-orange-500/30', testId: 'missing-technician' };
+    }
+    return null;
+};
 
 export const Vehicles = () => {
     const [view, setView] = useState('gestion'); // 'gestion' | 'ingresados'
@@ -355,6 +369,16 @@ export const Vehicles = () => {
                                     </div>
                                 </div>
                                 
+                                {getPendingAlert(vehicle) && (
+                                    <div
+                                        className={`mb-3 flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-medium ${getPendingAlert(vehicle).className}`}
+                                        data-testid={`${getPendingAlert(vehicle).testId}-${vehicle.id}`}
+                                    >
+                                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                                        {getPendingAlert(vehicle).label}
+                                    </div>
+                                )}
+
                                 <div className="space-y-2 pt-3 border-t">
                                     <div className="flex items-center gap-2 text-sm">
                                         <User className="w-4 h-4 text-muted-foreground" />

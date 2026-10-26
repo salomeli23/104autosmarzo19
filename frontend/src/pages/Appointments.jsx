@@ -14,11 +14,15 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
 import { PlateBadge } from '../components/PlateBadge';
 import { CarAvatar } from '../components/CarAvatar';
+import { PlateInput } from '../components/PlateInput';
+import { AppointmentConfirmDialog } from '../components/AppointmentConfirmDialog';
 import { CAR_BRANDS, CAR_MODELS, formatCurrency, isHoliday, COLOMBIA_HOLIDAYS } from '../lib/utils';
 import { toast } from 'sonner';
 import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle, MessageCircle, Mail, Send, UserCog, CalendarClock, Lock } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+
+const APPOINTMENT_TYPE_LABELS = { franja: 'Por franja', prioridad: 'Por prioridad', postventa: 'Postventa' };
 
 export const Appointments = () => {
     const [orders, setOrders] = useState([]);
@@ -60,11 +64,20 @@ export const Appointments = () => {
         time_slot: '',
         notes: '',
         confirmation_pin: '',
-        appointment_type: 'franja', // 'franja' | 'prioridad'
+        appointment_type: 'franja', // 'franja' | 'prioridad' | 'postventa'
         authorization_code: '',
         priority_reason: '',
         discount_code: '',
+        postventa_code: '',
+        postventa_motivo: '',
+        original_order_id: '',
     });
+    // Confirmación final con reloj de 60 s
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
+    // Placa o documento ya registrados: { source: 'plate' | 'document', value, data }
+    const [existingMatch, setExistingMatch] = useState(null);
+    const askedLookupsRef = useRef(new Set());
     // Estado del código de descuento validado
     const [discountApplied, setDiscountApplied] = useState(null); // { code, discount_type, discount_value, discount_amount, new_total }
     const [validatingDiscount, setValidatingDiscount] = useState(false);
@@ -391,7 +404,12 @@ export const Appointments = () => {
             authorization_code: '',
             priority_reason: '',
             discount_code: '',
+            postventa_code: '',
+            postventa_motivo: '',
+            original_order_id: '',
         });
+        askedLookupsRef.current = new Set();
+        setExistingMatch(null);
         setSelectedServices([]);
         setCustomServiceName('');
         setCustomServicePrice('');
@@ -430,15 +448,94 @@ export const Appointments = () => {
         setFormData(prev => ({ ...prev, discount_code: '' }));
     };
 
-    const handleSubmit = async (e) => {
+    // Detecta si la placa o el documento ya tienen órdenes registradas
+    const checkExisting = useCallback(async (source, value) => {
+        const key = `${source}:${value}`;
+        if (askedLookupsRef.current.has(key)) return;
+        askedLookupsRef.current.add(key);
+        try {
+            const res = await ordersAPI.lookupExisting(source === 'plate' ? { plate: value } : { document: value });
+            const data = res.data?.[source];
+            if (data) setExistingMatch({ source, value, data });
+        } catch (error) {
+            askedLookupsRef.current.delete(key);
+            console.error('Error looking up existing client:', error);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!dialogOpen || formData.plate.length !== 6) return;
+        checkExisting('plate', formData.plate);
+    }, [dialogOpen, formData.plate, checkExisting]);
+
+    useEffect(() => {
+        const doc = formData.client_cedula.trim();
+        if (!dialogOpen || doc.length < 5) return undefined;
+        const timer = setTimeout(() => checkExisting('document', doc), 700);
+        return () => clearTimeout(timer);
+    }, [dialogOpen, formData.client_cedula, checkExisting]);
+
+    const applyExistingMatch = (asPostventa) => {
+        if (!existingMatch) return;
+        const cd = existingMatch.data.client_data || {};
+        // Evita volver a preguntar por el mismo cliente al llenar el otro campo
+        if (cd.plate) askedLookupsRef.current.add(`plate:${cd.plate}`);
+        if (cd.client_cedula) askedLookupsRef.current.add(`document:${cd.client_cedula}`);
+        setFormData(prev => ({
+            ...prev,
+            client_name: prev.client_name || cd.client_name || '',
+            client_phone: prev.client_phone || cd.client_phone || '',
+            client_email: prev.client_email || cd.client_email || '',
+            client_cedula: prev.client_cedula || cd.client_cedula || '',
+            ...(existingMatch.source === 'plate'
+                ? { brand: prev.brand || cd.brand || '', model: prev.model || cd.model || '' }
+                : {}),
+            ...(asPostventa
+                ? { appointment_type: 'postventa', original_order_id: existingMatch.data.last_order?.id || '' }
+                : {}),
+        }));
+        setExistingMatch(null);
+    };
+
+    const buildServicesData = () => {
+        const servicesData = selectedServices.map(svc => {
+            const parts = svc.parts || [];
+            const sunroofPrice = parts.includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
+            return {
+                service: svc.serviceId,
+                price: svc.price,
+                description: `${svc.category} - ${svc.serviceName}`,
+                parts,
+                extras: sunroofPrice > 0
+                    ? [{ id: 'sunroof', nombre: 'Sunroof (adicional)', price: sunroofPrice }]
+                    : [],
+            };
+        });
+        if (servicesData.length === 0 && formData.appointment_type === 'postventa') {
+            return [{ service: 'postventa', description: `Postventa - ${formData.postventa_motivo.trim()}`, price: 0 }];
+        }
+        return servicesData;
+    };
+
+    // Paso 1: validar y abrir el modal de confirmación
+    const handleSubmit = (e) => {
         e.preventDefault();
-        
-        if (selectedServices.length === 0) {
+        const type = formData.appointment_type;
+        const isPriority = type === 'prioridad';
+        const isPostventa = type === 'postventa';
+
+        if (formData.plate.length !== 6) {
+            toast.error('La placa debe tener 6 caracteres (solo letras y números)');
+            return;
+        }
+        if (!formData.brand.trim() || !formData.model.trim()) {
+            toast.error('Ingresa la marca y el modelo del vehículo');
+            return;
+        }
+        if (!isPostventa && selectedServices.length === 0) {
             toast.error('Selecciona al menos un servicio');
             return;
         }
-
-        const isPriority = formData.appointment_type === 'prioridad';
 
         if (!isPriority) {
             if (!formData.time_slot) {
@@ -452,8 +549,7 @@ export const Appointments = () => {
             }
         }
 
-        const total = calculateTotal();
-        if (total <= 0) {
+        if (!isPostventa && calculateTotal() <= 0) {
             toast.error('Ingresa el valor de al menos un servicio');
             return;
         }
@@ -463,26 +559,30 @@ export const Appointments = () => {
                 toast.error('Ingresa el código de autorización para citas por prioridad');
                 return;
             }
+        } else if (isPostventa) {
+            if (!formData.postventa_motivo.trim()) {
+                toast.error('Describe el motivo de la postventa');
+                return;
+            }
+            if (!formData.postventa_code.trim()) {
+                toast.error('Ingresa la contraseña de postventa');
+                return;
+            }
         } else if (!formData.confirmation_pin || formData.confirmation_pin.trim() === '') {
             toast.error('Ingresa el PIN de confirmación para agendar');
             return;
         }
 
-        try {
-            const servicesData = selectedServices.map(svc => {
-                const parts = svc.parts || [];
-                const sunroofPrice = parts.includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
-                return {
-                    service: svc.serviceId,
-                    price: svc.price,
-                    description: `${svc.category} - ${svc.serviceName}`,
-                    parts,
-                    extras: sunroofPrice > 0
-                        ? [{ id: 'sunroof', nombre: 'Sunroof (adicional)', price: sunroofPrice }]
-                        : [],
-                };
-            });
+        setConfirmOpen(true);
+    };
 
+    // Paso 2: el usuario confirmó dentro de los 60 s
+    const createAppointment = async () => {
+        const isPriority = formData.appointment_type === 'prioridad';
+        const isPostventa = formData.appointment_type === 'postventa';
+        const total = calculateTotal();
+        setSubmitting(true);
+        try {
             const submitData = {
                 client_name: formData.client_name,
                 client_phone: formData.client_phone,
@@ -495,17 +595,24 @@ export const Appointments = () => {
                 color: null,
                 date: format(selectedDate, 'yyyy-MM-dd'),
                 time_slot: isPriority ? 'prioridad' : formData.time_slot,
-                services: servicesData,
+                services: buildServicesData(),
                 negotiated_value: total,
-                notes: formData.notes || null,
-                confirmation_pin: isPriority ? null : formData.confirmation_pin.trim(),
+                notes: formData.notes || (isPostventa ? formData.postventa_motivo.trim() : null),
+                confirmation_pin: isPriority || isPostventa ? null : formData.confirmation_pin.trim(),
                 is_priority: isPriority,
-                authorization_code: isPriority ? formData.authorization_code.trim() : null,
+                authorization_code: isPriority
+                    ? formData.authorization_code.trim()
+                    : isPostventa ? formData.postventa_code.trim() : null,
                 priority_reason: isPriority ? (formData.priority_reason || null) : null,
                 discount_code: discountApplied ? discountApplied.code : null,
+                is_postventa: isPostventa,
+                postventa_type: isPostventa ? 'postventa' : null,
+                postventa_motivo: isPostventa ? formData.postventa_motivo.trim() : null,
+                original_order_id: isPostventa ? (formData.original_order_id || null) : null,
             };
 
             const response = await ordersAPI.create(submitData);
+            setConfirmOpen(false);
             setCreatedOrder(response.data);
             setNotificationEmail(response.data.client_email || ''); // Set email for notification
             setDialogOpen(false);
@@ -514,8 +621,58 @@ export const Appointments = () => {
             fetchSlotsAvailability(selectedDate);
             resetForm();
         } catch (error) {
+            setConfirmOpen(false);
             toast.error(error.response?.data?.detail || 'Error al agendar cita');
+        } finally {
+            setSubmitting(false);
         }
+    };
+
+    const confirmSections = () => {
+        const type = formData.appointment_type;
+        const total = discountApplied ? discountApplied.new_total : calculateTotal();
+        return [
+            {
+                title: 'Cita',
+                rows: [
+                    { label: 'Tipo', value: APPOINTMENT_TYPE_LABELS[type], highlight: true },
+                    { label: 'Fecha', value: format(selectedDate, "EEEE d 'de' MMMM yyyy", { locale: es }) },
+                    { label: 'Franja', value: type === 'prioridad' ? 'Prioridad (inmediata)' : getSlotDisplayName(formData.time_slot) },
+                    { label: 'Motivo de prioridad', value: type === 'prioridad' ? formData.priority_reason : null },
+                    { label: 'Motivo de postventa', value: type === 'postventa' ? formData.postventa_motivo : null },
+                    { label: 'Notas', value: formData.notes },
+                ],
+            },
+            {
+                title: 'Cliente',
+                rows: [
+                    { label: 'Nombre', value: formData.client_name },
+                    { label: 'Teléfono', value: formData.client_phone },
+                    { label: 'Email', value: formData.client_email },
+                    { label: 'Cédula/Documento', value: formData.client_cedula },
+                ],
+            },
+            {
+                title: 'Vehículo',
+                rows: [
+                    { label: 'Placa', value: <PlateBadge plate={formData.plate} size="md" /> },
+                    { label: 'Marca', value: formData.brand },
+                    { label: 'Modelo', value: formData.model },
+                ],
+            },
+            {
+                title: 'Servicios',
+                rows: [
+                    ...selectedServices.map(svc => {
+                        const sunroof = (svc.parts || []).includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
+                        return { label: svc.serviceName, value: formatCurrency((svc.price || 0) + sunroof) };
+                    }),
+                    ...(selectedServices.length === 0 ? [{ label: 'Servicio', value: 'Postventa (sin costo)' }] : []),
+                    { label: `Descuento ${discountApplied?.code || ''}`, value: discountApplied ? `-${formatCurrency(discountApplied.discount_amount)}` : null },
+                    { label: 'Total', value: formatCurrency(total), highlight: true },
+                ],
+            },
+        ];
     };
 
     const handleCloseQRDialog = () => {
@@ -768,7 +925,7 @@ export const Appointments = () => {
                                     <Clock className="w-4 h-4" />
                                     Tipo de Cita *
                                 </Label>
-                                <div className="grid grid-cols-2 gap-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                     <button
                                         type="button"
                                         onClick={() => setFormData(prev => ({ ...prev, appointment_type: 'franja' }))}
@@ -794,6 +951,19 @@ export const Appointments = () => {
                                     >
                                         <p className="font-medium">Por prioridad</p>
                                         <p className="text-xs text-muted-foreground">Sin franja · requiere código</p>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData(prev => ({ ...prev, appointment_type: 'postventa' }))}
+                                        className={`p-3 rounded-lg border text-left transition-all ${
+                                            formData.appointment_type === 'postventa'
+                                                ? 'border-emerald-500 bg-emerald-500/10'
+                                                : 'border-border bg-card hover:border-emerald-500/50'
+                                        }`}
+                                        data-testid="appointment-type-postventa"
+                                    >
+                                        <p className="font-medium">Postventa</p>
+                                        <p className="text-xs text-muted-foreground">Cliente existente · requiere contraseña</p>
                                     </button>
                                 </div>
                             </div>
@@ -838,7 +1008,7 @@ export const Appointments = () => {
                                         />
                                     </div>
                                     <div className="space-y-2">
-                                        <Label htmlFor="client_cedula">Cédula</Label>
+                                        <Label htmlFor="client_cedula">Cédula/Documento</Label>
                                         <Input
                                             id="client_cedula"
                                             value={formData.client_cedula}
@@ -855,19 +1025,17 @@ export const Appointments = () => {
                                     <Car className="w-4 h-4" />
                                     Datos del Vehículo
                                 </h3>
+                                <div className="space-y-2">
+                                    <Label>
+                                        Placa * <span className="text-xs text-muted-foreground font-normal">(6 caracteres, solo letras y números)</span>
+                                    </Label>
+                                    <PlateInput
+                                        value={formData.plate}
+                                        onChange={(plate) => setFormData(prev => ({ ...prev, plate }))}
+                                        testId="appointment-plate"
+                                    />
+                                </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div className="space-y-2">
-                                        <Label htmlFor="plate">Placa *</Label>
-                                        <Input
-                                            id="plate"
-                                            value={formData.plate}
-                                            onChange={(e) => setFormData(prev => ({ ...prev, plate: e.target.value.toUpperCase() }))}
-                                            className="font-mono"
-                                            placeholder="ABC123"
-                                            required
-                                            data-testid="appointment-plate"
-                                        />
-                                    </div>
                                     <div className="space-y-2 relative">
                                         <Label>Marca *</Label>
                                         <Input
@@ -902,7 +1070,6 @@ export const Appointments = () => {
                                             </div>
                                         )}
                                     </div>
-                                </div>
                                 <div className="space-y-2 relative">
                                     <Label>Modelo *</Label>
                                     <Input
@@ -936,6 +1103,7 @@ export const Appointments = () => {
                                         </div>
                                     )}
                                 </div>
+                                </div>
                             </div>
 
                             {/* Date & Time Slot */}
@@ -944,7 +1112,7 @@ export const Appointments = () => {
                                     <CalendarIcon className="w-4 h-4" />
                                     {formData.appointment_type === 'prioridad' ? 'Fecha (Prioridad)' : 'Fecha y Franja Horaria'}
                                 </h3>
-                                <div className={`grid grid-cols-1 ${formData.appointment_type === 'franja' ? 'md:grid-cols-2' : ''} gap-4`}>
+                                <div className={`grid grid-cols-1 ${formData.appointment_type !== 'prioridad' ? 'md:grid-cols-2' : ''} gap-4`}>
                                     <div className="space-y-2">
                                         <Label>Fecha de la Cita *</Label>
                                         <div className="flex justify-center border rounded-lg p-2 overflow-x-auto">
@@ -967,7 +1135,7 @@ export const Appointments = () => {
                                             </div>
                                         )}
                                     </div>
-                                    {formData.appointment_type === 'franja' && (
+                                    {formData.appointment_type !== 'prioridad' && (
                                     <div className="space-y-2">
                                         <Label className="flex items-center gap-2">
                                             <Clock className="w-4 h-4" />
@@ -1417,6 +1585,40 @@ export const Appointments = () => {
                                         />
                                     </div>
                                 </div>
+                            ) : formData.appointment_type === 'postventa' ? (
+                                <div className="space-y-3 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5" data-testid="postventa-section">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="postventa_motivo">Motivo de la postventa *</Label>
+                                        <Textarea
+                                            id="postventa_motivo"
+                                            value={formData.postventa_motivo}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, postventa_motivo: e.target.value }))}
+                                            placeholder="Describe qué se debe revisar o corregir..."
+                                            className="h-20"
+                                            data-testid="appointment-postventa-motivo"
+                                        />
+                                        {formData.original_order_id && (
+                                            <p className="text-xs text-muted-foreground">Vinculada al último servicio registrado de este cliente.</p>
+                                        )}
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="postventa_code" className="flex items-center gap-2 text-emerald-400">
+                                            <Lock className="w-4 h-4" />
+                                            Contraseña de Postventa *
+                                        </Label>
+                                        <Input
+                                            id="postventa_code"
+                                            type="password"
+                                            inputMode="numeric"
+                                            autoComplete="off"
+                                            maxLength={10}
+                                            value={formData.postventa_code}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, postventa_code: e.target.value.replace(/\D/g, '') }))}
+                                            placeholder="Ingresa la contraseña de postventa"
+                                            data-testid="appointment-postventa-code"
+                                        />
+                                    </div>
+                                </div>
                             ) : (
                                 <div className="space-y-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
                                     <Label htmlFor="confirmation_pin" className="flex items-center gap-2 text-amber-400">
@@ -1446,15 +1648,81 @@ export const Appointments = () => {
                                 className="w-full brand-glow" 
                                 data-testid="submit-appointment-btn"
                                 disabled={
-                                    selectedServices.length === 0 ||
+                                    (selectedServices.length === 0 && formData.appointment_type !== 'postventa') ||
                                     (formData.appointment_type === 'franja' && (!slotsAvailability?.is_open || !formData.confirmation_pin)) ||
-                                    (formData.appointment_type === 'prioridad' && !formData.authorization_code)
+                                    (formData.appointment_type === 'prioridad' && !formData.authorization_code) ||
+                                    (formData.appointment_type === 'postventa' && (!slotsAvailability?.is_open || !formData.postventa_code))
                                 }
                             >
                                 <DollarSign className="w-4 h-4 mr-2" />
                                 Agendar Cita - {formatCurrency(discountApplied ? discountApplied.new_total : calculateTotal())}
                             </Button>
                         </form>
+                    </DialogContent>
+                </Dialog>
+
+                <AppointmentConfirmDialog
+                    open={confirmOpen}
+                    onOpenChange={setConfirmOpen}
+                    sections={confirmOpen ? confirmSections() : []}
+                    onConfirm={createAppointment}
+                    submitting={submitting}
+                />
+
+                {/* Placa o documento ya registrados */}
+                <Dialog open={!!existingMatch} onOpenChange={(open) => !open && setExistingMatch(null)}>
+                    <DialogContent
+                        className="max-w-md"
+                        onInteractOutside={(e) => e.preventDefault()}
+                        data-testid="existing-client-dialog"
+                    >
+                        {existingMatch && (
+                            <>
+                                <DialogHeader>
+                                    <DialogTitle className="font-heading text-xl">
+                                        {existingMatch.source === 'plate' ? 'Esta placa ya está registrada' : 'Este documento ya está registrado'}
+                                    </DialogTitle>
+                                    <DialogDescription>
+                                        {existingMatch.source === 'plate' ? 'Placa' : 'Documento'} <strong>{existingMatch.value}</strong> tiene{' '}
+                                        {existingMatch.data.total_orders} servicio(s) registrado(s). ¿Cómo desea registrar esta cita?
+                                    </DialogDescription>
+                                </DialogHeader>
+                                {existingMatch.data.last_order && (
+                                    <div className="rounded-lg border p-3 text-sm space-y-1">
+                                        <p className="text-muted-foreground">Último servicio</p>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <PlateBadge plate={existingMatch.data.last_order.plate} size="md" />
+                                            <OrderStatusBadge status={existingMatch.data.last_order.status} />
+                                        </div>
+                                        <p>
+                                            {existingMatch.data.client_data?.client_name} · {existingMatch.data.last_order.date} · {existingMatch.data.last_order.order_code}
+                                        </p>
+                                        {existingMatch.data.last_order.services?.length > 0 && (
+                                            <p className="text-muted-foreground">{existingMatch.data.last_order.services.join(', ')}</p>
+                                        )}
+                                    </div>
+                                )}
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="sm:flex-1"
+                                        onClick={() => applyExistingMatch(false)}
+                                        data-testid="existing-as-new-btn"
+                                    >
+                                        Servicio nuevo
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        className="sm:flex-1 brand-glow"
+                                        onClick={() => applyExistingMatch(true)}
+                                        data-testid="existing-as-postventa-btn"
+                                    >
+                                        Es postventa
+                                    </Button>
+                                </div>
+                            </>
+                        )}
                     </DialogContent>
                 </Dialog>
             </div>
