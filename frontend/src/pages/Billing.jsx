@@ -134,7 +134,7 @@ export const Billing = () => {
             <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
-                        <DialogTitle className="font-heading text-xl">Procesar Pago</DialogTitle>
+                        <DialogTitle className="font-heading text-xl">Legalizar Pago</DialogTitle>
                         <DialogDescription>
                             {selectedOrder && `${selectedOrder.plate} - ${selectedOrder.client_name}`}
                         </DialogDescription>
@@ -208,7 +208,7 @@ export const Billing = () => {
                             data-testid="confirm-payment-btn"
                         >
                             <CreditCard className="w-4 h-4 mr-2" />
-                            {processing ? 'Procesando...' : 'Confirmar Pago'}
+                            {processing ? 'Procesando...' : 'Legalizar y enviar a Entrega'}
                         </Button>
                     </div>
                 </DialogContent>
@@ -342,7 +342,7 @@ export const Billing = () => {
                                                 data-testid={`pay-btn-${order.id}`}
                                             >
                                                 <CreditCard className="w-4 h-4 mr-2" />
-                                                Procesar Pago
+                                                Legalizar Pago
                                             </Button>
                                         </CardContent>
                                     </Card>

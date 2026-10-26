@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 21 — Testing POST /api/orders/{id}/reschedule (new reasignar cita feature) + frontend /appointments Reasignar dialog. Backend: 6/6 pytest cases PASS (empty pw 400, wrong pw 999999 400, correct pw 861123 200 with reschedule_count=1, priority slot sets Colombia HH:MM current time and is_priority=true, non-AGENDADO status rejected 400, OrderResponse exposes rescheduled_at/by/count). Frontend: login OK, /appointments loads, reschedule-btn appears only for status='agendado' (not on desistido/ingresado), dialog shows PlateBadge + cliente + fecha/hora actual + calendario + Prioridad + slots con cupos + motivo + contraseña. Wrong pw 999999 shows sonner toast 'Contraseña de reagendación inválida'. Correct pw 861123 closes dialog (success). Submit button correctly disabled when password/slot empty (behaviour differs slightly from spec which requested toasts, but disabled button is safer UX and prevents accidental clicks).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reasignar dialog", "issues": ["Spec pedía toasts 'Ingresa la contraseña' y 'Selecciona una nueva franja' cuando faltan campos; la impl. deshabilita el botón submit en su lugar. Es UX aceptable pero difiere ligeramente del requerimiento. Considerar añadir tooltip explicando por qué está deshabilitado."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21_reschedule.py",
+    "/app/test_reports/pytest/iteration21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L3788: default reschedule_pin '861123' hardcoded en el código — correcto ya que el enunciado lo especifica, pero recordar que es sensible y debería documentarse en /settings.",
+    "server.py L3844-3855: fallo de envío de email no aborta la operación (correcto), pero se pierde el error si el endpoint /orders/{id} no expone posteriormente el estado de email — considerar guardar 'last_email_error' en la orden.",
+    "Appointments.jsx L1631: `disabled={rsLoading || !rsSlot || !rsPassword.trim()}` — buena UX pero contradice el requerimiento de mostrar toast; alinear con producto si es necesario.",
+    "Backend cleanup: los tests crean orders TEST_* pero /api/orders/{id} DELETE puede no existir; verificar cleanup automatizado para no ensuciar la BD de preview."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration21_reschedule.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% de flujos críticos (login, listado, dialog abre, validaciones pw)"},
+  "test_credentials": "admin@polarizadosya.com / admin123; reschedule_pin default: 861123",
+  "seed_data_creation": "3 órdenes AGENDADO creadas en /api/orders con placas T7C068B, T25BEC7, T1A8455 (fecha 2026-10-07 franja_1) + delivered+*@resend.dev para test de email. No hay endpoint DELETE conocido, quedan en la BD.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend reschedule endpoint funciona 100%. Reschedule pin default 861123 hardcoded (fallback si setting no existe). Emails vía Resend requieren dominio válido (usar delivered+X@resend.dev para tests). Orders con status='agendado' + client_email → email_sent=true. Frontend dialog completo con todos los data-testids esperados. RSG001 sigue existiendo en 2026-10-01 franja_1 desde iteración previa.",
+  "rca of the issue": "N/A — no bugs encontrados"
+}

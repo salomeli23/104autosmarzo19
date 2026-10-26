@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 18 — Retenciones (Reteica/Retefuente) + Guard de envío de factura + Tab Impuestos. Ran backend pytest suite (8/8 passed) and Playwright E2E on /facturacion-electronica. All backend endpoints and frontend flows behave per spec.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Impuestos tab (initial mount)", "issues": ["Al entrar directamente a tab Impuestos, brevemente muestra count=0/$0 (aparente race). Tras aplicar filtro/Actualizar los datos aparecen correctamente. Considera mostrar loader hasta primera respuesta."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration18_retentions.py",
+    "/app/test_reports/pytest/iteration18.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py cerca de L3717: la propagación de identidad usa `$or` con client_name (case-sensitive exact match). Un cambio en Bogota vs bogota o pequeñas variaciones de mayúsculas no se propagará. Ya existe helper `re.compile(re.escape(q), re.IGNORECASE)` — considerar mismo trato aquí para robustez.",
+    "server.py L3735: `.to_list(500)` como límite fijo — considerar paginación cuando el volumen crezca.",
+    "FacturacionElectronica.jsx: `isBogota` limpia acentos, pero validaciones idénticas se repiten en varios lugares — ya está bien encapsulado. En el `openRetention` el default asume Bogotá aunque la orden pueda ser de otra ciudad; sería mejor si la orden guardara la ciudad para pre-poblar.",
+    "FacturacionElectronica.jsx: archivo tiene ~519 líneas — todavía manejable, pero el dialog podría extraerse a componente propio para mantener < 300 líneas por archivo."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration18_retentions.py (nuevo)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (todos los flujos manuales verificados)"},
+  "test_credentials": "admin@polarizadosya.com / admin123 · facturacion@polarizadosya.com / factura123",
+  "seed_data_creation": "Test fixture crea 5 órdenes con prefix TEST_ directamente en MongoDB (motor pymongo) y limpia al finalizar (orders + retentions).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Endpoints probados: POST /api/orders/{id}/apply-retention (bogotá, no_aplica, propagate identity, negative rate 400), POST /api/orders/{id}/send-invoice-email (guard 400 sin retención), GET /api/retentions (sort DESC, summary math, q filter), GET /api/orders-pending-invoice (expone retention_applied + retention_snapshot). Frontend: 2 tabs (pendientes/impuestos), dialog con default Bogotá + reteica 0.966%, switch a Medellín desactiva reteica y muestra warning, no_aplica oculta bloques, update_identity revela inputs, preview live funcional, send-invoice-btn deshabilitado hasta que retention_applied=true, tab Impuestos con summary + búsqueda funcionando.",
+  "rca of the issue": "N/A — no bugs encontrados"
+}

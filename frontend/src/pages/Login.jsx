@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { toast } from 'sonner';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
 
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_techgarage-app/artifacts/8kw8x7h6_Captura%20de%20Pantalla%202026-01-30%20a%20la%28s%29%2011.36.02%20a.%C2%A0m..png";
+const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
 const BG_IMAGE = "https://images.unsplash.com/photo-1647649641463-724358c4387e?w=1920&q=80";
 
 export const Login = () => {
@@ -45,11 +45,11 @@ export const Login = () => {
                 <div className="relative z-10 flex flex-col justify-center items-center w-full p-12">
                     <img 
                         src={LOGO_URL} 
-                        alt="PolarizadosYA!" 
+                        alt="Polarizados Manager" 
                         className="h-32 w-auto mb-8"
                     />
                     <h1 className="font-heading text-4xl md:text-5xl text-white text-center mb-4">
-                        Sistema de Gestión
+                        Manager Software
                     </h1>
                     <p className="text-white/80 text-center text-lg max-w-md">
                         Polarizado • Nanocerámica • Autobahn Black CE • Ultrasecure
@@ -74,7 +74,7 @@ export const Login = () => {
                 {/* Mobile logo */}
                 <img 
                     src={LOGO_URL} 
-                    alt="PolarizadosYA!" 
+                    alt="Polarizados Manager" 
                     className="h-20 w-auto mb-6 lg:hidden"
                 />
 

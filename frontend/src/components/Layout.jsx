@@ -32,21 +32,33 @@ import {
     UserPlus,
     QrCode,
     CreditCard,
+    Scissors,
+    Boxes,
+    ShieldCheck,
+    Warehouse,
+    Receipt,
+    LogOut as LogOutIcon,
+    FileSignature,
 } from 'lucide-react';
 
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_techgarage-app/artifacts/8kw8x7h6_Captura%20de%20Pantalla%202026-01-30%20a%20la%28s%29%2011.36.02%20a.%C2%A0m..png";
+const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
 
 const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion'] },
+    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion', 'corte'] },
     { path: '/appointments', label: 'Agendamiento', icon: Calendar, roles: ['admin', 'asesor'] },
     { path: '/checkin', label: 'Check-in / Ingreso', icon: QrCode, roles: ['admin', 'asesor'] },
     { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'asesor', 'coordinador'] },
-    { path: '/inspections', label: 'Revisión 360°', icon: ClipboardCheck, roles: ['admin', 'asesor'] },
-    { path: '/assign', label: 'Asignar Técnico', icon: UserPlus, roles: ['admin', 'coordinador'] },
+    { path: '/auto-asignar', label: 'Autos por Asignar', icon: UserPlus, roles: ['admin', 'coordinador'] },
+    { path: '/cutting', label: 'Corte de Piezas', icon: Scissors, roles: ['admin', 'corte', 'coordinador'] },
     { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
     { path: '/billing', label: 'Facturación', icon: CreditCard, roles: ['admin', 'facturacion'] },
+    { path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'asesor', 'facturacion', 'coordinador'] },
+    { path: '/facturacion-electronica', label: 'Clientes por Facturar', icon: FileSignature, roles: ['admin', 'facturacion', 'asesor'] },
+    { path: '/autos-salida', label: 'Autorizar Salida', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin', 'asesor'] },
     { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'asesor', 'coordinador', 'facturacion'] },
+    { path: '/postventa', label: 'Postventa / Garantías', icon: ShieldCheck, roles: ['admin', 'asesor', 'coordinador'] },
+    { path: '/inventory', label: 'Inventario', icon: Boxes, roles: ['admin', 'coordinador', 'corte'] },
     { path: '/settings', label: 'Configuración', icon: Settings, roles: ['admin'] },
 ];
 
@@ -116,7 +128,7 @@ export const Layout = ({ children }) => {
                     <div className="flex items-center justify-center px-4 mb-6">
                         <img 
                             src={LOGO_URL} 
-                            alt="PolarizadosYA!" 
+                            alt="Polarizados Manager" 
                             className="h-16 w-auto object-contain"
                         />
                     </div>
@@ -160,7 +172,7 @@ export const Layout = ({ children }) => {
                                     <div className="flex items-center justify-center px-4 mb-6">
                                         <img 
                                             src={LOGO_URL} 
-                                            alt="PolarizadosYA!" 
+                                            alt="Polarizados Manager" 
                                             className="h-14 w-auto object-contain"
                                         />
                                     </div>
@@ -176,7 +188,7 @@ export const Layout = ({ children }) => {
                         {/* Mobile logo */}
                         <img 
                             src={LOGO_URL} 
-                            alt="PolarizadosYA!" 
+                            alt="Polarizados Manager" 
                             className="h-10 w-auto object-contain md:hidden"
                         />
 

@@ -53,9 +53,17 @@ export const ordersAPI = {
     
     // Step 3: Inspection
     saveInspection: (data) => api.post('/orders/inspection', data),
+    sendInspectionPhotos: (orderId, additionalRecipients = []) =>
+        api.post(`/orders/${orderId}/send-inspection-photos`, { order_id: orderId, additional_recipients: additionalRecipients }),
     
     // Step 4: Assignment (Coordinator)
     assignTechnician: (data) => api.post('/orders/assign', data),
+    
+    // Pre-asignación de técnico (Autos por Asignar - antes de Corte)
+    getPendingTechAssignment: () => api.get('/tech-queue/pending'),
+    getOrdersByTechnician: () => api.get('/tech-queue/by-technician'),
+    preAssignTechnician: (data) => api.post('/tech-queue/pre-assign', data),
+    clearPreAssignment: (orderId) => api.post(`/orders/${orderId}/clear-pre-assignment`),
     
     // Step 5: Service (Technician)
     startService: (orderId) => api.post(`/orders/${orderId}/start-service`),
@@ -69,6 +77,9 @@ export const ordersAPI = {
     
     // Desistimiento
     desistimiento: (orderId) => api.post(`/orders/${orderId}/desistimiento`),
+    
+    // Postventa / Garantía
+    historyByPlate: (plate) => api.get(`/orders/history-by-plate/${encodeURIComponent(plate)}`),
 };
 
 // Alerts
@@ -98,6 +109,52 @@ export const servicesAPI = {
 // Time slots availability
 export const slotsAPI = {
     getAvailability: (date) => api.get('/slots/availability', { params: { date } }),
+};
+
+// Bahias (Garage bays)
+export const bahiasAPI = {
+    getAll: () => api.get('/bahias'),
+    assign: (bahiaId, orderId) => api.put(`/bahias/${bahiaId}/assign`, null, { params: { order_id: orderId } }),
+    release: (bahiaId, body) => api.put(`/bahias/${bahiaId}/release`, body || { completed: false }),
+};
+
+// Billing (Facturación)
+export const billingAPI = {
+    listPending: () => api.get('/billing/pending'),
+    processPayment: (data) => api.post('/orders/payment', data),
+    confirmDelivery: (data) => api.post('/orders/delivery', data),
+};
+
+// Cutting module
+export const cuttingAPI = {
+    getPending: () => api.get('/cutting/pending'),
+    start: (orderId) => api.put(`/cutting/${orderId}/start`),
+    complete: (orderId, body) => api.put(`/cutting/${orderId}/complete`, body || {}),
+};
+
+// Seed data
+export const seedAPI = {
+    users: () => api.post('/seed/users'),
+    bahias: () => api.post('/seed/bahias'),
+};
+
+// Inventory
+export const inventoryAPI = {
+    list: (params) => api.get('/inventory', { params }),
+    create: (data) => api.post('/inventory', data),
+    update: (id, data) => api.put(`/inventory/${id}`, data),
+    delete: (id) => api.delete(`/inventory/${id}`),
+    alerts: () => api.get('/inventory/alerts'),
+    deduct: (id, params) => api.post(`/inventory/${id}/deduct`, null, { params }),
+    movements: (params) => api.get('/inventory/movements', { params }),
+};
+
+// Settings (admin)
+export const settingsAPI = {
+    getBookingPin: () => api.get('/settings/booking-pin'),
+    updateBookingPin: (pin) => api.put('/settings/booking-pin', { pin }),
+    getCompletionPin: () => api.get('/settings/completion-pin'),
+    updateCompletionPin: (pin) => api.put('/settings/completion-pin', { pin }),
 };
 
 // Legacy API aliases for backwards compatibility
@@ -137,6 +194,94 @@ export const quotesAPI = {
     getAll: () => api.get('/orders'),
     create: (data) => api.post('/orders', data),
     approve: (id) => api.post(`/orders/${id}/start-service`),
+};
+
+// Sedes / Sucursales
+export const sedesAPI = {
+    list: () => api.get('/sedes'),
+    create: (data) => api.post('/sedes', data),
+    update: (id, data) => api.put(`/sedes/${id}`, data),
+    delete: (id) => api.delete(`/sedes/${id}`),
+};
+
+// Car Series (Consejo de Corte)
+export const carSeriesAPI = {
+    list: () => api.get('/car-series'),
+    create: (data) => api.post('/car-series', data),
+    update: (id, data) => api.put(`/car-series/${id}`, data),
+    delete: (id) => api.delete(`/car-series/${id}`),
+    suggest: (brand, model) => api.get('/car-series/suggest', { params: { brand, model } }),
+};
+
+// Service Extras (Sunroof y otros costos adicionales)
+export const serviceExtrasAPI = {
+    list: () => api.get('/service-extras'),
+    create: (data) => api.post('/service-extras', data),
+    update: (id, data) => api.put(`/service-extras/${id}`, data),
+    delete: (id) => api.delete(`/service-extras/${id}`),
+};
+
+// Service Routes (Hoja de Ruta - reglas)
+export const serviceRoutesAPI = {
+    list: () => api.get('/service-routes'),
+    create: (data) => api.post('/service-routes', data),
+    update: (id, data) => api.put(`/service-routes/${id}`, data),
+    delete: (id) => api.delete(`/service-routes/${id}`),
+};
+
+// Hoja de Ruta por orden
+export const orderRouteAPI = {
+    init: (orderId) => api.post(`/orders/${orderId}/route/init`),
+    assignSlot: (orderId, slotId, data) => api.post(`/orders/${orderId}/route/slots/${slotId}/assign`, data),
+    startSlot: (orderId, slotId, body) => api.post(`/orders/${orderId}/route/slots/${slotId}/start`, body || {}),
+    completeSlot: (orderId, slotId, body) => api.post(`/orders/${orderId}/route/slots/${slotId}/complete`, body || {}),
+};
+
+// Actualizar roles funcionales del técnico
+export const userRolesAPI = {
+    setTecnicoRoles: (userId, roles) => api.put(`/users/${userId}/tecnico-roles`, { tecnico_roles: roles }),
+};
+
+// Inventario: transferir entre sedes / asignar sede a usuario
+export const sedeAssignmentAPI = {
+    transferInventory: (itemId, data) => api.post(`/inventory/${itemId}/transfer-sede`, data),
+    setUserSede: (userId, sedeId) => api.put(`/users/${userId}/sede`, { sede_id: sedeId }),
+};
+
+// Catálogo de corte
+export const cuttingCatalogAPI = {
+    getMaterials: () => api.get('/cutting/materials-catalog'),
+    getCarAverage: (brand, model) => api.get('/cutting/car-average', { params: { brand, model } }),
+    seedRolls: () => api.post('/seed/cutting-catalog'),
+};
+
+// Pagos
+export const paymentsAPI = {
+    register: (data) => api.post('/payments', data),
+    list: (q) => api.get('/payments', { params: q ? { q } : {} }),
+    forOrder: (orderId) => api.get(`/payments/order/${orderId}`),
+    ordersWithBalance: (params) => api.get('/orders-with-balance', { params }),
+    pendingRelease: () => api.get('/orders-pending-release'),
+    authorizeRelease: (orderId) => api.post(`/orders/${orderId}/authorize-release`),
+    pendingInvoice: (includeSent = false) => api.get('/orders-pending-invoice', { params: { include_sent: includeSent } }),
+    sendInvoiceEmail: (orderId) => api.post(`/orders/${orderId}/send-invoice-email`),
+    downloadInvoicePdf: (orderId) => api.get(`/orders/${orderId}/invoice-pdf`, { responseType: 'blob' }),
+    updateClientEmail: (orderId, email) => api.patch(`/orders/${orderId}/client-email`, { client_email: email }),
+    reschedule: (orderId, data) => api.post(`/orders/${orderId}/reschedule`, data),
+    applyRetention: (orderId, data) => api.post(`/orders/${orderId}/apply-retention`, data),
+    listRetentions: (q) => api.get('/retentions', { params: q ? { q } : {} }),
+    sendIngresoReceipt: (orderId) => api.post(`/orders/${orderId}/send-ingreso-receipt`),
+    seedTestOrders: () => api.post('/seed/test-orders'),
+};
+
+// Códigos de descuento
+export const discountCodesAPI = {
+    verifyAdmin: (admin_password) => api.post('/discount-codes/admin/verify', { admin_password }),
+    list: (include_inactive = true) => api.get('/discount-codes', { params: { include_inactive } }),
+    create: (data) => api.post('/discount-codes', data),
+    update: (id, data) => api.patch(`/discount-codes/${id}`, data),
+    delete: (id, admin_password) => api.delete(`/discount-codes/${id}`, { params: { admin_password } }),
+    validate: (code, subtotal) => api.get('/discount-codes/validate', { params: { code, subtotal } }),
 };
 
 export default api;

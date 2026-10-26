@@ -89,6 +89,7 @@ export const ORDER_STATUS_LABELS = {
     agendado: 'Agendado',
     ingresado: 'Ingresado',
     en_revision: 'En Revisión',
+    en_corte: 'En Corte',
     asignado: 'Asignado',
     en_proceso: 'En Proceso',
     servicio_completado: 'Servicio Completado',
@@ -102,6 +103,7 @@ export const ORDER_STATUS_COLORS = {
     agendado: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
     ingresado: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
     en_revision: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20',
+    en_corte: 'bg-pink-500/10 text-pink-500 border-pink-500/20',
     asignado: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
     en_proceso: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
     servicio_completado: 'bg-teal-500/10 text-teal-500 border-teal-500/20',
@@ -169,29 +171,52 @@ export const TIME_SLOTS = [
 export const CAR_BRANDS = [
     'Chevrolet', 'Renault', 'Mazda', 'Kia', 'Nissan', 'Toyota', 'Hyundai', 'Ford',
     'Volkswagen', 'Suzuki', 'Honda', 'BMW', 'Mercedes-Benz', 'Audi', 'Jeep',
-    'Mitsubishi', 'Peugeot', 'Citroën', 'Fiat', 'Otro'
+    'Mitsubishi', 'Peugeot', 'Citroën', 'Fiat',
+    // Marcas eléctricas / híbridas populares en Colombia
+    'Tesla', 'Deepal', 'BYD', 'MG', 'Zeekr', 'NIO', 'XPeng', 'Volvo', 'Polestar',
+    'Porsche', 'Dongfeng', 'Changan', 'JAC', 'GWM', 'Jetour', 'Chery', 'JMC', 'Maxus',
+    'Otro'
 ];
 
 export const CAR_MODELS = {
-    'Chevrolet': ['Spark', 'Sail', 'Onix', 'Tracker', 'Captiva', 'Equinox', 'Blazer', 'Tahoe', 'Trailblazer', 'N300', 'N400', 'Otro'],
-    'Renault': ['Kwid', 'Sandero', 'Stepway', 'Logan', 'Duster', 'Koleos', 'Captur', 'Oroch', 'Kangoo', 'Master', 'Otro'],
-    'Mazda': ['Mazda 2', 'Mazda 3', 'Mazda 6', 'CX-3', 'CX-30', 'CX-5', 'CX-9', 'MX-5', 'BT-50', 'Otro'],
-    'Kia': ['Picanto', 'Rio', 'Cerato', 'K5', 'Soul', 'Seltos', 'Sportage', 'Sorento', 'Carnival', 'Stinger', 'Otro'],
-    'Nissan': ['March', 'Versa', 'Sentra', 'Kicks', 'Qashqai', 'X-Trail', 'Pathfinder', 'Frontier', 'NP300', 'Otro'],
-    'Toyota': ['Yaris', 'Corolla', 'Camry', 'Prius', 'C-HR', 'RAV4', 'Fortuner', 'Land Cruiser', 'Hilux', '4Runner', 'Otro'],
-    'Hyundai': ['Grand i10', 'Accent', 'Elantra', 'Sonata', 'Venue', 'Kona', 'Tucson', 'Santa Fe', 'Palisade', 'Creta', 'Otro'],
-    'Ford': ['Fiesta', 'Focus', 'Fusion', 'Mustang', 'EcoSport', 'Escape', 'Explorer', 'Expedition', 'Ranger', 'F-150', 'Otro'],
-    'Volkswagen': ['Gol', 'Polo', 'Virtus', 'Jetta', 'Passat', 'T-Cross', 'Taos', 'Tiguan', 'Touareg', 'Amarok', 'Otro'],
+    'Chevrolet': ['Spark', 'Sail', 'Onix', 'Tracker', 'Captiva', 'Equinox', 'Blazer', 'Tahoe', 'Trailblazer', 'N300', 'N400', 'Bolt EV', 'Bolt EUV', 'Otro'],
+    'Renault': ['Kwid', 'Kwid E-Tech', 'Sandero', 'Stepway', 'Logan', 'Duster', 'Koleos', 'Captur', 'Oroch', 'Kangoo', 'Kangoo E-Tech', 'Megane E-Tech', 'Master', 'Zoe', 'Otro'],
+    'Mazda': ['Mazda 2', 'Mazda 3', 'Mazda 6', 'CX-3', 'CX-30', 'CX-5', 'CX-9', 'CX-60', 'CX-90', 'MX-5', 'MX-30', 'BT-50', 'Otro'],
+    'Kia': ['Picanto', 'Rio', 'Cerato', 'K5', 'Soul', 'Soul EV', 'Seltos', 'Sportage', 'Sorento', 'Carnival', 'Stinger', 'EV6', 'EV9', 'Niro EV', 'Otro'],
+    'Nissan': ['March', 'Versa', 'Sentra', 'Kicks', 'Qashqai', 'X-Trail', 'Pathfinder', 'Frontier', 'NP300', 'Leaf', 'Ariya', 'Otro'],
+    'Toyota': ['Yaris', 'Corolla', 'Corolla Cross', 'Camry', 'Prius', 'C-HR', 'RAV4', 'bZ4X', 'Fortuner', 'Land Cruiser', 'Hilux', '4Runner', 'Otro'],
+    'Hyundai': ['Grand i10', 'Accent', 'Elantra', 'Sonata', 'Venue', 'Kona', 'Kona Electric', 'Tucson', 'Santa Fe', 'Palisade', 'Creta', 'Ioniq 5', 'Ioniq 6', 'Otro'],
+    'Ford': ['Fiesta', 'Focus', 'Fusion', 'Mustang', 'Mustang Mach-E', 'EcoSport', 'Escape', 'Explorer', 'Expedition', 'Ranger', 'F-150', 'F-150 Lightning', 'Otro'],
+    'Volkswagen': ['Gol', 'Polo', 'Virtus', 'Jetta', 'Passat', 'T-Cross', 'Taos', 'Tiguan', 'Touareg', 'Amarok', 'ID.3', 'ID.4', 'ID.5', 'ID.Buzz', 'Otro'],
     'Suzuki': ['Alto', 'Swift', 'Baleno', 'Ciaz', 'S-Presso', 'Vitara', 'Grand Vitara', 'Jimny', 'XL7', 'Otro'],
-    'Honda': ['Brio', 'City', 'Civic', 'Accord', 'HR-V', 'CR-V', 'Pilot', 'Passport', 'Odyssey', 'Otro'],
-    'BMW': ['Serie 1', 'Serie 2', 'Serie 3', 'Serie 4', 'Serie 5', 'Serie 7', 'X1', 'X3', 'X5', 'X7', 'Otro'],
-    'Mercedes-Benz': ['Clase A', 'Clase C', 'Clase E', 'Clase S', 'GLA', 'GLC', 'GLE', 'GLS', 'Sprinter', 'Otro'],
-    'Audi': ['A1', 'A3', 'A4', 'A6', 'A8', 'Q2', 'Q3', 'Q5', 'Q7', 'Q8', 'Otro'],
-    'Jeep': ['Renegade', 'Compass', 'Cherokee', 'Grand Cherokee', 'Wrangler', 'Gladiator', 'Otro'],
-    'Mitsubishi': ['Mirage', 'Lancer', 'ASX', 'Outlander', 'Eclipse Cross', 'Montero', 'L200', 'Otro'],
-    'Peugeot': ['208', '301', '308', '408', '508', '2008', '3008', '5008', 'Partner', 'Otro'],
-    'Citroën': ['C3', 'C4', 'C5 Aircross', 'Berlingo', 'Jumpy', 'Otro'],
-    'Fiat': ['Mobi', 'Argo', 'Cronos', 'Tipo', '500', 'Toro', 'Ducato', 'Otro'],
+    'Honda': ['Brio', 'City', 'Civic', 'Accord', 'HR-V', 'CR-V', 'Pilot', 'Passport', 'Odyssey', 'e:Ny1', 'Otro'],
+    'BMW': ['Serie 1', 'Serie 2', 'Serie 3', 'Serie 4', 'Serie 5', 'Serie 7', 'X1', 'X3', 'X5', 'X7', 'iX', 'iX3', 'i4', 'i5', 'i7', 'Otro'],
+    'Mercedes-Benz': ['Clase A', 'Clase C', 'Clase E', 'Clase S', 'GLA', 'GLC', 'GLE', 'GLS', 'EQA', 'EQB', 'EQC', 'EQE', 'EQS', 'Sprinter', 'Otro'],
+    'Audi': ['A1', 'A3', 'A4', 'A6', 'A8', 'Q2', 'Q3', 'Q5', 'Q7', 'Q8', 'Q4 e-tron', 'Q6 e-tron', 'Q8 e-tron', 'e-tron GT', 'Otro'],
+    'Jeep': ['Renegade', 'Compass', 'Cherokee', 'Grand Cherokee', 'Wrangler', 'Wrangler 4xe', 'Gladiator', 'Avenger', 'Otro'],
+    'Mitsubishi': ['Mirage', 'Lancer', 'ASX', 'Outlander', 'Outlander PHEV', 'Eclipse Cross', 'Montero', 'L200', 'Otro'],
+    'Peugeot': ['208', 'e-208', '301', '308', '408', '508', '2008', 'e-2008', '3008', '5008', 'Partner', 'Otro'],
+    'Citroën': ['C3', 'C4', 'ë-C4', 'C5 Aircross', 'Berlingo', 'ë-Berlingo', 'Jumpy', 'Otro'],
+    'Fiat': ['Mobi', 'Argo', 'Cronos', 'Tipo', '500', '500e', 'Toro', 'Ducato', 'Otro'],
+    // ===== Marcas eléctricas / híbridas =====
+    'Tesla': ['Model 3', 'Model Y', 'Model S', 'Model X', 'Cybertruck', 'Roadster', 'Otro'],
+    'Deepal': ['S07', 'S05', 'L07', 'E07', 'Otro'],
+    'BYD': ['Yuan Plus (Atto 3)', 'Dolphin', 'Dolphin Mini', 'Seal', 'Seal U', 'Han', 'Tang', 'Song Plus', 'Song Pro', 'Shark', 'Otro'],
+    'MG': ['MG3', 'MG4', 'MG5', 'MG ZS', 'MG ZS EV', 'MG HS', 'MG RX5', 'Marvel R', 'Cyberster', 'Otro'],
+    'Zeekr': ['001', '007', '009', 'X', 'Otro'],
+    'NIO': ['ET5', 'ET7', 'ES6', 'ES7', 'ES8', 'EC6', 'EC7', 'Otro'],
+    'XPeng': ['G6', 'G9', 'P5', 'P7', 'X9', 'Otro'],
+    'Volvo': ['XC40', 'XC40 Recharge', 'XC60', 'XC90', 'C40 Recharge', 'EX30', 'EX90', 'S60', 'S90', 'Otro'],
+    'Polestar': ['Polestar 2', 'Polestar 3', 'Polestar 4', 'Otro'],
+    'Porsche': ['911', 'Panamera', 'Macan', 'Macan Electric', 'Cayenne', 'Taycan', 'Otro'],
+    'Dongfeng': ['Rich 6', 'AX7', 'E70', 'Nano Box', 'Box', 'Otro'],
+    'Changan': ['CS35 Plus', 'CS55 Plus', 'CS75 Plus', 'Eado', 'Hunter', 'Lumin', 'Otro'],
+    'JAC': ['S3', 'S4', 'S7', 'JS4', 'E10X', 'E40X', 'E-JS4', 'T6', 'T8', 'Otro'],
+    'GWM': ['Haval H6', 'Haval Jolion', 'Haval H6 HEV', 'Ora Good Cat', 'Ora 03', 'Poer', 'Tank 300', 'Tank 500', 'Otro'],
+    'Jetour': ['X70', 'X70 Plus', 'X90', 'Dashing', 'T2', 'Otro'],
+    'Chery': ['Tiggo 2', 'Tiggo 4', 'Tiggo 7', 'Tiggo 8', 'Arrizo 5', 'Omoda 5', 'Otro'],
+    'JMC': ['Vigus', 'Grand Avenue', 'E-Vigus', 'Otro'],
+    'Maxus': ['T60', 'T90', 'D60', 'D90', 'G10', 'eDeliver 3', 'eDeliver 9', 'Mifa 9', 'Otro'],
     'Otro': ['Otro']
 };
 
@@ -214,6 +239,28 @@ export const VEHICLE_STATUS_LABELS = {
     en_proceso: 'En Proceso',
     finalizado: 'Finalizado',
 };
+
+
+// VEHICLE_PARTS: piezas estándar usadas en Check-in, Corte y Consejo de Corte (Series).
+// Single source of truth para garantizar que las series creadas en /settings
+// se vinculen correctamente con los inputs del cortador.
+export const VEHICLE_PARTS = [
+    { id: 'panoramico', label: 'Panorámico', name: 'Panorámico' },
+    { id: 'vidrio_copiloto', label: 'Vidrio Copiloto', name: 'Vidrio Copiloto' },
+    { id: 'vidrio_piloto', label: 'Vidrio Piloto', name: 'Vidrio Piloto' },
+    { id: 'vidrio_trasero_piloto', label: 'Vidrio Trasero Piloto', name: 'Vidrio Trasero Piloto' },
+    { id: 'vidrio_trasero_copiloto', label: 'Vidrio Trasero Copiloto', name: 'Vidrio Trasero Copiloto' },
+    { id: 'vidrio_trasero', label: 'Vidrio Trasero (Panorámico Trasero)', name: 'Vidrio Trasero (Panorámico Trasero)' },
+    { id: 'luneta', label: 'Luneta / Trasero', name: 'Luneta / Trasero' },
+    { id: 'sunroof', label: 'Sunroof', name: 'Sunroof' },
+    { id: 'custodias', label: 'Custodias', name: 'Custodias' },
+];
+
+// PPF: partes disponibles para el plan por piezas (selector predictivo en Check-in)
+export const PPF_PARTS = [
+    'Bomper', 'Capot', 'Guardafangos', 'Espejos', 'Farolas', 'Boceles',
+    'Parales', 'Triángulos', 'Spoiler', 'Techo', 'Difusores', 'Tacómetro',
+];
 
 export const INSPECTION_AREAS = [
     { id: 'capot', name: 'Capot' },

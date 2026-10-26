@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 22 — Discount codes feature (admin password william123) end-to-end tested. BACKEND: 24/24 pytest cases PASS covering (1) admin verify endpoint rejects wrong pw with 403 and accepts william123, (2) POST /api/discount-codes requires admin_password; creates percentage 10% and fixed 50000 with expires_at; expired codes expose expired=true; (3) GET /api/discount-codes returns list with expired flag and no _id, (4) GET /api/discount-codes/validate computes amount correctly, 400 on inactive/expired, 404 on nonexistent, (5) POST /api/orders with discount_code applies to negotiated_value (1,000,000 - 10% = 900,000), saves discount_* fields with discount_applied_stage='appointment' and increments usage_count, (6) 400 on invalid/expired code at order creation, (7) POST /api/orders/ingreso-approval with discount_code on order without discount applies and sets stage='checkin' (800k - 50k = 750k), (8) same endpoint with discount_code on order already having one returns 400, (9) check-in without discount_code on order with appointment discount re-applies pct to new gross (1.2M -> 1.08M, stage preserved 'appointment'), (10) PATCH toggles active with admin_password and rejects wrong pw with 403, (11) DELETE /api/discount-codes/{id}?admin_password=william123 works and rejects wrong pw with 403. FRONTEND: Facturación user can access /facturacion-electronica → tab Descuentos → admin password william123 verified → create dialog opens → new code TESTUI8756 (15% percentage, expires 2026-12-31) created and card appears with Desactivar/Eliminar buttons. Admin user on /appointments: 'Nueva Cita' dialog opens, data-testid='appointment-discount-input' and 'appointment-discount-apply-btn' present (apply correctly guarded until at least one service is added — shows toast 'Agrega al menos un servicio antes de validar el código'). CheckIn.jsx inspected: when order has discount_code from appointment, data-testid='checkin-discount-from-appointment' is rendered; otherwise data-testid='checkin-discount-input' + 'checkin-discount-apply-btn' are shown. All required data-testids match the spec.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration22_discounts.py",
+    "/app/test_reports/pytest/iteration22.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L427: DISCOUNT_ADMIN_PASSWORD='william123' hardcoded. Consider moving to settings collection like booking_pin/priority_pin for configurability without code changes.",
+    "server.py L1795: in approve_ingreso, when re-applying appointment discount, discount_amount is updated but discount_value/discount_type remain unchanged (which is correct). However discount_applied_at is NOT refreshed — intentional? Document this behaviour.",
+    "server.py L4344: percentage>100 is rejected but percentage=100 is allowed, which would make the order free. Consider business validation (max 50-80%?).",
+    "server.py L4322-4329: GET /api/discount-codes allows any admin/asesor/facturacion user to list ALL codes without re-validating the admin password. Front-end gates the UI but the API itself is role-authenticated only. If stricter protection is desired, require admin_password as query param like DELETE does.",
+    "Appointments.jsx L411: handleValidateDiscount blocks validation when subtotal<=0 with a toast — correct UX but means user must add service before applying code; make sure that's communicated in the UI label.",
+    "CheckIn.jsx L1423: condition `order?.discount_code && discountApplied?.from_appointment` renders the blocking message. If discountApplied gets reset for some reason while order.discount_code is still set, the user would see the input instead of the blocking msg — defensive logic: use `order?.discount_code && order?.discount_applied_stage === 'appointment'` directly.",
+    "Backend: no DELETE for orders exposed → TEST_* orders remain in DB after each run. Not critical but may accumulate."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration22_discounts.py"],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "100% of inspected flows (login x2 roles, descuentos CRUD UI, appointments dialog, discount input visible)"},
+  "test_credentials": "admin@polarizadosya.com / admin123; facturacion@polarizadosya.com / factura123; discount admin password: william123",
+  "seed_data_creation": "Backend tests create+clean up TESTxxxxP/F/E/INA discount codes and 3 TEST orders (plates TDxxxxx, is_priority=true, authorization_code='00000'). Codes are deleted at end. Orders remain (no DELETE endpoint). Frontend created code TESTUI8756 (15%, exp 2026-12-31) still in DB.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Discount feature fully working end-to-end. For order integration tests use is_priority=true + authorization_code='00000' (default priority_pin setting) to avoid franja PIN validations. ServiceItem schema uses field 'service' NOT 'name'. UI tab 'Descuentos' is reachable only through facturacion/admin/asesor role. Admin password william123 is hardcoded in server.py L427. If main agent moves it to settings collection, update tests accordingly.",
+  "rca of the issue": "N/A - no bugs found."
+}

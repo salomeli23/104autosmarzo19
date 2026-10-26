@@ -17,6 +17,13 @@ import { Quotes } from './pages/Quotes';
 import { ServiceOrders } from './pages/ServiceOrders';
 import { Notifications } from './pages/Notifications';
 import { Settings } from './pages/Settings';
+import CuttingView from './pages/CuttingView';
+import { Inventory } from './pages/Inventory';
+import { Postventa } from './pages/Postventa';
+import { AutoAsignar } from './pages/AutoAsignar';
+import { Pagos } from './pages/Pagos';
+import { FacturacionElectronica } from './pages/FacturacionElectronica';
+import { AutosSalida } from './pages/AutosSalida';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -119,6 +126,14 @@ function AppRoutes() {
                 } 
             />
             <Route 
+                path="/cutting" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'corte', 'coordinador']}>
+                        <CuttingView />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
                 path="/technician" 
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'tecnico']}>
@@ -163,6 +178,54 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin']}>
                         <Settings />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/inventory" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'coordinador', 'corte']}>
+                        <Inventory />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/postventa" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'asesor', 'coordinador']}>
+                        <Postventa />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/auto-asignar" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'coordinador']}>
+                        <AutoAsignar />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/pagos" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'asesor', 'facturacion', 'coordinador']}>
+                        <Pagos />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/facturacion-electronica" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'asesor']}>
+                        <FacturacionElectronica />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/autos-salida" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador']}>
+                        <AutosSalida />
                     </ProtectedRoute>
                 } 
             />
