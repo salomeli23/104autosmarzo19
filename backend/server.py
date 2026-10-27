@@ -104,6 +104,8 @@ class AlertType(str, Enum):
     DESISTIMIENTO = "desistimiento"
     SOLICITUD_ACCESORIOS = "solicitud_accesorios"  # Pedido de accesorios por despachar
     ACCESORIOS_ENTREGADOS = "accesorios_entregados"  # Accesorios entregados al técnico
+    MEDIDAS_TECNICO = "medidas_tecnico"  # El técnico confirmó las medidas para corte
+    MATERIAL_ENTREGADO = "material_entregado"  # Corte entregó el material al técnico
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -338,6 +340,9 @@ class OrderResponse(BaseModel):
     delivered_at: Optional[str] = None
     # Cutting data
     cutting_status: Optional[str] = None
+    tech_measurements: Optional[Dict[str, Any]] = None  # medidas sugeridas por el técnico
+    material_delivered_at: Optional[str] = None
+    material_delivered_by_name: Optional[str] = None
     cutting_started_at: Optional[str] = None
     cutting_completed_at: Optional[str] = None
     cutting_measurements: Optional[str] = None
@@ -3157,6 +3162,77 @@ async def release_bahia(
     }
 
 # ==================== CUTTING MODULE ====================
+# ==================== MEDIDAS DEL TÉCNICO (antes de completar corte) ====================
+MEASURE_ZONES = ("panoramico", "trasero", "laterales", "sunroof")
+
+
+class MeasureZone(BaseModel):
+    aplica: bool = True
+    ancho: Optional[float] = None  # cm
+    alto: Optional[float] = None   # cm
+    piezas: Optional[int] = None   # solo laterales: número de vidrios
+
+
+class TechMeasurements(BaseModel):
+    panoramico: MeasureZone
+    trasero: MeasureZone
+    laterales: MeasureZone
+    sunroof: MeasureZone
+    notes: Optional[str] = None
+
+
+@api_router.put("/orders/{order_id}/tech-measurements")
+async def save_tech_measurements(
+    order_id: str,
+    data: TechMeasurements,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR, UserRole.TECNICO])),
+):
+    """El técnico instalador confirma las medidas que necesita por zona. Corte recibe la notificación
+    y solo entonces puede completar el corte."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in (
+            order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+        raise HTTPException(status_code=403, detail="Este vehículo no está asignado a ti")
+    if order.get("status") != OrderStatus.EN_CORTE.value:
+        raise HTTPException(status_code=400, detail="Las medidas se colocan cuando el vehículo está en Corte")
+    if order.get("cutting_status") == "completado":
+        raise HTTPException(status_code=400, detail="El corte ya se completó; no se pueden cambiar las medidas")
+
+    zones = {}
+    for key in MEASURE_ZONES:
+        z: MeasureZone = getattr(data, key)
+        if not z.aplica:
+            zones[key] = {"aplica": False}
+            continue
+        if not z.ancho or not z.alto or z.ancho <= 0 or z.alto <= 0 or z.ancho > 500 or z.alto > 500:
+            raise HTTPException(status_code=400, detail=f"Coloca ancho y alto (cm) válidos para {key}, o márcalo como No aplica")
+        zone = {"aplica": True, "ancho": round(float(z.ancho), 1), "alto": round(float(z.alto), 1)}
+        if key == "laterales":
+            zone["piezas"] = max(1, int(z.piezas or 1))
+        zones[key] = zone
+    if not any(z["aplica"] for z in zones.values()):
+        raise HTTPException(status_code=400, detail="Coloca las medidas de al menos una zona")
+
+    now = datetime.now(timezone.utc).isoformat()
+    first_time = not (order.get("tech_measurements") or {}).get("confirmed_at")
+    record = {**zones, "notes": (data.notes or "").strip() or None, "confirmed_at": now,
+              "confirmed_by_id": current_user["id"], "confirmed_by_name": current_user["name"]}
+    await db.orders.update_one({"id": order_id}, {"$set": {"tech_measurements": record, "updated_at": now}})
+    await log_order_history(
+        order_id, "MEDIDAS_TECNICO", order["status"], order["status"],
+        current_user["id"], current_user["name"], {"zones": zones, "notes": record["notes"]},
+    )
+    await create_alert(
+        UserRole.CORTE.value, AlertType.MEDIDAS_TECNICO,
+        "Medidas listas para corte" if first_time else "Medidas actualizadas",
+        f"{order.get('plate')} · {current_user['name']} confirmó las medidas. Ya puedes completar el corte.",
+        order_id,
+    )
+    return {"message": "Medidas confirmadas", "tech_measurements": record}
+
+
 @api_router.get("/cutting/pending")
 async def get_cutting_pending(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
     """Get orders pending cutting (polarizado/PPF services after check-in)"""
@@ -3270,6 +3346,11 @@ async def complete_cutting(
         raise HTTPException(
             status_code=400,
             detail=f"Solo se puede completar corte si la orden está en estado 'en_corte'. Estado actual: {order.get('status')}"
+        )
+    if not (order.get("tech_measurements") or {}).get("confirmed_at"):
+        raise HTTPException(
+            status_code=400,
+            detail="El técnico aún no ha colocado las medidas. No se puede completar el corte."
         )
     
     # Resolve fields with body taking precedence over query params
@@ -3414,26 +3495,6 @@ async def complete_cutting(
         inventory_deduction = (
             deduction_results[0] if len(deduction_results) == 1 else {"multi": deduction_results}
         )
-    # Corte terminado → la orden queda lista para instalación con sus técnicos
-    if order.get("assigned_technician_id"):
-        now_inst = datetime.now(timezone.utc).isoformat()
-        await db.orders.update_one({"id": order_id}, {"$set": {"status": OrderStatus.ASIGNADO.value, "updated_at": now_inst}})
-        for tid in (order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
-            if tid:
-                await db.alerts.insert_one({
-                    "id": str(uuid.uuid4()),
-                    "recipient_id": tid,
-                    "alert_type": AlertType.CORTE_COMPLETADO.value,
-                    "title": "Listo para instalar",
-                    "message": f"Corte terminado: {order.get('plate')} - {order.get('brand')} {order.get('model')}",
-                    "order_id": order_id,
-                    "read": False,
-                    "created_at": now_inst,
-                })
-        await log_order_history(
-            order_id, "CORTE_COMPLETADO", "en_corte", OrderStatus.ASIGNADO.value,
-            current_user["id"], current_user.get("name", current_user["email"]), {},
-        )
     await db.alerts.insert_one({
         "id": str(uuid.uuid4()),
         "type": "corte_completado",
@@ -3463,6 +3524,43 @@ async def complete_cutting(
         "inventory_deduction": inventory_deduction,
         "aprovechamientos": aprovechamientos_created,
     }
+
+
+@api_router.put("/cutting/{order_id}/deliver")
+async def deliver_cut_material(order_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
+    """Corte confirma que entregó el material cortado al técnico → el vehículo queda Por Instalar."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") != OrderStatus.EN_CORTE.value or order.get("cutting_status") != "completado":
+        raise HTTPException(status_code=400, detail="Primero completa el corte del material")
+    now = datetime.now(timezone.utc).isoformat()
+    user_name = current_user.get("name") or current_user.get("email")
+    await db.orders.update_one({"id": order_id}, {"$set": {
+        "status": OrderStatus.ASIGNADO.value,
+        "material_delivered_at": now,
+        "material_delivered_by_id": current_user["id"],
+        "material_delivered_by_name": user_name,
+        "updated_at": now,
+    }})
+    techs = [t for t in (order.get("assigned_technician_name"), order.get("assigned_technician_2_name")) if t]
+    await log_order_history(
+        order_id, "MATERIAL_ENTREGADO", OrderStatus.EN_CORTE.value, OrderStatus.ASIGNADO.value,
+        current_user["id"], user_name, {"technicians": techs},
+    )
+    for tid in (order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+        if tid:
+            await db.alerts.insert_one({
+                "id": str(uuid.uuid4()),
+                "recipient_id": tid,
+                "alert_type": AlertType.MATERIAL_ENTREGADO.value,
+                "title": "Material entregado · listo para instalar",
+                "message": f"{order.get('plate')} - {order.get('brand')} {order.get('model')}: Corte te entregó el material.",
+                "order_id": order_id,
+                "read": False,
+                "created_at": now,
+            })
+    return {"message": "Material entregado al técnico", "status": OrderStatus.ASIGNADO.value}
 
 
 @api_router.get("/aprovechamientos")

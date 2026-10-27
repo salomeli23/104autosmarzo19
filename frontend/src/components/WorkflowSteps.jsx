@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScanSearch, Users, Scissors, Wrench, Check } from 'lucide-react';
+import { ScanSearch, Users, Scissors, Wrench, Check, Ruler } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { orderNeedsCutting } from '../lib/workflow';
 
@@ -16,8 +16,12 @@ export const WorkflowSteps = ({ order, className }) => {
         { key: '360', label: '360°', icon: ScanSearch, done: !!order?.inspection_at, current: false },
         { key: 'tech', label: 'Técnicos', icon: Users, done: hasTechs, current: order?.status === 'en_revision' },
         ...(needsCutting ? [{
-            key: 'corte', label: 'Corte', icon: Scissors,
-            done: idx > ORDER.indexOf('en_corte'), current: order?.status === 'en_corte',
+            key: 'medidas', label: 'Medidas', icon: Ruler,
+            done: !!order?.tech_measurements?.confirmed_at || idx > ORDER.indexOf('en_corte'),
+            current: order?.status === 'en_corte' && !order?.tech_measurements?.confirmed_at,
+        }, {
+            key: 'corte', label: order?.status === 'en_corte' && order?.cutting_status === 'completado' ? 'Material listo' : 'Corte', icon: Scissors,
+            done: idx > ORDER.indexOf('en_corte'), current: order?.status === 'en_corte' && !!order?.tech_measurements?.confirmed_at,
         }] : []),
         {
             key: 'inst', label: 'Instalación', icon: Wrench,

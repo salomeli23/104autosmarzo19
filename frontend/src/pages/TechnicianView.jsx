@@ -14,11 +14,12 @@ import { toast } from 'sonner';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
 import { WorkflowSteps } from '../components/WorkflowSteps';
+import { TechMeasurementsDialog, TechMeasurementsSummary } from '../components/TechMeasurements';
 import { orderTechnicians } from '../lib/workflow';
 import {
     Wrench, Play, CheckCircle, Clock, User, Phone,
     AlertTriangle, Timer, FileText, Scissors, Sparkles,
-    Package, PaintBucket, Hammer, LogIn, Users, Route as RouteIcon,
+    Package, PaintBucket, Hammer, LogIn, Users, Route as RouteIcon, Ruler,
 } from 'lucide-react';
 
 const PART_LABELS = {
@@ -31,7 +32,7 @@ const PART_LABELS = {
 const STAGES = [
     { id: 'asignado', label: 'Por instalar', icon: Wrench },
     { id: 'en_proceso', label: 'En instalación', icon: Play },
-    { id: 'en_corte', label: 'En corte', icon: Scissors },
+    { id: 'en_corte', label: 'En corte · medidas', icon: Scissors },
 ];
 
 // ============================================================
@@ -215,7 +216,7 @@ const SlotCard = ({ slot, order, onStart, onFinish, processing }) => {
 // ============================================================
 // Order Card (flujo con 2 técnicos)
 // ============================================================
-const InstallCard = ({ order, userId, onStart, onFinish, processing }) => {
+const InstallCard = ({ order, userId, onStart, onFinish, onMeasure, processing }) => {
     const partner = orderTechnicians(order).find(t => t.id !== userId);
     const inProgress = order.status === 'en_proceso';
     const remaining = inProgress && order.service_started_at && order.service_time_minutes
@@ -279,9 +280,25 @@ const InstallCard = ({ order, userId, onStart, onFinish, processing }) => {
                 </div>
 
                 {order.status === 'en_corte' && (
-                    <p className="text-xs text-pink-400 flex items-center gap-1">
-                        <Scissors className="w-3.5 h-3.5" /> En corte. Te avisaremos cuando esté listo para instalar.
-                    </p>
+                    <div className="space-y-2">
+                        <TechMeasurementsSummary order={order} compact />
+                        {order.cutting_status === 'completado' ? (
+                            <p className="text-xs text-emerald-400 flex items-center gap-1">
+                                <Scissors className="w-3.5 h-3.5" /> Material cortado. Corte te lo entregará para instalar.
+                            </p>
+                        ) : (
+                            <Button
+                                className="w-full"
+                                variant={order.tech_measurements?.confirmed_at ? 'outline' : 'default'}
+                                onClick={() => onMeasure(order)}
+                                disabled={processing}
+                                data-testid={`measure-btn-${order.id}`}
+                            >
+                                <Ruler className="w-4 h-4 mr-2" />
+                                {order.tech_measurements?.confirmed_at ? 'Editar medidas' : 'Colocar medidas'}
+                            </Button>
+                        )}
+                    </div>
                 )}
                 {order.status === 'asignado' && (
                     <Button className="w-full" onClick={() => onStart(order)} disabled={processing} data-testid={`start-install-${order.id}`}>
@@ -312,6 +329,7 @@ export const TechnicianView = () => {
     const [finishing, setFinishing] = useState(null); // { order, slot }
     const [finishNotes, setFinishNotes] = useState('');
     const [finishPhotos, setFinishPhotos] = useState([]);
+    const [measuring, setMeasuring] = useState(null);
 
     const fetchOrders = useCallback(async () => {
         try {
@@ -384,7 +402,8 @@ export const TechnicianView = () => {
         return counts;
     }, [bySection]);
 
-    const totalPending = byStage.asignado.length + byStage.en_proceso.length + legacyPending;
+    const totalPending = byStage.asignado.length + byStage.en_proceso.length + legacyPending
+        + byStage.en_corte.filter(o => !o.tech_measurements?.confirmed_at).length;
 
     const handleStart = async (orderId, slotId) => {
         setProcessing(true);
@@ -470,7 +489,8 @@ export const TechnicianView = () => {
     };
 
     const hasLegacy = SECTIONS.some(s => bySection[s.id].length > 0);
-    const defaultTab = byStage.en_proceso.length ? 'en_proceso' : byStage.asignado.length ? 'asignado'
+    const needsMeasures = byStage.en_corte.some(o => !o.tech_measurements?.confirmed_at);
+    const defaultTab = byStage.en_proceso.length ? 'en_proceso' : needsMeasures ? 'en_corte' : byStage.asignado.length ? 'asignado'
         : byStage.en_corte.length ? 'en_corte' : hasLegacy ? 'legacy' : 'asignado';
 
     return (
@@ -542,6 +562,7 @@ export const TechnicianView = () => {
                                             userId={user?.id}
                                             onStart={handleStartInstall}
                                             onFinish={openFinish}
+                                            onMeasure={setMeasuring}
                                             processing={processing}
                                         />
                                     ))}
@@ -573,6 +594,8 @@ export const TechnicianView = () => {
                     )}
                 </Tabs>
             )}
+
+            <TechMeasurementsDialog order={measuring} onClose={() => setMeasuring(null)} onSaved={fetchOrders} />
 
             {/* Finish Dialog */}
             <Dialog open={!!finishing} onOpenChange={(v) => !v && closeFinish()}>

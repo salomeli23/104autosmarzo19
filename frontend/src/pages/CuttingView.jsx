@@ -11,8 +11,9 @@ import { Badge } from '../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { toast } from 'sonner';
-import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package, Lightbulb, Layers, Gauge } from 'lucide-react';
+import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package, Lightbulb, Layers, Gauge, HandHelping } from 'lucide-react';
 import { LiveTimer } from '../components/LiveTimer';
+import { TechMeasurementsSummary } from '../components/TechMeasurements';
 
 const CuttingView = () => {
     const [orders, setOrders] = useState([]);
@@ -167,6 +168,18 @@ const CuttingView = () => {
         }
     };
 
+    const handleDeliverMaterial = async (order) => {
+        const names = orderTechnicians(order).map(t => t.name).join(' y ') || 'el técnico';
+        if (!window.confirm(`¿Confirmas que entregaste el material de ${order.plate} a ${names}?`)) return;
+        try {
+            await cuttingAPI.deliver(order.id);
+            toast.success(`Material entregado a ${names} · listo para instalación`);
+            fetchOrders();
+        } catch (error) {
+            toast.error(error.response?.data?.detail || 'No se pudo confirmar la entrega');
+        }
+    };
+
     const handleCompleteCutting = async () => {
         if (!selectedOrder) return;
         
@@ -221,7 +234,7 @@ const CuttingView = () => {
                     toast.success(`Corte completado · ${dedu.meters_used} m descontados (quedan ${dedu.new_remaining.toFixed(2)} m)`);
                 }
             } else {
-                toast.success('Corte completado - Listo para asignación');
+                toast.success('Corte completado · confirma la entrega del material al técnico');
             }
             if (aprovs.length > 0) {
                 toast.info(`♻ ${aprovs.length} pieza(s) registradas como aprovechamiento (no descontadas del stock)`);
@@ -250,9 +263,23 @@ const CuttingView = () => {
         VEHICLE_PARTS.forEach(p => {
             if (selectedSet.has(p.id)) initial[p.id] = '';
         });
+        // Medida lineal sugerida por el técnico (la dimensión mayor de cada zona)
+        const tm = order?.tech_measurements || {};
+        const dims = {};
+        const suggest = (zone, partIds) => {
+            const z = tm[zone];
+            if (!z || z.aplica === false) return;
+            const cm = Math.min(350, Math.max(1, Math.round(Math.max(z.ancho || 0, z.alto || 0))));
+            const target = partIds.find(pid => selectedSet.has(pid)) || partIds[0];
+            dims[target] = { medida: String(cm) };
+            initial[target] = `${cm} cm`;
+        };
+        suggest('panoramico', ['panoramico']);
+        suggest('trasero', ['luneta', 'trasero', 'vidrio_trasero']);
+        suggest('sunroof', ['sunroof']);
         setPartMeasurements(initial);
         setPartMaterials({});
-        setPartDims({});
+        setPartDims(dims);
         setSelectedSeriesId('');
         setNotes('');
         loadSeriesSuggestions(order);
@@ -286,15 +313,16 @@ const CuttingView = () => {
 
     const getStatusBadge = (order) => {
         if (order.cutting_status === 'completado') {
-            return <Badge className="bg-green-500/20 text-green-400 border-green-500/30">Completado</Badge>;
-        } else if (order.cutting_status === 'en_proceso' || order.status === 'en_corte') {
+            return <Badge className="bg-green-500/20 text-green-400 border-green-500/30">Material listo</Badge>;
+        } else if (order.cutting_status === 'en_proceso') {
             return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">En Proceso</Badge>;
         }
         return <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">Pendiente</Badge>;
     };
 
-    const pendingOrders = orders.filter(o => o.cutting_status !== 'completado' && o.cutting_status !== 'en_proceso' && o.status !== 'en_corte');
-    const inProgressOrders = orders.filter(o => o.cutting_status === 'en_proceso' || o.status === 'en_corte');
+    // Todas llegan en estado en_corte (con técnicos asignados); se separan por avance del corte
+    const pendingOrders = orders.filter(o => o.cutting_status !== 'completado' && o.cutting_status !== 'en_proceso');
+    const inProgressOrders = orders.filter(o => o.cutting_status === 'en_proceso');
     const completedOrders = orders.filter(o => o.cutting_status === 'completado');
 
     if (loading) {
@@ -359,7 +387,7 @@ const CuttingView = () => {
                             </div>
                             <div>
                                 <p className="text-2xl font-bold">{completedOrders.length}</p>
-                                <p className="text-sm text-muted-foreground">Completados</p>
+                                <p className="text-sm text-muted-foreground">Material listo por entregar</p>
                             </div>
                         </div>
                     </CardContent>
@@ -409,6 +437,7 @@ const CuttingView = () => {
                                         </div>
                                         
                                         <div className="flex-1 md:max-w-md">
+                                            <div className="mb-2"><TechMeasurementsSummary order={order} /></div>
                                             <p className="text-sm font-medium mb-2 flex items-center gap-1">
                                                 <Package className="w-4 h-4" />
                                                 Servicios a cortar:
@@ -497,6 +526,7 @@ const CuttingView = () => {
                                         </div>
                                         
                                         <div className="flex-1 md:max-w-md">
+                                            <div className="mb-2"><TechMeasurementsSummary order={order} /></div>
                                             <p className="text-sm font-medium mb-2">Servicios:</p>
                                             <div className="space-y-1">
                                                 {order.cutting_services?.map((svc, idx) => (
@@ -519,10 +549,12 @@ const CuttingView = () => {
                                         <Button 
                                             onClick={() => openCompleteDialog(order)}
                                             className="bg-green-600 hover:bg-green-700"
+                                            disabled={!order.tech_measurements?.confirmed_at}
+                                            title={order.tech_measurements?.confirmed_at ? '' : 'El técnico debe colocar las medidas primero'}
                                             data-testid={`complete-cutting-btn-${order.id}`}
                                         >
                                             <CheckCircle className="w-4 h-4 mr-2" />
-                                            Completar Corte
+                                            {order.tech_measurements?.confirmed_at ? 'Completar Corte' : 'Esperando medidas'}
                                         </Button>
                                     </div>
                                 </CardContent>
@@ -537,11 +569,11 @@ const CuttingView = () => {
                 <div className="space-y-4">
                     <h2 className="font-heading text-xl flex items-center gap-2">
                         <CheckCircle className="w-5 h-5 text-green-400" />
-                        Completados (Listos para Asignación)
+                        Material listo · por entregar al técnico
                     </h2>
                     <div className="grid gap-4">
                         {completedOrders.map((order) => (
-                            <Card key={order.id} className="border-green-500/30 bg-green-500/5 opacity-80">
+                            <Card key={order.id} className="border-green-500/30 bg-green-500/5">
                                 <CardContent className="pt-6">
                                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                                         <div className="flex items-start gap-4">
@@ -575,9 +607,19 @@ const CuttingView = () => {
                                             )}
                                         </div>
                                         
-                                        <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
-                                            Listo para Asignar
-                                        </Badge>
+                                        <div className="space-y-1 text-right">
+                                            {orderTechnicians(order).length > 0 && (
+                                                <p className="text-xs text-cyan-400">Para: {orderTechnicians(order).map(t => t.name).join(' y ')}</p>
+                                            )}
+                                            <Button
+                                                onClick={() => handleDeliverMaterial(order)}
+                                                className="bg-emerald-600 hover:bg-emerald-700"
+                                                data-testid={`deliver-material-btn-${order.id}`}
+                                            >
+                                                <HandHelping className="w-4 h-4 mr-2" />
+                                                Confirmar entrega al técnico
+                                            </Button>
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>
@@ -615,6 +657,10 @@ const CuttingView = () => {
                                 <p className="text-muted-foreground">{selectedOrder.brand} {selectedOrder.model}</p>
                                 <p className="text-xs text-muted-foreground">Cliente: {selectedOrder.client_name}</p>
                             </div>
+                            <TechMeasurementsSummary order={selectedOrder} />
+                            <p className="text-[11px] text-muted-foreground -mt-2">
+                                Panorámico, trasero y sunroof vienen prellenados con la medida mayor que pidió el técnico; puedes ajustarlas.
+                            </p>
 
                             {/* PPF: serie y modelo del carro */}
                             {orderHasPPF(selectedOrder) && (

@@ -66,6 +66,8 @@ export const ordersAPI = {
     assignTechnician: (data) => api.post('/orders/assign', data),
     // Técnico principal + técnico de apoyo → Corte (Polarizado/PPF/Ultrasecure) o Instalación
     assignTechnicians: (orderId, data) => api.post(`/orders/${orderId}/assign-technicians`, data),
+    // Medidas sugeridas por el técnico antes de completar el corte
+    saveTechMeasurements: (orderId, data) => api.put(`/orders/${orderId}/tech-measurements`, data),
     
     // Pre-asignación de técnico (Autos por Asignar - antes de Corte)
     getPendingTechAssignment: () => api.get('/tech-queue/pending'),
@@ -142,6 +144,8 @@ export const cuttingAPI = {
     getPending: () => api.get('/cutting/pending'),
     start: (orderId) => api.put(`/cutting/${orderId}/start`),
     complete: (orderId, body) => api.put(`/cutting/${orderId}/complete`, body || {}),
+    // Corte confirma que entregó el material al técnico → Por Instalar
+    deliver: (orderId) => api.put(`/cutting/${orderId}/deliver`),
 };
 
 // Seed data
