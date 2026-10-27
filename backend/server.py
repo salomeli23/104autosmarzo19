@@ -3325,6 +3325,79 @@ class CuttingCompleteRequest(BaseModel):
     # Descuento granular: por pieza, qué rollo usar
     # {part_id: {"tipo_rollo": "spectra", "inventory_item_id": "INV-001", "is_aprovechamiento": bool}}
     part_materials: Optional[Dict[str, Dict[str, Any]]] = None
+    # Cortes por zona de las medidas del técnico: {zona: [{material, inventory_item_id, metros, reutilizable}]}
+    zone_cuts: Optional[Dict[str, List["ZoneCutLine"]]] = None
+
+
+class ZoneCutLine(BaseModel):
+    material: str
+    inventory_item_id: Optional[str] = None  # rollo del que sale el corte
+    metros: float
+    reutilizable: bool = False  # material reutilizable: no descuenta del rollo
+
+
+CuttingCompleteRequest.model_rebuild()
+
+# (máx. materiales, máx. rollos) por zona
+ZONE_CUT_LIMITS = {
+    "panoramico": (1, 1),
+    "trasero": (1, 1),
+    "laterales_izquierdo": (3, 2),
+    "laterales_derecho": (3, 2),
+    "sunroof": (1, 1),
+}
+ZONE_LABELS = {
+    "panoramico": "Panorámico", "trasero": "Trasero / Luneta", "laterales_izquierdo": "Laterales lado izquierdo",
+    "laterales_derecho": "Laterales lado derecho", "sunroof": "Sunroof",
+}
+
+
+async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, Any]:
+    """Valida los cortes por zona (límites de materiales/rollos y stock) antes de descontar nada."""
+    lines = []
+    per_roll: Dict[str, float] = {}
+    for zone, zlines in (zone_cuts or {}).items():
+        if zone not in ZONE_CUT_LIMITS:
+            raise HTTPException(status_code=400, detail=f"Zona desconocida: {zone}")
+        max_mat, max_rolls = ZONE_CUT_LIMITS[zone]
+        label = ZONE_LABELS[zone]
+        if len(zlines) > max_mat:
+            raise HTTPException(status_code=400, detail=f"{label} admite máximo {max_mat} material(es)")
+        rolls = {ln.inventory_item_id for ln in zlines if ln.inventory_item_id and not ln.reutilizable}
+        if len(rolls) > max_rolls:
+            raise HTTPException(status_code=400, detail=f"{label} admite máximo {max_rolls} rollo(s)")
+        for ln in zlines:
+            if not (ln.material or "").strip():
+                raise HTTPException(status_code=400, detail=f"Elige el material de {label}")
+            if not ln.metros or ln.metros <= 0 or ln.metros > 60:
+                raise HTTPException(status_code=400, detail=f"Metros inválidos en {label}")
+            if not ln.reutilizable and not ln.inventory_item_id:
+                raise HTTPException(status_code=400, detail=f"Elige el rollo de {label} o márcalo como reutilizable")
+            if not ln.reutilizable:
+                per_roll[ln.inventory_item_id] = round(per_roll.get(ln.inventory_item_id, 0) + ln.metros, 2)
+            lines.append({"zone": zone, "material": ln.material.strip(), "inventory_item_id": ln.inventory_item_id,
+                          "metros": round(ln.metros, 2), "reutilizable": bool(ln.reutilizable)})
+    if not lines:
+        raise HTTPException(status_code=400, detail="Registra al menos un corte")
+    rolls_info = {}
+    for inv_id, meters in per_roll.items():
+        roll = await db.inventory.find_one({"id": inv_id, "active": True}, {"_id": 0})
+        if not roll or roll.get("tipo_articulo") != "rollo":
+            raise HTTPException(status_code=400, detail="Rollo no válido")
+        if (roll.get("metros_restantes") or 0) + 1e-6 < meters:
+            raise HTTPException(status_code=400,
+                                detail=f"El rollo {roll.get('codigo')} ({roll.get('nombre')}) solo tiene {roll.get('metros_restantes') or 0} m y se necesitan {meters} m")
+        rolls_info[inv_id] = roll
+    for ln in lines:
+        roll = rolls_info.get(ln["inventory_item_id"]) if not ln["reutilizable"] else None
+        ln["rollo_codigo"] = roll.get("codigo") if roll else None
+        ln["rollo_nombre"] = roll.get("nombre") if roll else None
+    summary = "; ".join(
+        f"{ZONE_LABELS[ln['zone']]}: {ln['metros']} m {ln['material']}"
+        + (" (reutilizable)" if ln["reutilizable"] else f" · {ln['rollo_codigo']}")
+        for ln in lines
+    )
+    return {"lines": lines, "per_roll": per_roll, "summary": summary}
 
 
 @api_router.put("/cutting/{order_id}/complete")
@@ -3355,7 +3428,8 @@ async def complete_cutting(
     
     # Resolve fields with body taking precedence over query params
     p = payload or CuttingCompleteRequest()
-    final_measurements = p.measurements or measurements
+    zone_plan = await _plan_zone_cuts(p.zone_cuts) if p.zone_cuts else None
+    final_measurements = p.measurements or measurements or (zone_plan["summary"] if zone_plan else None)
     final_notes = p.notes or notes
     part_measurements = p.part_measurements or {}
     ppf_vehicle_serial = (p.ppf_vehicle_serial or "").strip() or None
@@ -3388,6 +3462,7 @@ async def complete_cutting(
         "cutting_notes": final_notes,
         "cutting_part_measurements": part_measurements or None,
         "cutting_part_materials": p.part_materials or None,
+        "cutting_zone_cuts": zone_plan["lines"] if zone_plan else None,
     }
     if ppf_vehicle_serial is not None:
         update_fields["ppf_vehicle_serial"] = ppf_vehicle_serial
@@ -3402,7 +3477,32 @@ async def complete_cutting(
     deductions_per_rollo = {}  # {inventory_item_id: meters_used}
     aprovechamientos_created = []  # piezas marcadas como aprovechamiento (no descuentan stock)
 
-    if p.part_materials:
+    if zone_plan:
+        # Cortes por zona: descuenta cada rollo; lo reutilizable queda como aprovechamiento
+        deductions_per_rollo.update(zone_plan["per_roll"])
+        for ln in zone_plan["lines"]:
+            if not ln["reutilizable"]:
+                continue
+            aprov_doc = {
+                "id": str(uuid.uuid4()),
+                "order_id": order_id,
+                "order_code": order.get("order_code"),
+                "part_id": ln["zone"],
+                "measurement": f"{ln['metros']} m",
+                "meters": ln["metros"],
+                "tipo_rollo": ln["material"],
+                "source_inventory_item_id": ln.get("inventory_item_id"),
+                "plate": order.get("plate"),
+                "client_name": order.get("client_name"),
+                "user_id": current_user["id"],
+                "user_name": current_user.get("name") or current_user.get("email"),
+                "status": "consumido",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.aprovechamientos.insert_one(aprov_doc)
+            aprovechamientos_created.append({"part_id": ln["zone"], "measurement": aprov_doc["measurement"],
+                                             "meters": ln["metros"], "tipo_rollo": ln["material"]})
+    elif p.part_materials:
         # Agrupar metros por inventory_item_id basado en cada pieza
         for part_id, mat in (p.part_materials or {}).items():
             mat = mat or {}
