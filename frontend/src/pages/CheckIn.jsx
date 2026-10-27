@@ -14,6 +14,7 @@ import { QRDisplay } from '../components/QRDisplay';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { formatCurrency, VEHICLE_PARTS, PPF_PARTS, CHECKIN_NOTICES } from '../lib/utils';
+import { SUNROOF_ID, isSunroofExtra, isSunroofLine, findSunroof, stripSunroof, buildSunroofLine } from '../lib/sunroof';
 import { generateOrderPDF } from '../components/OrderPDFGenerator';
 import { Inspection360Inline } from '../components/Inspection360Inline';
 import { toast } from 'sonner';
@@ -28,12 +29,7 @@ import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 import { CheckinConfirmDialog } from '../components/CheckinConfirmDialog';
 
 // El sunroof nunca va dentro de un servicio: es un adicional con valor personalizable
-const SUNROOF_ID = 'sunroof_adicional';
 const SERVICE_PARTS = VEHICLE_PARTS.filter(p => p.id !== 'sunroof');
-const isSunroofExtra = (e) => String(e?.trigger_part || '').toLowerCase() === 'sunroof'
-    || String(e?.nombre || '').toLowerCase().includes('sunroof')
-    || String(e?.id || '').toLowerCase().includes('sunroof');
-const isSunroofLine = (s) => s.service === SUNROOF_ID || String(s.service || '').toLowerCase() === 'sunroof';
 
 // En celulares y tabletas se abre primero el escáner de QR con la cámara
 const PREFERS_SCAN = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
@@ -129,37 +125,22 @@ export const CheckIn = () => {
             // El sunroof se separa de los servicios: si venía como parte, extra o línea propia
             // del agendamiento, pasa al bloque "Sunroof (adicional)" con su valor.
             const orderServices = orderRes.data.services || [];
-            let sunroofFound = null;
-            orderServices.forEach(s => {
-                if (isSunroofLine(s)) {
-                    sunroofFound = { price: s.price, percentage: s.part_percentages?.sunroof };
-                    return;
-                }
-                const ex = (s.extras || []).find(isSunroofExtra);
-                if (ex || (s.parts || []).includes('sunroof')) {
-                    sunroofFound = {
-                        price: ex?.price ?? sunroofFound?.price,
-                        percentage: s.part_percentages?.sunroof || sunroofFound?.percentage,
-                    };
-                }
-            });
+            const sunroofFound = findSunroof(orderServices);
             setSunroof(sunroofFound
                 ? { enabled: true, price: sunroofFound.price != null ? String(sunroofFound.price) : '', percentage: sunroofFound.percentage || '' }
                 : { enabled: false, price: '', percentage: '' });
 
             // Initialize services from order with prices, parts and extras
-            const initialServices = orderServices.filter(s => !isSunroofLine(s)).map(s => {
-                const pct = { ...(s.part_percentages || {}) };
-                delete pct.sunroof;
+            const initialServices = orderServices.filter(s => !isSunroofLine(s)).map(stripSunroof).map(s => {
                 return {
                 serviceId: s.service,
                 serviceName: s.description?.split(' - ')[1] || s.service,
                 category: s.description?.split(' - ')[0] || 'Servicio',
                 price: s.price || 0,
                 no_charge: !!s.no_charge,
-                parts: (s.parts || []).filter(p => p !== 'sunroof'),
-                part_percentages: pct,
-                extras: (s.extras || []).filter(e => !isSunroofExtra(e)),
+                parts: s.parts,
+                part_percentages: s.part_percentages,
+                extras: s.extras,
                 ppf_scope: s.ppf_scope || (s.service === 'ppf_full_body' ? 'full' : s.service === 'ppf_partes' ? 'partes' : null),
                 ppf_finish: s.ppf_finish || null,
                 ppf_color: s.ppf_color || '',
@@ -381,15 +362,7 @@ export const CheckIn = () => {
     // Línea de servicio propia del sunroof para la orden, el PDF y el correo
     const sunroofLine = () => {
         if (!sunroof.enabled) return null;
-        return {
-            service: SUNROOF_ID,
-            price: sunroofPrice(),
-            no_charge: null,
-            description: 'Adicional - Sunroof',
-            parts: ['sunroof'],
-            part_percentages: sunroof.percentage ? { sunroof: sunroof.percentage } : {},
-            extras: null,
-        };
+        return buildSunroofLine(sunroofPrice(), sunroof.percentage);
     };
 
     // Detecta si algún servicio seleccionado es PPF
