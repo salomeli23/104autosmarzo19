@@ -13,6 +13,7 @@ import { LiveTimer } from '../components/LiveTimer';
 import { toast } from 'sonner';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { CheckinByTag } from '../components/CheckinByTag';
+import { UpdateOrderButton } from '../components/UpdateOrderButton';
 import {
     User, Clock, RefreshCw, ChevronDown, ChevronRight, Play, Check, DollarSign, Wallet, AlertCircle, Wrench, Sparkles, Droplet, Shield, Boxes, Paintbrush, Route as RouteIcon,
 } from 'lucide-react';
@@ -220,6 +221,7 @@ const OrderCard = ({ order, technicians, onRefresh }) => {
                                 {doneCount}/{totalCount} slots
                             </p>
                         )}
+                        <UpdateOrderButton order={order} onUpdated={onRefresh} className="mt-1 h-7 text-xs" />
                     </div>
                 </div>
 

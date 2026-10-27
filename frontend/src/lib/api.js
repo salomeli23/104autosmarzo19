@@ -44,6 +44,8 @@ export const ordersAPI = {
     // Step 1: Create appointment
     create: (data) => api.post('/orders', data),
     getAll: (params) => api.get('/orders', { params }),
+    // Actualizar orden (agregar/quitar servicios o cambiar valores) con contraseña
+    updateServices: (orderId, data) => api.post(`/orders/${orderId}/update-services`, data),
     getById: (id) => api.get(`/orders/${id}`),
     getByCode: (code) => api.get(`/orders/code/${code}`),
     

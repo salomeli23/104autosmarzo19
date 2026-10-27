@@ -4059,6 +4059,97 @@ class UpdateClientEmail(BaseModel):
     client_email: str
 
 
+class UpdateOrderServices(BaseModel):
+    services: List[ServiceItem]
+    password: str          # contraseña de autorización (settings.update_order_pin, por defecto 00000)
+    reason: Optional[str] = None
+
+
+def _services_gross(services: List[ServiceItem]) -> float:
+    """Suma de servicios + extras (sin descuento ni IVA)."""
+    total = 0.0
+    for s in services:
+        total += float(s.price or 0)
+        for e in (s.extras or []):
+            total += float((e or {}).get("price") or 0)
+    return round(total, 2)
+
+
+@api_router.post("/orders/{order_id}/update-services")
+async def update_order_services(
+    order_id: str,
+    data: UpdateOrderServices,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Actualiza la orden: agrega/quita servicios o cambia sus valores. Requiere contraseña.
+    Recalcula el valor de la orden reaplicando el descuento y el IVA que ya tenía."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") in (OrderStatus.ENTREGADO.value, OrderStatus.DESISTIMIENTO.value):
+        raise HTTPException(status_code=400, detail="No se puede actualizar una orden entregada o desistida")
+
+    pin_doc = await db.settings.find_one({"key": "update_order_pin"}, {"_id": 0})
+    expected_pin = (pin_doc or {}).get("value", "00000")
+    if str(data.password).strip() != str(expected_pin).strip():
+        raise HTTPException(status_code=400, detail="Contraseña incorrecta")
+
+    if not data.services:
+        raise HTTPException(status_code=400, detail="La orden debe tener al menos un servicio")
+    for s in data.services:
+        if float(s.price or 0) < 0:
+            raise HTTPException(status_code=400, detail="El valor de un servicio no puede ser negativo")
+        if s.no_charge:
+            if not order.get("is_postventa"):
+                raise HTTPException(status_code=400, detail="Solo los servicios de postventa pueden marcarse sin pago")
+            s.price = 0
+
+    gross = _services_gross(data.services)
+    now = datetime.now(timezone.utc).isoformat()
+    checked_in = order.get("final_value") is not None
+    if checked_in and order.get("requires_invoice"):
+        gross = round(gross * 1.19)
+    disc_amount = 0.0
+    if order.get("discount_type"):
+        disc_amount = _compute_discount_amount(gross, order.get("discount_type"), order.get("discount_value"))
+    net = round(max(gross - disc_amount, 0), 2)
+
+    update_data = {
+        "services": [s.model_dump() for s in data.services],
+        "last_updated_by_id": current_user["id"],
+        "last_updated_by_name": current_user["name"],
+        "last_updated_at": now,
+        "updated_at": now,
+    }
+    if order.get("discount_type"):
+        update_data["discount_amount"] = disc_amount
+    if checked_in:
+        update_data["final_value"] = net
+        update_data["final_value_before_discount"] = gross if order.get("discount_type") else order.get("final_value_before_discount")
+    else:
+        update_data["negotiated_value"] = net
+        update_data["negotiated_value_before_discount"] = gross
+
+    await db.orders.update_one({"id": order_id}, {"$set": update_data})
+
+    old_total = float(order.get("final_value") if checked_in else (order.get("negotiated_value") or 0))
+    await log_order_history(
+        order_id, "ORDEN_ACTUALIZADA",
+        order.get("status"), order.get("status"),
+        current_user["id"], current_user["name"],
+        {
+            "reason": data.reason,
+            "old_services": [x.get("description") or x.get("service") for x in (order.get("services") or [])],
+            "new_services": [s.description or s.service for s in data.services],
+            "old_total": old_total,
+            "new_total": net,
+        },
+    )
+
+    updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    return {"message": "Orden actualizada", "order": updated}
+
+
 class RescheduleAppointment(BaseModel):
     new_date: str          # YYYY-MM-DD
     new_time_slot: str     # franja_X o 'prioridad'

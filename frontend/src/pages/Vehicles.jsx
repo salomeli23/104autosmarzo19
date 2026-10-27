@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { Plus, Car, Search, User, Phone, Mail, UserPlus, Wrench, ClipboardCheck, AlertTriangle } from 'lucide-react';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { CheckinByTag } from '../components/CheckinByTag';
+import { UpdateOrderButton } from '../components/UpdateOrderButton';
 
 // Lista de marcas y modelos
 const CAR_BRANDS = [
@@ -422,6 +423,8 @@ export const Vehicles = () => {
                                         </div>
                                     )}
                                 </div>
+
+                                <UpdateOrderButton order={vehicle} onUpdated={fetchData} className="w-full mt-3" />
 
                                 {/* Action buttons */}
                                 {vehicle.status && ['ingresado', 'agendado'].includes(vehicle.status) && (

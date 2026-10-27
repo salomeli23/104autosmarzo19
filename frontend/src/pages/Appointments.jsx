@@ -24,6 +24,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { CheckinByTag } from '../components/CheckinByTag';
+import { UpdateOrderButton } from '../components/UpdateOrderButton';
 
 const APPOINTMENT_TYPE_LABELS = { franja: 'Por franja', prioridad: 'Por prioridad', postventa: 'Postventa' };
 
@@ -1924,6 +1925,7 @@ export const Appointments = () => {
                                                                             Reasignar
                                                                         </Button>
                                                                     )}
+                                                                    <UpdateOrderButton order={order} onUpdated={() => fetchOrders(selectedDate)} />
                                                                     <OrderStatusBadge status={order.status} />
                                                                 </div>
                                                             </div>

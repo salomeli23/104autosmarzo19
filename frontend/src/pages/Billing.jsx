@@ -12,6 +12,7 @@ import { CameraCapture } from '../components/CameraCapture';
 import { formatCurrency, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
 import { PostventaBadge } from '../components/PostventaBadge';
+import { UpdateOrderButton } from '../components/UpdateOrderButton';
 import { 
     CreditCard, Car, User, Phone, DollarSign, 
     CheckCircle, Camera, Receipt, Truck, Tag
@@ -348,6 +349,7 @@ export const Billing = () => {
                                                 <CreditCard className="w-4 h-4 mr-2" />
                                                 Legalizar Pago
                                             </Button>
+                                            <UpdateOrderButton order={order} onUpdated={fetchOrders} className="w-full mt-2" />
                                         </CardContent>
                                     </Card>
                                 ))}
