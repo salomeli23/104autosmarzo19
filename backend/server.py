@@ -3168,9 +3168,8 @@ MEASURE_ZONES = ("panoramico", "trasero", "laterales_izquierdo", "laterales_dere
 
 class MeasureZone(BaseModel):
     aplica: bool = True
-    ancho: Optional[float] = None  # cm
-    alto: Optional[float] = None   # cm
-    piezas: Optional[int] = None   # solo laterales: número de vidrios de ese lado
+    medida_cm: Optional[float] = None  # medida lineal de material (cm)
+    piezas: Optional[int] = None       # solo laterales: número de vidrios de ese lado
 
 
 class TechMeasurements(BaseModel):
@@ -3207,9 +3206,9 @@ async def save_tech_measurements(
         if not z.aplica:
             zones[key] = {"aplica": False}
             continue
-        if not z.ancho or not z.alto or z.ancho <= 0 or z.alto <= 0 or z.ancho > 500 or z.alto > 500:
-            raise HTTPException(status_code=400, detail=f"Coloca ancho y alto (cm) válidos para {key}, o márcalo como No aplica")
-        zone = {"aplica": True, "ancho": round(float(z.ancho), 1), "alto": round(float(z.alto), 1)}
+        if not z.medida_cm or z.medida_cm <= 0 or z.medida_cm > 1000:
+            raise HTTPException(status_code=400, detail=f"Coloca la medida lineal de {key}, o márcalo como No aplica")
+        zone = {"aplica": True, "medida_cm": round(float(z.medida_cm), 1)}
         if key.startswith("laterales"):
             zone["piezas"] = max(1, int(z.piezas or 1))
         zones[key] = zone

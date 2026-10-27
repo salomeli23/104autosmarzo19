@@ -269,7 +269,7 @@ const CuttingView = () => {
         const suggest = (zone, partIds) => {
             const z = tm[zone];
             if (!z || z.aplica === false) return;
-            const cm = Math.min(350, Math.max(1, Math.round(Math.max(z.ancho || 0, z.alto || 0))));
+            const cm = Math.min(350, Math.max(1, Math.round(z.medida_cm || Math.max(z.ancho || 0, z.alto || 0))));
             const target = partIds.find(pid => selectedSet.has(pid)) || partIds[0];
             dims[target] = { medida: String(cm) };
             initial[target] = `${cm} cm`;
@@ -659,7 +659,7 @@ const CuttingView = () => {
                             </div>
                             <TechMeasurementsSummary order={selectedOrder} />
                             <p className="text-[11px] text-muted-foreground -mt-2">
-                                Panorámico, trasero y sunroof vienen prellenados con la medida mayor que pidió el técnico; puedes ajustarlas.
+                                Panorámico, trasero y sunroof vienen prellenados con la medida lineal que pidió el técnico; puedes ajustarlas.
                             </p>
 
                             {/* PPF: serie y modelo del carro */}

@@ -5,6 +5,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { MEASURE_ZONES } from '../lib/measureZones';
+import { LinearMeasureInput, formatLinear } from './LinearMeasureInput';
 
 // three.js solo se descarga cuando se abre la ventana de medidas
 const Vehicle3D = React.lazy(() => import('./Vehicle3D'));
@@ -33,8 +34,12 @@ const defaultApplies = (order) => {
     };
 };
 
-export const zoneText = (z) => (z?.aplica === false ? 'No aplica'
-    : `${z?.ancho ?? '?'} × ${z?.alto ?? '?'} cm${z?.piezas ? ` · ${z.piezas} vidrios` : ''}`);
+export const zoneText = (z) => {
+    if (z?.aplica === false) return 'No aplica';
+    // Medidas antiguas en ancho × alto
+    const base = z?.medida_cm ? formatLinear(z.medida_cm) : `${z?.ancho ?? '?'} × ${z?.alto ?? '?'} cm`;
+    return `${base}${z?.piezas ? ` · ${z.piezas} vidrios` : ''}`;
+};
 
 /** Resumen de las medidas del técnico (Corte, Mis Servicios). */
 export const TechMeasurementsSummary = ({ order, compact = false }) => {
@@ -68,7 +73,7 @@ export const TechMeasurementsSummary = ({ order, compact = false }) => {
     );
 };
 
-const emptyZone = (applies) => ({ aplica: applies, ancho: '', alto: '', piezas: '' });
+const emptyZone = (applies) => ({ aplica: applies, medida_cm: '', piezas: '' });
 
 /**
  * Ventana donde el técnico coloca y confirma las medidas por zona.
@@ -88,7 +93,7 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
         MEASURE_ZONES.forEach(z => {
             const p = prev?.[z.id];
             next[z.id] = p
-                ? { aplica: p.aplica !== false, ancho: p.ancho ?? '', alto: p.alto ?? '', piezas: p.piezas ?? '' }
+                ? { aplica: p.aplica !== false, medida_cm: p.medida_cm ?? '', piezas: p.piezas ?? '' }
                 : emptyZone(applies[z.id]);
             if (z.id.startsWith('laterales') && !next[z.id].piezas) next[z.id].piezas = '2';
         });
@@ -103,7 +108,7 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
         const z = zones[id];
         if (!z) return 'pending';
         if (!z.aplica) return 'na';
-        return parseFloat(z.ancho) > 0 && parseFloat(z.alto) > 0 ? 'done' : 'pending';
+        return parseFloat(z.medida_cm) > 0 ? 'done' : 'pending';
     };
     const status = Object.fromEntries(MEASURE_ZONES.map(z => [z.id, zoneState(z.id)]));
     const update = (id, changes) => setZones(prev => ({ ...prev, [id]: { ...prev[id], ...changes } }));
@@ -112,7 +117,7 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
         const missing = MEASURE_ZONES.filter(z => status[z.id] === 'pending');
         if (missing.length) {
             setActive(missing[0].id);
-            toast.error(`Coloca ancho y alto de ${missing.map(z => z.label).join(', ')} o márcalo como No aplica`);
+            toast.error(`Coloca la medida de ${missing.map(z => z.label).join(', ')} o márcalo como No aplica`);
             return;
         }
         if (MEASURE_ZONES.every(z => status[z.id] === 'na')) {
@@ -123,7 +128,7 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
         MEASURE_ZONES.forEach(z => {
             const v = zones[z.id];
             payload[z.id] = v.aplica
-                ? { aplica: true, ancho: parseFloat(v.ancho), alto: parseFloat(v.alto), piezas: z.id.startsWith('laterales') ? parseInt(v.piezas, 10) || 1 : null }
+                ? { aplica: true, medida_cm: parseFloat(v.medida_cm), piezas: z.id.startsWith('laterales') ? parseInt(v.piezas, 10) || 1 : null }
                 : { aplica: false };
         });
         setSaving(true);
@@ -193,14 +198,14 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
                                 </div>
                                 {z.hint && <p className="text-[11px] text-cyan-400">{z.hint}</p>}
                                 {v.aplica && (
-                                    <div className={`grid gap-2 ${z.id.startsWith('laterales') ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                                    <div className={`grid gap-2 ${z.id.startsWith('laterales') ? 'grid-cols-[1fr_72px]' : 'grid-cols-1'}`}>
                                         <div className="space-y-1">
-                                            <Label className="text-[11px]">Ancho (cm)</Label>
-                                            <Input type="number" min="1" max="500" inputMode="decimal" value={v.ancho} onChange={(e) => update(z.id, { ancho: e.target.value })} className="h-9" data-testid={`measure-ancho-${z.id}`} />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-[11px]">Alto (cm)</Label>
-                                            <Input type="number" min="1" max="500" inputMode="decimal" value={v.alto} onChange={(e) => update(z.id, { alto: e.target.value })} className="h-9" data-testid={`measure-alto-${z.id}`} />
+                                            <Label className="text-[11px]">Medida lineal (m / cm)</Label>
+                                            <LinearMeasureInput
+                                                value={v.medida_cm}
+                                                onChange={(cm) => update(z.id, { medida_cm: cm })}
+                                                testId={`measure-lineal-${z.id}`}
+                                            />
                                         </div>
                                         {z.id.startsWith('laterales') && (
                                             <div className="space-y-1">
