@@ -289,7 +289,9 @@ export const CheckIn = () => {
             toast.error('Ingresa el nombre del servicio o producto');
             return;
         }
-        if (!customServicePrice || parseFloat(customServicePrice) <= 0) {
+        // En postventa el valor puede quedar vacío o en $0
+        const customPrice = parseFloat(customServicePrice) || 0;
+        if (!order?.is_postventa && customPrice <= 0) {
             toast.error('Ingresa el valor del servicio o producto');
             return;
         }
@@ -299,7 +301,7 @@ export const CheckIn = () => {
             serviceId: customId,
             serviceName: customServiceName.trim(),
             category: 'Personalizado',
-            price: parseFloat(customServicePrice),
+            price: customPrice,
             isCustom: true
         }]);
         setCustomServiceName('');
@@ -530,7 +532,8 @@ export const CheckIn = () => {
         }
         
         const total = calculateTotal();
-        if (total <= 0) {
+        // En postventa el total puede ser $0 (servicios sin pago)
+        if (total <= 0 && !order?.is_postventa) {
             toast.error('Ingresa el valor de al menos un servicio');
             return;
         }
