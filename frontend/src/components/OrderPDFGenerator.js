@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf';
+import { CHECKIN_NOTICES } from '../lib/utils';
 
 export const generateOrderPDF = async (order) => {
     const doc = new jsPDF();
@@ -190,6 +191,28 @@ export const generateOrderPDF = async (order) => {
 
     yPos += 18;
 
+    // Avisos importantes (en rojo), confirmados con el cliente en el check-in
+    const noticeWidth = pageWidth - 2 * margin - 6;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    const noticeLines = CHECKIN_NOTICES.map((n, idx) => doc.splitTextToSize(`${idx + 1}. ${n}`, noticeWidth));
+    const noticesHeight = 9 + noticeLines.reduce((h, lines) => h + lines.length * 4, 0) + 2;
+    doc.setDrawColor(220, 38, 38);
+    doc.setFillColor(254, 242, 242);
+    doc.rect(margin, yPos, pageWidth - 2 * margin, noticesHeight, 'FD');
+    doc.setTextColor(220, 38, 38);
+    doc.setFontSize(9);
+    doc.text('AVISOS IMPORTANTES', margin + 3, yPos + 6);
+    doc.setFontSize(8);
+    let noticeY = yPos + 11;
+    noticeLines.forEach(lines => {
+        doc.text(lines, margin + 3, noticeY);
+        noticeY += lines.length * 4;
+    });
+    doc.setDrawColor(0, 0, 0);
+    doc.setFont('helvetica', 'normal');
+    yPos += noticesHeight + 6;
+
     // Section: Vehicle Condition Check
     doc.setTextColor(0, 0, 0);
     doc.setFillColor(240, 240, 240);
@@ -251,7 +274,11 @@ export const generateOrderPDF = async (order) => {
 
     yPos += 38;
 
-    // Signatures
+    // Signatures (pasan a otra página si no caben)
+    if (yPos + 50 > doc.internal.pageSize.getHeight() - 12) {
+        doc.addPage();
+        yPos = 20;
+    }
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(9);
     

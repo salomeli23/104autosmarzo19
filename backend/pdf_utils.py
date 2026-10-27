@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import List, Optional
 
+from email_templates import CHECKIN_NOTICES
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -207,20 +208,19 @@ def build_ingreso_receipt(order: dict) -> bytes:
         getSampleStyleSheet()["Normal"],
     ))
 
-    # Advertencia de garantía de opacidad
+    # Avisos importantes (en rojo), confirmados con el cliente en el check-in
     story.append(Spacer(1, 0.3 * cm))
     warn_style = ParagraphStyle(
         "Warn", parent=getSampleStyleSheet()["Normal"],
-        textColor=colors.HexColor("#92400e"), fontSize=9, leading=12,
+        textColor=colors.HexColor("#dc2626"), fontSize=9, leading=12,
     )
     warn_title_style = ParagraphStyle(
         "WarnTitle", parent=warn_style,
-        textColor=colors.HexColor("#78350f"), fontSize=10, spaceAfter=3,
+        textColor=colors.HexColor("#b91c1c"), fontSize=10, spaceAfter=3,
     )
-    story.append(Paragraph("<b>⚠ ADVERTENCIA DE GARANTÍA</b>", warn_title_style))
+    story.append(Paragraph("<b>AVISOS IMPORTANTES</b>", warn_title_style))
     story.append(Paragraph(
-        "<b>1.</b> Dentro de la garantía no aplica el cambio de porcentaje.<br/>"
-        "<b>2.</b> El cliente acepta el porcentaje de opacidad, bajo su responsabilidad y la garantía no incluye cambio de opacidad.",
+        "<br/>".join(f"<b>{i}. {n}</b>" for i, n in enumerate(CHECKIN_NOTICES, start=1)),
         warn_style,
     ))
 

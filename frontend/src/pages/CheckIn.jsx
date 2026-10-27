@@ -14,7 +14,7 @@ import { QRDisplay } from '../components/QRDisplay';
 import { SignaturePad } from '../components/SignaturePad';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
-import { formatCurrency, VEHICLE_PARTS, PPF_PARTS } from '../lib/utils';
+import { formatCurrency, VEHICLE_PARTS, PPF_PARTS, CHECKIN_NOTICES } from '../lib/utils';
 import { generateOrderPDF } from '../components/OrderPDFGenerator';
 import { Inspection360Inline } from '../components/Inspection360Inline';
 import { toast } from 'sonner';
@@ -26,6 +26,7 @@ import {
 import api from '../lib/api';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
+import { CheckinConfirmDialog } from '../components/CheckinConfirmDialog';
 
 export const CheckIn = () => {
     const [step, setStep] = useState(1);
@@ -63,6 +64,8 @@ export const CheckIn = () => {
     // Risk Agreement Modal
     const [showRiskAgreement, setShowRiskAgreement] = useState(false);
     const [riskAgreementAccepted, setRiskAgreementAccepted] = useState(false);
+    // Confirmación final con el cliente (orden + avisos, se pregunta 2 veces)
+    const [confirmIngresoOpen, setConfirmIngresoOpen] = useState(false);
     const [riskChecks, setRiskChecks] = useState({
         retiroPolarizado: false,
         vidriosBlinados: false,
@@ -557,6 +560,12 @@ export const CheckIn = () => {
             return;
         }
 
+        setConfirmIngresoOpen(true);
+    };
+
+    // Se ejecuta después de que el cliente confirma la orden y los avisos (2 veces)
+    const submitIngreso = async () => {
+        const total = calculateTotal();
         setLoading(true);
         try {
             const bk = calculateBreakdown();
@@ -675,6 +684,17 @@ export const CheckIn = () => {
 
     return (
         <div className="space-y-6" data-testid="checkin-page">
+            <CheckinConfirmDialog
+                open={confirmIngresoOpen}
+                onOpenChange={setConfirmIngresoOpen}
+                order={order}
+                services={selectedServices}
+                breakdown={confirmIngresoOpen ? calculateBreakdown() : {}}
+                paymentMethod={paymentMethod}
+                requiresInvoice={requiresInvoice}
+                onConfirm={submitIngreso}
+            />
+
             {/* Risk Agreement Modal - Styled Content */}
             <Dialog open={showRiskAgreement} onOpenChange={setShowRiskAgreement}>
                 <DialogContent className="max-w-3xl max-h-[90vh]">
@@ -1811,22 +1831,17 @@ export const CheckIn = () => {
 
                             {/* Advertencia de Garantía de Opacidad */}
                             <div
-                                className="p-4 rounded-lg border border-amber-500/50 bg-amber-500/10 space-y-2"
+                                className="p-4 rounded-lg border border-red-500/50 bg-red-500/10 space-y-2"
                                 data-testid="warranty-warning"
                             >
-                                <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm">
+                                <div className="flex items-center gap-2 text-red-500 font-semibold text-sm">
                                     <AlertTriangle className="w-4 h-4" />
-                                    Advertencia de Garantía
+                                    Avisos importantes
                                 </div>
-                                <ol className="list-decimal list-inside text-xs text-amber-200/90 space-y-1 leading-relaxed">
-                                    <li>
-                                        <b>Dentro de la garantía no aplica el cambio de porcentaje.</b>
-                                    </li>
-                                    <li>
-                                        <b>El cliente acepta el porcentaje de opacidad, bajo su responsabilidad y la garantía no incluye cambio de opacidad.</b>
-                                    </li>
+                                <ol className="list-decimal list-inside text-xs text-red-400 space-y-1 leading-relaxed">
+                                    {CHECKIN_NOTICES.map(n => <li key={n}><b>{n}</b></li>)}
                                 </ol>
-                                <p className="text-[10px] text-muted-foreground pt-1 border-t border-amber-500/20">
+                                <p className="text-[10px] text-muted-foreground pt-1 border-t border-red-500/20">
                                     Esta advertencia queda registrada con tu firma y se adjuntará en el recibo de ingreso.
                                 </p>
                             </div>

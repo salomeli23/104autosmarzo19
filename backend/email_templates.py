@@ -17,6 +17,15 @@ import qrcode
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 
+# Avisos que se confirman con el cliente en el check-in (modal, correo y PDF de la orden).
+# Mantener igual a CHECKIN_NOTICES en frontend/src/lib/utils.js
+CHECKIN_NOTICES = [
+    "Dentro de la Garantía no aplica cambio de porcentaje.",
+    "El cliente acepta el porcentaje de opacidad, bajo su responsabilidad y la garantía no cubre cambio de opacidad.",
+    "El cliente autoriza la movilidad del auto y dejar su llave para el proceso de instalación y servicios.",
+    "No se entrega su auto si el cliente no ha realizado el pago del servicio.",
+]
+
 
 def _load_asset_bytes(name: str) -> Optional[bytes]:
     p = ASSETS_DIR / name
@@ -389,16 +398,15 @@ def build_ingreso_html(order: dict, pdf_attached: bool = True, photo_count: int 
       </div>
     </div>
 
-    <div class='card' style='border-left:3px solid #f59e0b;background:rgba(245,158,11,0.06);'>
+    <div class='card' style='border-left:3px solid #dc2626;background:rgba(220,38,38,0.08);'>
       <div style='display:flex;gap:6px;align-items:center;margin-bottom:8px;'>
-        <span style='font-size:16px;color:#f59e0b;'>⚠</span>
-        <b style='color:#fbbf24;font-size:12px;letter-spacing:0.5px;'>ADVERTENCIA DE GARANTÍA</b>
+        <span style='font-size:16px;color:#ef4444;'>⚠</span>
+        <b style='color:#ef4444;font-size:12px;letter-spacing:0.5px;'>AVISOS IMPORTANTES</b>
       </div>
-      <ol style='margin:0;padding-left:18px;color:#fcd34d;font-size:12px;line-height:1.6;'>
-        <li style='margin-bottom:6px;'><b>Dentro de la garantía no aplica el cambio de porcentaje.</b></li>
-        <li><b>El cliente acepta el porcentaje de opacidad, bajo su responsabilidad y la garantía no incluye cambio de opacidad.</b></li>
+      <ol style='margin:0;padding-left:18px;color:#f87171;font-size:12px;line-height:1.6;'>
+        {''.join(f"<li style='margin-bottom:6px;'><b>{n}</b></li>" for n in CHECKIN_NOTICES)}
       </ol>
-      <div style='color:#999;font-size:10px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(245,158,11,0.2);'>
+      <div style='color:#999;font-size:10px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(220,38,38,0.25);'>
         Firmado digitalmente por el cliente al ingreso. Válido como constancia de aceptación.
       </div>
     </div>

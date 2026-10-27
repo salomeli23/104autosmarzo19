@@ -314,3 +314,12 @@ export const formatTime = (minutes) => {
     if (hrs > 0) return `${hrs}h ${mins}m`;
     return `${mins}m`;
 };
+
+// Avisos que se confirman con el cliente en el check-in (modal, correo y PDF de la orden).
+// Mantener igual a CHECKIN_NOTICES en backend/email_templates.py
+export const CHECKIN_NOTICES = [
+    'Dentro de la Garantía no aplica cambio de porcentaje.',
+    'El cliente acepta el porcentaje de opacidad, bajo su responsabilidad y la garantía no cubre cambio de opacidad.',
+    'El cliente autoriza la movilidad del auto y dejar su llave para el proceso de instalación y servicios.',
+    'No se entrega su auto si el cliente no ha realizado el pago del servicio.',
+];
