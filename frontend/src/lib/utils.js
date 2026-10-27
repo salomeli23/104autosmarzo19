@@ -119,6 +119,8 @@ export const ROLE_LABELS = {
     coordinador: 'Coordinador',
     tecnico: 'Técnico',
     facturacion: 'Facturación',
+    corte: 'Corte',
+    accesorios: 'Accesorios',
 };
 
 // Sistema de franjas horarias con cupos

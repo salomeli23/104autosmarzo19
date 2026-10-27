@@ -24,6 +24,7 @@ import { AutoAsignar } from './pages/AutoAsignar';
 import { Pagos } from './pages/Pagos';
 import { FacturacionElectronica } from './pages/FacturacionElectronica';
 import { AutosSalida } from './pages/AutosSalida';
+import { Accesorios } from './pages/Accesorios';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -186,6 +187,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'coordinador', 'corte']}>
                         <Inventory />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/accesorios" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'accesorios', 'coordinador']}>
+                        <Accesorios />
                     </ProtectedRoute>
                 } 
             />

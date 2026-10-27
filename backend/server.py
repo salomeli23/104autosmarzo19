@@ -69,6 +69,7 @@ class UserRole(str, Enum):
     TECNICO = "tecnico"
     FACTURACION = "facturacion"
     CORTE = "corte"  # Nuevo rol para corte de piezas
+    ACCESORIOS = "accesorios"  # Despacha accesorios del inventario al técnico instalador
 
 class ServiceType(str, Enum):
     POLARIZADO = "polarizado"
@@ -98,6 +99,8 @@ class AlertType(str, Enum):
     PENDIENTE_FACTURACION = "pendiente_facturacion"
     TIEMPO_EXCEDIDO = "tiempo_excedido"
     DESISTIMIENTO = "desistimiento"
+    SOLICITUD_ACCESORIOS = "solicitud_accesorios"  # Pedido de accesorios por despachar
+    ACCESORIOS_ENTREGADOS = "accesorios_entregados"  # Accesorios entregados al técnico
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -373,6 +376,7 @@ class OrderResponse(BaseModel):
     checkin_by_id: Optional[str] = None
     checkin_by_name: Optional[str] = None
     signed_order_pdf_url: Optional[str] = None
+    accessory_status: Optional[str] = None  # pendiente | despachado | entregado
     created_by_role: Optional[str] = None
     created_at: str
     updated_at: Optional[str] = None
@@ -944,6 +948,20 @@ async def complete_route_slot(order_id: str, slot_id: str, data: Optional[Comple
         update_fields["service_completed_at"] = datetime.now(timezone.utc).isoformat()
     await db.orders.update_one({"id": order_id}, {"$set": update_fields})
     return {"message": "Slot completado", "all_done": all_done}
+
+
+class UserRoleUpdate(BaseModel):
+    role: UserRole
+
+
+@api_router.put("/users/{user_id}/role")
+async def update_user_role(user_id: str, data: UserRoleUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="No puedes cambiar tu propio rol")
+    res = await db.users.update_one({"id": user_id}, {"$set": {"role": data.role.value}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return {"message": "Rol actualizado", "role": data.role.value}
 
 
 class UserRolesUpdate(BaseModel):
@@ -1870,6 +1888,13 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         {"final_value": data.final_value, "services_count": len(data.services)}
     )
     
+    # Si lleva accesorios, crear la solicitud de despacho para el usuario de accesorios
+    try:
+        order_ci = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+        await _sync_accessory_request(order_ci, current_user)
+    except Exception as e:
+        logger.error(f"[accesorios] solicitud al aprobar ingreso {data.order_id}: {e}")
+
     # Alert coordinators
     await create_alert(
         "coordinador", AlertType.NUEVO_INGRESO,
@@ -2717,6 +2742,7 @@ async def seed_test_users():
         {"email": "tecnico2@polarizadosya.com", "name": "Pedro Técnico", "role": "tecnico", "password": "tecnico123"},
         {"email": "facturacion@polarizadosya.com", "name": "Ana Facturación", "role": "facturacion", "password": "factura123"},
         {"email": "corte@polarizadosya.com", "name": "Luis Corte", "role": "corte", "password": "corte123"},
+        {"email": "accesorios@polarizadosya.com", "name": "Bodega Accesorios", "role": "accesorios", "password": "accesorios123"},
     ]
     
     created = []
@@ -3399,6 +3425,7 @@ class InventoryItemCreate(BaseModel):
     sede_id: Optional[str] = None  # Sede a la que pertenece el artículo
     fecha_ingreso: Optional[str] = None
     notes: Optional[str] = None
+    stock_minimo: Optional[int] = None  # alerta de bajo stock (accesorios/materiales)
 
 
 class InventoryItemUpdate(BaseModel):
@@ -3410,6 +3437,13 @@ class InventoryItemUpdate(BaseModel):
     linked_service: Optional[str] = None
     notes: Optional[str] = None
     active: Optional[bool] = None
+    stock_minimo: Optional[int] = None
+
+
+def _ensure_can_edit_inventory(current_user: dict, categoria: Optional[str]):
+    """El rol accesorios solo administra artículos de la categoría accesorio."""
+    if current_user["role"] == UserRole.ACCESORIOS.value and categoria != "accesorio":
+        raise HTTPException(status_code=403, detail="Solo puedes administrar el inventario de accesorios")
 
 
 def _gen_inventory_code():
@@ -3421,9 +3455,10 @@ def _gen_inventory_code():
 @api_router.post("/inventory")
 async def create_inventory_item(
     item: InventoryItemCreate,
-    current_user: dict = Depends(require_roles([UserRole.ADMIN]))
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS]))
 ):
-    """Crear un artículo de inventario (admin only)."""
+    """Crear un artículo de inventario (admin; el rol accesorios solo crea accesorios)."""
+    _ensure_can_edit_inventory(current_user, item.categoria)
     # Validation
     if item.tipo_articulo == "rollo":
         if not item.tipo_rollo:
@@ -3468,6 +3503,7 @@ async def create_inventory_item(
         "sede_nombre": sede_nombre,
         "fecha_ingreso": item.fecha_ingreso or now_iso,
         "notes": item.notes,
+        "stock_minimo": item.stock_minimo,
         "active": True,
         "created_by": current_user["id"],
         "created_at": now_iso,
@@ -3498,12 +3534,13 @@ async def list_inventory(
 async def update_inventory_item(
     item_id: str,
     update: InventoryItemUpdate,
-    current_user: dict = Depends(require_roles([UserRole.ADMIN]))
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS]))
 ):
     """Actualizar artículo de inventario."""
     existing = await db.inventory.find_one({"id": item_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Artículo no encontrado")
+    _ensure_can_edit_inventory(current_user, existing.get("categoria"))
     
     fields = {k: v for k, v in update.dict(exclude_unset=True).items() if v is not None}
     fields["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -3514,9 +3551,13 @@ async def update_inventory_item(
 @api_router.delete("/inventory/{item_id}")
 async def delete_inventory_item(
     item_id: str,
-    current_user: dict = Depends(require_roles([UserRole.ADMIN]))
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS]))
 ):
     """Soft delete (active=False)."""
+    existing = await db.inventory.find_one({"id": item_id}, {"_id": 0, "categoria": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Artículo no encontrado")
+    _ensure_can_edit_inventory(current_user, existing.get("categoria"))
     await db.inventory.update_one(
         {"id": item_id},
         {"$set": {"active": False, "updated_at": datetime.now(timezone.utc).isoformat()}}
@@ -3606,6 +3647,49 @@ async def list_inventory_movements(
         query["inventory_item_id"] = item_id
     movements = await db.inventory_movements.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return movements
+
+
+class InventoryRestock(BaseModel):
+    cantidad: int
+    factura_compra: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@api_router.post("/inventory/{item_id}/restock")
+async def restock_inventory(
+    item_id: str,
+    data: InventoryRestock,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS])),
+):
+    """Ingresar unidades a un artículo por cantidad (p. ej. llegó mercancía de accesorios)."""
+    item = await db.inventory.find_one({"id": item_id, "active": True}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Artículo no encontrado")
+    _ensure_can_edit_inventory(current_user, item.get("categoria"))
+    if item.get("tipo_articulo") != "cantidad":
+        raise HTTPException(status_code=400, detail="Solo se pueden ingresar unidades a artículos por cantidad")
+    if data.cantidad is None or data.cantidad <= 0:
+        raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a 0")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.inventory.update_one(
+        {"id": item_id},
+        {"$inc": {"cantidad_restante": data.cantidad, "cantidad_inicial": data.cantidad},
+         "$set": {"updated_at": now}},
+    )
+    await db.inventory_movements.insert_one({
+        "id": str(uuid.uuid4()),
+        "inventory_item_id": item_id,
+        "type": "ingreso",
+        "cantidad": data.cantidad,
+        "reason": data.notes or (f"Factura {data.factura_compra}" if data.factura_compra else "Ingreso de unidades"),
+        "factura_compra": data.factura_compra,
+        "user_id": current_user["id"],
+        "user_name": current_user.get("name") or current_user.get("email"),
+        "created_at": now,
+    })
+    updated = await db.inventory.find_one({"id": item_id}, {"_id": 0})
+    return updated
 
 
 # Auto-deduction helper (used by cutting complete)
@@ -4204,7 +4288,293 @@ async def update_order_services(
     )
 
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    try:
+        await _sync_accessory_request(updated, current_user)
+        updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    except Exception as e:
+        logger.error(f"[accesorios] sync tras actualizar orden {order_id}: {e}")
     return {"message": "Orden actualizada", "order": updated}
+
+
+# ==================== SOLICITUDES DE ACCESORIOS ====================
+# Si la orden lleva accesorios, al aprobar el ingreso se crea una solicitud para el
+# usuario de accesorios: la despacha del inventario y la entrega al técnico instalador.
+
+def _accessory_catalog_ids() -> set:
+    return {s["id"] for s in SERVICES_CATALOG.get("accesorios", {}).get("services", [])}
+
+
+def _accessory_items_from_services(services: List[dict]) -> List[dict]:
+    """Servicios de la orden que son accesorios (por id del catálogo o categoría 'Accesorios')."""
+    ids = _accessory_catalog_ids()
+    names = {s["id"]: s["name"] for s in SERVICES_CATALOG.get("accesorios", {}).get("services", [])}
+    items = []
+    for svc in services or []:
+        if not isinstance(svc, dict):
+            continue
+        sid = svc.get("service") or ""
+        desc = (svc.get("description") or "").strip()
+        if sid not in ids and not desc.lower().startswith("accesorio"):
+            continue
+        name = names.get(sid) or (desc.split(" - ", 1)[1] if " - " in desc else desc) or sid
+        items.append({"service_id": sid, "name": name, "cantidad": 1})
+    return items
+
+
+def _accessory_key(item: dict) -> str:
+    return f"{item.get('service_id') or ''}::{(item.get('name') or '').lower()}"
+
+
+async def _sync_accessory_request(order: dict, current_user: dict):
+    """Crea o actualiza la solicitud pendiente de accesorios de la orden.
+    Los accesorios ya despachados en solicitudes anteriores no se vuelven a pedir."""
+    if not order or order.get("status") in (OrderStatus.AGENDADO.value, OrderStatus.ENTREGADO.value,
+                                             OrderStatus.DESISTIMIENTO.value):
+        return None
+    wanted = _accessory_items_from_services(order.get("services") or [])
+
+    done_counts: Dict[str, int] = {}
+    pending = None
+    async for req in db.accessory_requests.find({"order_id": order["id"], "status": {"$ne": "cancelada"}}, {"_id": 0}):
+        if req["status"] == "pendiente":
+            pending = req
+            continue
+        for it in req.get("items") or []:
+            k = _accessory_key(it)
+            done_counts[k] = done_counts.get(k, 0) + 1
+
+    remaining = []
+    for it in wanted:
+        k = _accessory_key(it)
+        if done_counts.get(k, 0) > 0:
+            done_counts[k] -= 1
+        else:
+            remaining.append(it)
+
+    now = datetime.now(timezone.utc).isoformat()
+    if not remaining:
+        if pending:
+            await db.accessory_requests.update_one(
+                {"id": pending["id"]}, {"$set": {"status": "cancelada", "updated_at": now}})
+        await _refresh_order_accessory_status(order["id"])
+        return None
+
+    if pending:
+        await db.accessory_requests.update_one(
+            {"id": pending["id"]}, {"$set": {"items": remaining, "updated_at": now}})
+        await _refresh_order_accessory_status(order["id"])
+        return pending["id"]
+
+    seq_doc = await db.accessory_requests.find_one({}, {"_id": 0, "seq": 1}, sort=[("seq", -1)])
+    seq = ((seq_doc or {}).get("seq") or 0) + 1
+    req = {
+        "id": str(uuid.uuid4()),
+        "seq": seq,
+        "code": f"ACC-{seq:05d}",
+        "order_id": order["id"],
+        "order_code": order.get("order_code"),
+        "plate": order.get("plate"),
+        "client_name": order.get("client_name"),
+        "brand": order.get("brand"),
+        "model": order.get("model"),
+        "items": remaining,
+        "status": "pendiente",
+        "requested_by_id": current_user["id"],
+        "requested_by_name": current_user.get("name"),
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.accessory_requests.insert_one(req)
+    await _refresh_order_accessory_status(order["id"])
+    await create_alert(
+        UserRole.ACCESORIOS.value, AlertType.SOLICITUD_ACCESORIOS,
+        "Despachar accesorios",
+        f"{req['code']} · Vehículo {order.get('plate')}: " + ", ".join(i["name"] for i in remaining),
+        order["id"],
+    )
+    return req["id"]
+
+
+async def _refresh_order_accessory_status(order_id: str):
+    """Guarda en la orden el estado del pedido de accesorios: pendiente > despachado > entregado."""
+    statuses = set()
+    async for req in db.accessory_requests.find({"order_id": order_id, "status": {"$ne": "cancelada"}}, {"_id": 0, "status": 1}):
+        statuses.add(req["status"])
+    status = None
+    for s_ in ("pendiente", "despachado", "entregado"):
+        if s_ in statuses:
+            status = s_
+            break
+    await db.orders.update_one({"id": order_id}, {"$set": {"accessory_status": status}})
+
+
+@api_router.get("/accessory-requests")
+async def list_accessory_requests(
+    status: Optional[str] = None,
+    order_id: Optional[str] = None,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS, UserRole.COORDINADOR,
+                                                UserRole.ASESOR, UserRole.TECNICO])),
+):
+    query: Dict[str, Any] = {"status": status} if status else {"status": {"$ne": "cancelada"}}
+    if order_id:
+        query["order_id"] = order_id
+    if current_user["role"] == UserRole.TECNICO.value:
+        query["delivered_to_id"] = current_user["id"]
+    reqs = await db.accessory_requests.find(query, {"_id": 0}).sort("seq", -1).to_list(500)
+    order_ids = list({r["order_id"] for r in reqs})
+    orders = {}
+    if order_ids:
+        async for o in db.orders.find({"id": {"$in": order_ids}},
+                                      {"_id": 0, "id": 1, "status": 1, "assigned_technician_id": 1,
+                                       "assigned_technician_name": 1, "sede_nombre": 1}):
+            orders[o["id"]] = o
+    for r in reqs:
+        o = orders.get(r["order_id"]) or {}
+        r["order_status"] = o.get("status")
+        r["assigned_technician_id"] = o.get("assigned_technician_id")
+        r["assigned_technician_name"] = o.get("assigned_technician_name")
+    return reqs
+
+
+class AccessoryDispatchItem(BaseModel):
+    inventory_item_id: Optional[str] = None
+    cantidad: int = 1
+
+
+class AccessoryDispatch(BaseModel):
+    items: List[AccessoryDispatchItem]
+    notes: Optional[str] = None
+
+
+@api_router.post("/accessory-requests/{request_id}/dispatch")
+async def dispatch_accessory_request(
+    request_id: str,
+    data: AccessoryDispatch,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS])),
+):
+    """Despacha el pedido: descuenta cada accesorio del inventario."""
+    req = await db.accessory_requests.find_one({"id": request_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if req["status"] != "pendiente":
+        raise HTTPException(status_code=400, detail="La solicitud ya fue despachada")
+    if len(data.items) != len(req.get("items") or []):
+        raise HTTPException(status_code=400, detail="Debes indicar cada accesorio de la solicitud")
+
+    # Validar stock antes de descontar (sumando si dos accesorios salen del mismo artículo)
+    needed: Dict[str, int] = {}
+    for d in data.items:
+        if d.cantidad is None or d.cantidad <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a 0")
+        if d.inventory_item_id:
+            needed[d.inventory_item_id] = needed.get(d.inventory_item_id, 0) + d.cantidad
+    inv = {}
+    for inv_id, qty in needed.items():
+        it = await db.inventory.find_one({"id": inv_id, "active": True}, {"_id": 0})
+        if not it or it.get("tipo_articulo") != "cantidad":
+            raise HTTPException(status_code=400, detail="Artículo de inventario no válido")
+        if (it.get("cantidad_restante") or 0) < qty:
+            raise HTTPException(status_code=400,
+                                detail=f"Stock insuficiente de {it['nombre']}: quedan {it.get('cantidad_restante') or 0}")
+        inv[inv_id] = it
+
+    now = datetime.now(timezone.utc).isoformat()
+    user_name = current_user.get("name") or current_user.get("email")
+    items = []
+    for base, d in zip(req["items"], data.items):
+        item = {**base, "cantidad": d.cantidad, "inventory_item_id": d.inventory_item_id,
+                "inventory_nombre": inv[d.inventory_item_id]["nombre"] if d.inventory_item_id else None,
+                "inventory_codigo": inv[d.inventory_item_id].get("codigo") if d.inventory_item_id else None}
+        items.append(item)
+        if d.inventory_item_id:
+            await db.inventory.update_one(
+                {"id": d.inventory_item_id},
+                {"$inc": {"cantidad_restante": -d.cantidad}, "$set": {"updated_at": now}})
+            await db.inventory_movements.insert_one({
+                "id": str(uuid.uuid4()),
+                "inventory_item_id": d.inventory_item_id,
+                "type": "deduct",
+                "cantidad": d.cantidad,
+                "reason": f"Despacho {req['code']} · {req.get('plate')}",
+                "order_id": req["order_id"],
+                "accessory_request_id": request_id,
+                "user_id": current_user["id"],
+                "user_name": user_name,
+                "created_at": now,
+            })
+
+    await db.accessory_requests.update_one({"id": request_id}, {"$set": {
+        "items": items,
+        "status": "despachado",
+        "dispatch_notes": data.notes,
+        "dispatched_by_id": current_user["id"],
+        "dispatched_by_name": user_name,
+        "dispatched_at": now,
+        "updated_at": now,
+    }})
+    await _refresh_order_accessory_status(req["order_id"])
+    order = await db.orders.find_one({"id": req["order_id"]}, {"_id": 0, "status": 1})
+    await log_order_history(
+        req["order_id"], "ACCESORIOS_DESPACHADOS",
+        (order or {}).get("status"), (order or {}).get("status"),
+        current_user["id"], user_name,
+        {"request": req["code"], "items": [f"{i['cantidad']} x {i['name']}" for i in items]},
+    )
+    return await db.accessory_requests.find_one({"id": request_id}, {"_id": 0})
+
+
+class AccessoryDeliver(BaseModel):
+    technician_id: str
+    notes: Optional[str] = None
+
+
+@api_router.post("/accessory-requests/{request_id}/deliver")
+async def deliver_accessory_request(
+    request_id: str,
+    data: AccessoryDeliver,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS])),
+):
+    """Entrega los accesorios despachados al técnico instalador."""
+    req = await db.accessory_requests.find_one({"id": request_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if req["status"] != "despachado":
+        raise HTTPException(status_code=400, detail="Primero debes despachar la solicitud")
+    tech = await db.users.find_one({"id": data.technician_id, "role": UserRole.TECNICO.value}, {"_id": 0})
+    if not tech:
+        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+
+    now = datetime.now(timezone.utc).isoformat()
+    user_name = current_user.get("name") or current_user.get("email")
+    await db.accessory_requests.update_one({"id": request_id}, {"$set": {
+        "status": "entregado",
+        "delivered_to_id": tech["id"],
+        "delivered_to_name": tech["name"],
+        "delivery_notes": data.notes,
+        "delivered_by_id": current_user["id"],
+        "delivered_by_name": user_name,
+        "delivered_at": now,
+        "updated_at": now,
+    }})
+    await _refresh_order_accessory_status(req["order_id"])
+    order = await db.orders.find_one({"id": req["order_id"]}, {"_id": 0, "status": 1})
+    await log_order_history(
+        req["order_id"], "ACCESORIOS_ENTREGADOS",
+        (order or {}).get("status"), (order or {}).get("status"),
+        current_user["id"], user_name,
+        {"request": req["code"], "technician_name": tech["name"]},
+    )
+    await db.alerts.insert_one({
+        "id": str(uuid.uuid4()),
+        "recipient_id": tech["id"],
+        "alert_type": AlertType.ACCESORIOS_ENTREGADOS.value,
+        "title": "Accesorios entregados",
+        "message": f"Vehículo {req.get('plate')}: " + ", ".join(f"{i.get('cantidad', 1)} x {i['name']}" for i in req["items"]),
+        "order_id": req["order_id"],
+        "read": False,
+        "created_at": now,
+    })
+    return await db.accessory_requests.find_one({"id": request_id}, {"_id": 0})
 
 
 class RescheduleAppointment(BaseModel):

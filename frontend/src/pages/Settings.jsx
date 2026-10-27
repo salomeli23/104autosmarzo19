@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { usersAPI, settingsAPI } from '../lib/api';
+import { usersAPI, settingsAPI, authAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -8,7 +8,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ROLE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff, UserPlus } from 'lucide-react';
 import { SedesSection, CarSeriesSection, ServiceExtrasSection, ServiceRoutesSection, TechnicianRolesSection } from '../components/SettingsSections';
 
 export const Settings = () => {
@@ -31,6 +31,11 @@ export const Settings = () => {
     const [showCompletionPin, setShowCompletionPin] = useState(false);
     const [completionPinLoading, setCompletionPinLoading] = useState(false);
     const [completionPinSaving, setCompletionPinSaving] = useState(false);
+
+    // Crear usuario
+    const emptyNewUser = { name: '', email: '', phone: '', role: 'accesorios', password: '' };
+    const [newUser, setNewUser] = useState(emptyNewUser);
+    const [creatingUser, setCreatingUser] = useState(false);
 
     useEffect(() => {
         const fetchUsers = async () => {
@@ -130,7 +135,36 @@ export const Settings = () => {
             );
             toast.success('Rol actualizado correctamente');
         } catch (error) {
-            toast.error('Error al actualizar rol');
+            toast.error(error.response?.data?.detail || 'Error al actualizar rol');
+        }
+    };
+
+    const handleCreateUser = async () => {
+        if (!newUser.name.trim() || !newUser.email.trim()) {
+            toast.error('Escribe el nombre y el correo');
+            return;
+        }
+        if (newUser.password.length < 6) {
+            toast.error('La contraseña debe tener al menos 6 caracteres');
+            return;
+        }
+        try {
+            setCreatingUser(true);
+            const res = await authAPI.register({
+                name: newUser.name.trim(),
+                email: newUser.email.trim().toLowerCase(),
+                phone: newUser.phone.trim() || null,
+                role: newUser.role,
+                password: newUser.password,
+            });
+            setUsers(prev => [...prev, res.data.user]);
+            setNewUser(emptyNewUser);
+            toast.success(`Usuario ${res.data.user.name} creado como ${ROLE_LABELS[res.data.user.role] || res.data.user.role}`);
+        } catch (error) {
+            const detail = error.response?.data?.detail;
+            toast.error(typeof detail === 'string' ? detail : 'No se pudo crear el usuario. Revisa que el correo sea válido.');
+        } finally {
+            setCreatingUser(false);
         }
     };
 
@@ -139,6 +173,7 @@ export const Settings = () => {
             case 'admin': return 'text-red-500 bg-red-500/10';
             case 'asesor': return 'text-blue-500 bg-blue-500/10';
             case 'tecnico': return 'text-green-500 bg-green-500/10';
+            case 'accesorios': return 'text-amber-500 bg-amber-500/10';
             default: return 'text-gray-500 bg-gray-500/10';
         }
     };
@@ -300,6 +335,54 @@ export const Settings = () => {
                 </CardContent>
             </Card>
 
+            {/* Crear usuario */}
+            <Card className="card-hover" data-testid="create-user-card">
+                <CardHeader>
+                    <CardTitle className="font-heading text-xl flex items-center gap-2">
+                        <UserPlus className="w-5 h-5 text-primary" />
+                        Crear usuario
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                        El rol <b>Accesorios</b> recibe las solicitudes de accesorios de cada orden, las despacha del inventario y las entrega al técnico instalador.
+                    </p>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                            <Label htmlFor="new-user-name">Nombre *</Label>
+                            <Input id="new-user-name" value={newUser.name} onChange={(e) => setNewUser(u => ({ ...u, name: e.target.value }))} data-testid="new-user-name" />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="new-user-email">Correo *</Label>
+                            <Input id="new-user-email" type="email" value={newUser.email} onChange={(e) => setNewUser(u => ({ ...u, email: e.target.value }))} data-testid="new-user-email" />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="new-user-phone">Teléfono</Label>
+                            <Input id="new-user-phone" value={newUser.phone} onChange={(e) => setNewUser(u => ({ ...u, phone: e.target.value }))} />
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Rol *</Label>
+                            <Select value={newUser.role} onValueChange={(value) => setNewUser(u => ({ ...u, role: value }))}>
+                                <SelectTrigger data-testid="new-user-role"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2 sm:col-span-2">
+                            <Label htmlFor="new-user-password">Contraseña * (mínimo 6 caracteres)</Label>
+                            <Input id="new-user-password" type="password" autoComplete="new-password" value={newUser.password} onChange={(e) => setNewUser(u => ({ ...u, password: e.target.value }))} data-testid="new-user-password" />
+                        </div>
+                    </div>
+                    <Button onClick={handleCreateUser} disabled={creatingUser} className="w-full sm:w-auto" data-testid="create-user-btn">
+                        <UserPlus className="w-4 h-4 mr-2" />
+                        {creatingUser ? 'Creando...' : 'Crear usuario'}
+                    </Button>
+                </CardContent>
+            </Card>
+
             {/* User Management */}
             <Card className="card-hover">
                 <CardHeader>
@@ -344,9 +427,9 @@ export const Settings = () => {
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    <SelectItem value="admin">Administrador</SelectItem>
-                                                    <SelectItem value="asesor">Asesor Comercial</SelectItem>
-                                                    <SelectItem value="tecnico">Técnico</SelectItem>
+                                                    {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                                                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                                                    ))}
                                                 </SelectContent>
                                             </Select>
                                         )}

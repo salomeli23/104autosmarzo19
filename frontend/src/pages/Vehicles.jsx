@@ -14,6 +14,7 @@ import { InspectedVehiclesView } from '../components/InspectedVehiclesView';
 import { toast } from 'sonner';
 import { Plus, Car, Search, User, Phone, Mail, UserPlus, Wrench, ClipboardCheck, AlertTriangle } from 'lucide-react';
 import { PostventaBadge } from '../components/PostventaBadge';
+import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
 import { CheckinByTag } from '../components/CheckinByTag';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
 
@@ -372,6 +373,7 @@ export const Vehicles = () => {
                                             </p>
                                             <PostventaBadge order={vehicle} className="mt-1" />
                                             <CheckinByTag order={vehicle} className="mt-1" />
+                                            <AccessoryStatusTag order={vehicle} className="mt-1" />
                                         </div>
                                     </div>
                                     <div className="flex flex-col items-end gap-1">

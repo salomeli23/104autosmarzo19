@@ -12,6 +12,7 @@ import { CarAvatar } from '../components/CarAvatar';
 import { LiveTimer } from '../components/LiveTimer';
 import { toast } from 'sonner';
 import { PostventaBadge } from '../components/PostventaBadge';
+import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
 import { CheckinByTag } from '../components/CheckinByTag';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
 import {
@@ -194,6 +195,7 @@ const OrderCard = ({ order, technicians, onRefresh }) => {
                                 <PlateBadge plate={order.plate} size="md" />
                                 <PostventaBadge order={order} />
                                 <CheckinByTag order={order} />
+                                <AccessoryStatusTag order={order} />
                                 <OrderStatusBadge status={order.status} />
                                 <span className={`text-[11px] px-2 py-0.5 rounded-full border flex items-center gap-1 ${pay.color}`} data-testid={`payment-tag-${order.id}`}>
                                     <PayIcon className="w-3 h-3" />

@@ -39,12 +39,13 @@ import {
     Receipt,
     LogOut as LogOutIcon,
     FileSignature,
+    PackageCheck,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
 
 const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion', 'corte'] },
+    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion', 'corte', 'accesorios'] },
     { path: '/appointments', label: 'Agendamiento', icon: Calendar, roles: ['admin', 'asesor'] },
     { path: '/checkin', label: 'Check-in / Ingreso', icon: QrCode, roles: ['admin', 'asesor'] },
     { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'asesor', 'coordinador'] },
@@ -58,6 +59,7 @@ const navItems = [
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin', 'asesor'] },
     { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'asesor', 'coordinador', 'facturacion'] },
     { path: '/postventa', label: 'Postventa / Garantías', icon: ShieldCheck, roles: ['admin', 'asesor', 'coordinador'] },
+    { path: '/accesorios', label: 'Accesorios', icon: PackageCheck, roles: ['admin', 'accesorios', 'coordinador'] },
     { path: '/inventory', label: 'Inventario', icon: Boxes, roles: ['admin', 'coordinador', 'corte'] },
     { path: '/settings', label: 'Configuración', icon: Settings, roles: ['admin'] },
 ];

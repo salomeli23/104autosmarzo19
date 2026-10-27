@@ -37,6 +37,7 @@ export const authAPI = {
 export const usersAPI = {
     getAll: (role) => api.get('/users', { params: role ? { role } : {} }),
     getTechnicians: () => api.get('/users/technicians'),
+    updateRole: (userId, role) => api.put(`/users/${userId}/role`, { role }),
 };
 
 // Orders (nuevo flujo completo)
@@ -152,6 +153,14 @@ export const inventoryAPI = {
     alerts: () => api.get('/inventory/alerts'),
     deduct: (id, params) => api.post(`/inventory/${id}/deduct`, null, { params }),
     movements: (params) => api.get('/inventory/movements', { params }),
+    restock: (id, data) => api.post(`/inventory/${id}/restock`, data),
+};
+
+// Solicitudes de accesorios: despacho desde inventario y entrega al técnico
+export const accessoryRequestsAPI = {
+    list: (params) => api.get('/accessory-requests', { params }),
+    dispatch: (id, data) => api.post(`/accessory-requests/${id}/dispatch`, data),
+    deliver: (id, data) => api.post(`/accessory-requests/${id}/deliver`, data),
 };
 
 // Settings (admin)
