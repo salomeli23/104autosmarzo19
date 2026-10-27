@@ -10,7 +10,7 @@ import { ROLE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
 import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff, UserPlus } from 'lucide-react';
 import { DiscountCodesSection } from '../components/DiscountCodesSection';
-import { SedesSection, CarSeriesSection, ServiceExtrasSection, ServiceRoutesSection, TechnicianRolesSection } from '../components/SettingsSections';
+import { SedesSection, CarSeriesSection, ServiceExtrasSection, TechnicianRolesSection } from '../components/SettingsSections';
 
 export const Settings = () => {
     const { user } = useAuth();
@@ -469,7 +469,6 @@ export const Settings = () => {
             <SedesSection />
             <CarSeriesSection />
             <ServiceExtrasSection />
-            <ServiceRoutesSection />
             <TechnicianRolesSection />
         </div>
     );

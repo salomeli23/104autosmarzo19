@@ -90,8 +90,8 @@ export const ORDER_STATUS_LABELS = {
     ingresado: 'Ingresado',
     en_revision: 'Técnico por Asignar',
     en_corte: 'En Corte',
-    asignado: 'Asignado',
-    en_proceso: 'En Proceso',
+    asignado: 'Por Instalar',
+    en_proceso: 'En Instalación',
     servicio_completado: 'Servicio Completado',
     terminado_falta_pago: 'Falta Pago',
     terminado_pagado: 'Pagado',
@@ -227,7 +227,7 @@ export const COLORS = ['Blanco', 'Negro', 'Gris', 'Plata', 'Rojo', 'Azul', 'Verd
 // Legacy status labels for backwards compatibility
 export const STATUS_LABELS = {
     agendado: 'Agendado',
-    en_proceso: 'En Proceso',
+    en_proceso: 'En Instalación',
     en_revision: 'Técnico por Asignar',
     terminado: 'Terminado',
     pending: 'Pendiente',
@@ -238,7 +238,7 @@ export const VEHICLE_STATUS_LABELS = {
     agendado: 'Agendado',
     ingresado: 'Ingresado',
     con_tecnico: 'Con Técnico',
-    en_proceso: 'En Proceso',
+    en_proceso: 'En Instalación',
     finalizado: 'Finalizado',
 };
 

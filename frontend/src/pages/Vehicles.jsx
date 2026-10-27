@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { vehiclesAPI, usersAPI } from '../lib/api';
+import { AssignTechniciansDialog } from '../components/AssignTechniciansDialog';
+import { orderTechnicians } from '../lib/workflow';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -88,9 +90,9 @@ export const Vehicles = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [dialogOpen, setDialogOpen] = useState(false);
-    const [assignDialogOpen, setAssignDialogOpen] = useState(false);
-    const [selectedVehicle, setSelectedVehicle] = useState(null);
-    const [selectedTechnician, setSelectedTechnician] = useState('');
+    const [assigningVehicle, setAssigningVehicle] = useState(null);
+    // Asignar técnicos: admin y coordinador
+    const canAssign = ['admin', 'coordinador'].includes(user?.role);
     const [availableModels, setAvailableModels] = useState([]);
     const [formData, setFormData] = useState({
         plate: '', brand: '', model: '', year: CURRENT_YEAR.toString(),
@@ -148,29 +150,6 @@ export const Vehicles = () => {
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al registrar vehículo');
         }
-    };
-
-    const handleAssignTechnician = async () => {
-        if (!selectedVehicle || !selectedTechnician) {
-            toast.error('Selecciona un técnico');
-            return;
-        }
-        try {
-            await vehiclesAPI.assignTechnician(selectedVehicle.id, selectedTechnician);
-            toast.success('Técnico asignado correctamente');
-            setAssignDialogOpen(false);
-            setSelectedVehicle(null);
-            setSelectedTechnician('');
-            fetchData();
-        } catch (error) {
-            toast.error(error.response?.data?.detail || 'Error al asignar técnico');
-        }
-    };
-
-    const openAssignDialog = (vehicle) => {
-        setSelectedVehicle(vehicle);
-        setSelectedTechnician(vehicle.assigned_technician_id || '');
-        setAssignDialogOpen(true);
     };
 
     const filteredVehicles = vehicles.filter(v => 
@@ -311,41 +290,12 @@ export const Vehicles = () => {
                 </Tabs>
             </div>
 
-            {/* Assign Technician Dialog */}
-            <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle className="font-heading text-xl">Asignar Técnico</DialogTitle>
-                        <DialogDescription>
-                            {selectedVehicle && `Vehículo: ${selectedVehicle.plate} - ${selectedVehicle.brand} ${selectedVehicle.model}`}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <Label>Seleccionar Técnico</Label>
-                            <Select value={selectedTechnician} onValueChange={setSelectedTechnician}>
-                                <SelectTrigger data-testid="assign-technician-select">
-                                    <SelectValue placeholder="Seleccionar técnico..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {technicians.map(tech => (
-                                        <SelectItem key={tech.id} value={tech.id}>
-                                            <div className="flex items-center gap-2">
-                                                <Wrench className="w-4 h-4" />
-                                                {tech.name}
-                                            </div>
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <Button onClick={handleAssignTechnician} className="w-full brand-glow" disabled={!selectedTechnician} data-testid="confirm-assign-btn">
-                            <UserPlus className="w-4 h-4 mr-2" />
-                            Confirmar Asignación
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+            <AssignTechniciansDialog
+                order={assigningVehicle}
+                technicians={technicians}
+                onClose={() => setAssigningVehicle(null)}
+                onAssigned={fetchData}
+            />
 
             {/* Vehicles Grid */}
             {loading ? (
@@ -420,28 +370,28 @@ export const Vehicles = () => {
                                             <span className="truncate">{vehicle.client_email}</span>
                                         </div>
                                     )}
-                                    {vehicle.assigned_technician_name && (
-                                        <div className="flex items-center gap-2 text-sm text-primary">
+                                    {orderTechnicians(vehicle).map(t => (
+                                        <div key={t.id} className="flex items-center gap-2 text-sm text-primary">
                                             <Wrench className="w-4 h-4" />
-                                            <span>{vehicle.assigned_technician_name}</span>
+                                            <span>{t.name} <span className="text-xs text-muted-foreground">· {t.role}</span></span>
                                         </div>
-                                    )}
+                                    ))}
                                 </div>
 
                                 <UpdateOrderButton order={vehicle} onUpdated={fetchData} className="w-full mt-3" />
 
                                 {/* Action buttons */}
-                                {vehicle.status && ['ingresado', 'agendado'].includes(vehicle.status) && (
+                                {canAssign && ['en_revision', 'en_corte', 'asignado'].includes(vehicle.status) && (
                                     <div className="mt-3 pt-3 border-t">
                                         <Button 
                                             size="sm" 
-                                            variant="outline" 
+                                            variant={vehicle.assigned_technician_id ? 'outline' : 'default'}
                                             className="w-full"
-                                            onClick={() => openAssignDialog(vehicle)}
+                                            onClick={() => setAssigningVehicle(vehicle)}
                                             data-testid={`assign-btn-${vehicle.id}`}
                                         >
                                             <UserPlus className="w-4 h-4 mr-2" />
-                                            Asignar Técnico
+                                            {vehicle.assigned_technician_id ? 'Cambiar técnicos' : 'Asignar 2 técnicos'}
                                         </Button>
                                     </div>
                                 )}

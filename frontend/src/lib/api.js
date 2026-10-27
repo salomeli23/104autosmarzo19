@@ -63,6 +63,8 @@ export const ordersAPI = {
     
     // Step 4: Assignment (Coordinator)
     assignTechnician: (data) => api.post('/orders/assign', data),
+    // Técnico principal + técnico de apoyo → Corte (Polarizado/PPF/Ultrasecure) o Instalación
+    assignTechnicians: (orderId, data) => api.post(`/orders/${orderId}/assign-technicians`, data),
     
     // Pre-asignación de técnico (Autos por Asignar - antes de Corte)
     getPendingTechAssignment: () => api.get('/tech-queue/pending'),

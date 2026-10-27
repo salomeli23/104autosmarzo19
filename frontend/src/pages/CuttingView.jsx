@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { orderTechnicians } from '../lib/workflow';
 import { cuttingAPI, inventoryAPI, carSeriesAPI, cuttingCatalogAPI } from '../lib/api';
 import { VEHICLE_PARTS } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -389,6 +390,11 @@ const CuttingView = () => {
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
                                                 <p className="text-sm text-muted-foreground">Cliente: {order.client_name}</p>
                                                 <p className="text-xs text-muted-foreground">Código: {order.order_code}</p>
+                                                {orderTechnicians(order).length > 0 && (
+                                                    <p className="text-xs text-cyan-400" data-testid={`cutting-techs-${order.id}`}>
+                                                        Instalan: {orderTechnicians(order).map(t => t.name).join(' y ')}
+                                                    </p>
+                                                )}
                                                 {order.ingreso_at && (
                                                     <div className="mt-1">
                                                         <LiveTimer

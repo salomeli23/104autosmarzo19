@@ -13,11 +13,26 @@ import { CarAvatar } from '../components/CarAvatar';
 import { toast } from 'sonner';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
+import { WorkflowSteps } from '../components/WorkflowSteps';
+import { orderTechnicians } from '../lib/workflow';
 import {
     Wrench, Play, CheckCircle, Clock, User, Phone,
     AlertTriangle, Timer, FileText, Scissors, Sparkles,
-    Package, PaintBucket, Hammer, LogIn,
+    Package, PaintBucket, Hammer, LogIn, Users, Route as RouteIcon,
 } from 'lucide-react';
+
+const PART_LABELS = {
+    panoramico: 'Panorámico', vidrio_copiloto: 'Vidrio Copiloto', vidrio_piloto: 'Vidrio Piloto',
+    vidrio_trasero_piloto: 'Vidrio Trasero Piloto', vidrio_trasero_copiloto: 'Vidrio Trasero Copiloto',
+    vidrio_trasero: 'Vidrio Trasero', trasero: 'Trasero', luneta: 'Luneta', sunroof: 'Sunroof', custodias: 'Custodias',
+};
+
+// Pestañas del flujo nuevo: Corte → Por instalar → En instalación
+const STAGES = [
+    { id: 'asignado', label: 'Por instalar', icon: Wrench },
+    { id: 'en_proceso', label: 'En instalación', icon: Play },
+    { id: 'en_corte', label: 'En corte', icon: Scissors },
+];
 
 // ============================================================
 // Sección → roles de slot que agrupa (matches por role o por label)
@@ -198,6 +213,92 @@ const SlotCard = ({ slot, order, onStart, onFinish, processing }) => {
 };
 
 // ============================================================
+// Order Card (flujo con 2 técnicos)
+// ============================================================
+const InstallCard = ({ order, userId, onStart, onFinish, processing }) => {
+    const partner = orderTechnicians(order).find(t => t.id !== userId);
+    const inProgress = order.status === 'en_proceso';
+    const remaining = inProgress && order.service_started_at && order.service_time_minutes
+        ? Math.round((new Date(order.service_started_at).getTime() + order.service_time_minutes * 60000 - Date.now()) / 60000)
+        : null;
+    const expired = remaining !== null && remaining < 0;
+    return (
+        <Card className={`card-hover ${expired ? 'border-red-500/50' : inProgress ? 'border-yellow-500/40' : order.status === 'en_corte' ? 'border-pink-500/30' : 'border-cyan-500/40'}`} data-testid={`install-card-${order.id}`}>
+            <CardContent className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <CarAvatar photoUrl={order.profile_photo_url} size={44} />
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <PlateBadge plate={order.plate} size="md" />
+                                <PostventaBadge order={order} />
+                                <AccessoryStatusTag order={order} />
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1 truncate">{order.brand} {order.model} · {order.client_name}</p>
+                        </div>
+                    </div>
+                    {remaining !== null && (
+                        <Badge className={expired ? 'bg-red-500/20 text-red-500 border-red-500/40' : 'bg-yellow-500/20 text-yellow-500 border-yellow-500/40'}>
+                            {expired ? <AlertTriangle className="w-3 h-3 mr-1" /> : <Timer className="w-3 h-3 mr-1" />}
+                            {expired ? `+${Math.abs(remaining)}m excedido` : `${remaining}m restantes`}
+                        </Badge>
+                    )}
+                </div>
+
+                <WorkflowSteps order={order} />
+
+                <div className="space-y-1">
+                    {(order.services || []).filter(s => typeof s === 'object').map((s, i) => {
+                        const parts = (s.parts || []).map(p => `${PART_LABELS[p] || p}${s.part_percentages?.[p] ? ` ${s.part_percentages[p]}` : ''}`);
+                        return (
+                            <div key={i} className="text-xs p-2 rounded bg-muted/40">
+                                <p className="font-medium">{s.description || s.service}</p>
+                                {parts.length > 0 && <p className="text-muted-foreground">{parts.join(' · ')}</p>}
+                            </div>
+                        );
+                    })}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs bg-muted/40 rounded-md p-2 border border-muted">
+                    <div className="flex items-center gap-1 text-blue-400">
+                        <LogIn className="w-3 h-3" /> Ingreso: <span className="font-mono">{fmtTime(order.ingreso_at)}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-cyan-400">
+                        <Users className="w-3 h-3" /> Con: <span className="truncate">{partner ? partner.name : 'solo'}</span>
+                    </div>
+                    {inProgress && (
+                        <>
+                            <div className="flex items-center gap-1 text-yellow-400">
+                                <Play className="w-3 h-3" /> Inicio: <span className="font-mono">{fmtTime(order.service_started_at)}</span>
+                            </div>
+                            <div className="flex items-center gap-1 text-yellow-400">
+                                <Timer className="w-3 h-3" /> Transcurrido: <span className="font-mono">{fmtElapsed(order.service_started_at)}</span>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                {order.status === 'en_corte' && (
+                    <p className="text-xs text-pink-400 flex items-center gap-1">
+                        <Scissors className="w-3.5 h-3.5" /> En corte. Te avisaremos cuando esté listo para instalar.
+                    </p>
+                )}
+                {order.status === 'asignado' && (
+                    <Button className="w-full" onClick={() => onStart(order)} disabled={processing} data-testid={`start-install-${order.id}`}>
+                        <Play className="w-4 h-4 mr-2" /> Iniciar instalación
+                    </Button>
+                )}
+                {inProgress && (
+                    <Button className="w-full brand-glow" variant={expired ? 'destructive' : 'default'} onClick={() => onFinish(order)} disabled={processing} data-testid={`finish-install-${order.id}`}>
+                        <CheckCircle className="w-4 h-4 mr-2" /> Finalizar y enviar reporte
+                    </Button>
+                )}
+            </CardContent>
+        </Card>
+    );
+};
+
+// ============================================================
 // Main View
 // ============================================================
 export const TechnicianView = () => {
@@ -217,8 +318,8 @@ export const TechnicianView = () => {
             const res = await ordersAPI.getAll();
             const uid = user?.id;
             const mine = (res.data || []).filter(o =>
-                Array.isArray(o.route_slots) &&
-                o.route_slots.some(s => s.technician_id === uid)
+                o.assigned_technician_id === uid || o.assigned_technician_2_id === uid ||
+                (Array.isArray(o.route_slots) && o.route_slots.some(s => s.technician_id === uid))
             );
             setOrders(mine);
         } catch (e) {
@@ -261,6 +362,20 @@ export const TechnicianView = () => {
         return map;
     }, [orders, user]);
 
+    // Flujo nuevo: órdenes donde soy técnico principal o de apoyo
+    const byStage = useMemo(() => {
+        const uid = user?.id;
+        const map = {};
+        STAGES.forEach(st => { map[st.id] = []; });
+        (orders || []).forEach(o => {
+            if ((o.assigned_technician_id === uid || o.assigned_technician_2_id === uid) && map[o.status]) {
+                map[o.status].push(o);
+            }
+        });
+        return map;
+    }, [orders, user]);
+    const legacyPending = SECTIONS.reduce((acc, s) => acc + bySection[s.id].filter(x => x.slot.status !== 'completado').length, 0);
+
     const alertsBySection = useMemo(() => {
         const counts = {};
         SECTIONS.forEach(s => {
@@ -269,7 +384,7 @@ export const TechnicianView = () => {
         return counts;
     }, [bySection]);
 
-    const totalPending = SECTIONS.reduce((acc, s) => acc + alertsBySection[s.id], 0);
+    const totalPending = byStage.asignado.length + byStage.en_proceso.length + legacyPending;
 
     const handleStart = async (orderId, slotId) => {
         setProcessing(true);
@@ -284,7 +399,20 @@ export const TechnicianView = () => {
         }
     };
 
-    const openFinish = (order, slot) => {
+    const handleStartInstall = async (order) => {
+        setProcessing(true);
+        try {
+            await ordersAPI.startService(order.id);
+            toast.success('Instalación iniciada · Cronómetro corriendo');
+            fetchOrders();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'Error al iniciar');
+        } finally {
+            setProcessing(false);
+        }
+    };
+
+    const openFinish = (order, slot = null) => {
         setFinishing({ order, slot });
         setFinishNotes('');
         setFinishPhotos([]);
@@ -316,13 +444,22 @@ export const TechnicianView = () => {
         }
         setProcessing(true);
         try {
-            const res = await orderRouteAPI.completeSlot(finishing.order.id, finishing.slot.id, {
-                notes: finishNotes.trim(),
-                completion_photos: finishPhotos,
-            });
-            toast.success(res.data?.all_done
-                ? 'Servicio finalizado · Auto listo para entrega'
-                : 'Servicio finalizado');
+            if (finishing.slot) {
+                const res = await orderRouteAPI.completeSlot(finishing.order.id, finishing.slot.id, {
+                    notes: finishNotes.trim(),
+                    completion_photos: finishPhotos,
+                });
+                toast.success(res.data?.all_done
+                    ? 'Servicio finalizado · Auto listo para entrega'
+                    : 'Servicio finalizado');
+            } else {
+                await ordersAPI.completeService({
+                    order_id: finishing.order.id,
+                    notes: finishNotes.trim(),
+                    completion_photos: finishPhotos,
+                });
+                toast.success('Instalación finalizada · enviada a facturación');
+            }
             closeFinish();
             fetchOrders();
         } catch (e) {
@@ -332,8 +469,9 @@ export const TechnicianView = () => {
         }
     };
 
-    // pick a default tab: first section with pendings, else first section
-    const defaultTab = SECTIONS.find(s => alertsBySection[s.id] > 0)?.id || SECTIONS[0].id;
+    const hasLegacy = SECTIONS.some(s => bySection[s.id].length > 0);
+    const defaultTab = byStage.en_proceso.length ? 'en_proceso' : byStage.asignado.length ? 'asignado'
+        : byStage.en_corte.length ? 'en_corte' : hasLegacy ? 'legacy' : 'asignado';
 
     return (
         <div className="space-y-6" data-testid="technician-page">
@@ -341,7 +479,7 @@ export const TechnicianView = () => {
                 <div>
                     <h1 className="font-heading text-3xl md:text-4xl">Mis Servicios</h1>
                     <p className="text-muted-foreground">
-                        Servicios asignados desde la Hoja de Ruta
+                        Vehículos donde eres técnico principal o de apoyo · Corte → Instalación
                     </p>
                 </div>
                 {totalPending > 0 && (
@@ -360,47 +498,49 @@ export const TechnicianView = () => {
                 <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                     <Wrench className="w-16 h-16 mb-4 opacity-50" />
                     <p className="text-lg">No tienes servicios asignados</p>
-                    <p className="text-sm">Los servicios aparecerán cuando el coordinador te asigne en la Hoja de Ruta</p>
+                    <p className="text-sm">Los servicios aparecerán cuando el coordinador te asigne en Autos por Asignar</p>
                 </div>
             ) : (
                 <Tabs defaultValue={defaultTab} className="w-full">
-                    <TabsList className="grid grid-cols-3 md:grid-cols-6 gap-1 h-auto p-1">
-                        {SECTIONS.map(sec => {
-                            const Icon = sec.icon;
-                            const count = alertsBySection[sec.id];
+                    <TabsList className="flex flex-wrap gap-1 h-auto p-1">
+                        {STAGES.map(st => {
+                            const Icon = st.icon;
+                            const count = byStage[st.id].length;
                             return (
-                                <TabsTrigger
-                                    key={sec.id}
-                                    value={sec.id}
-                                    className="relative flex items-center gap-1.5 py-2"
-                                    data-testid={`tab-${sec.id}`}
-                                >
+                                <TabsTrigger key={st.id} value={st.id} className="flex items-center gap-1.5 py-2" data-testid={`tab-${st.id}`}>
                                     <Icon className="w-4 h-4" />
-                                    <span className="text-xs md:text-sm">{sec.label}</span>
+                                    <span className="text-xs md:text-sm">{st.label}</span>
                                     {count > 0 && (
-                                        <Badge className="ml-1 bg-amber-500 text-black h-5 min-w-5 px-1 text-[10px]" data-testid={`alert-${sec.id}`}>
-                                            {count}
-                                        </Badge>
+                                        <Badge className="ml-1 bg-amber-500 text-black h-5 min-w-5 px-1 text-[10px]">{count}</Badge>
                                     )}
                                 </TabsTrigger>
                             );
                         })}
+                        {hasLegacy && (
+                            <TabsTrigger value="legacy" className="flex items-center gap-1.5 py-2" data-testid="tab-legacy">
+                                <RouteIcon className="w-4 h-4" />
+                                <span className="text-xs md:text-sm">Hoja de ruta (anterior)</span>
+                                {legacyPending > 0 && (
+                                    <Badge className="ml-1 bg-amber-500 text-black h-5 min-w-5 px-1 text-[10px]">{legacyPending}</Badge>
+                                )}
+                            </TabsTrigger>
+                        )}
                     </TabsList>
 
-                    {SECTIONS.map(sec => (
-                        <TabsContent key={sec.id} value={sec.id} className="mt-4" data-testid={`panel-${sec.id}`}>
-                            {bySection[sec.id].length === 0 ? (
+                    {STAGES.map(st => (
+                        <TabsContent key={st.id} value={st.id} className="mt-4" data-testid={`panel-${st.id}`}>
+                            {byStage[st.id].length === 0 ? (
                                 <div className="text-center py-12 text-muted-foreground text-sm">
-                                    Sin servicios asignados en <b>{sec.label}</b>
+                                    Sin vehículos en <b>{st.label}</b>
                                 </div>
                             ) : (
                                 <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {bySection[sec.id].map(({ order, slot }) => (
-                                        <SlotCard
-                                            key={slot.id}
-                                            slot={slot}
-                                            order={order}
-                                            onStart={handleStart}
+                                    {byStage[st.id].map(o => (
+                                        <InstallCard
+                                            key={o.id}
+                                            order={o}
+                                            userId={user?.id}
+                                            onStart={handleStartInstall}
                                             onFinish={openFinish}
                                             processing={processing}
                                         />
@@ -409,6 +549,28 @@ export const TechnicianView = () => {
                             )}
                         </TabsContent>
                     ))}
+
+                    {hasLegacy && (
+                        <TabsContent value="legacy" className="mt-4 space-y-6" data-testid="panel-legacy">
+                            {SECTIONS.filter(sec => bySection[sec.id].length > 0).map(sec => (
+                                <div key={sec.id} className="space-y-2">
+                                    <h3 className="text-sm font-medium flex items-center gap-2"><sec.icon className="w-4 h-4" /> {sec.label}</h3>
+                                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {bySection[sec.id].map(({ order, slot }) => (
+                                            <SlotCard
+                                                key={slot.id}
+                                                slot={slot}
+                                                order={order}
+                                                onStart={handleStart}
+                                                onFinish={openFinish}
+                                                processing={processing}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </TabsContent>
+                    )}
                 </Tabs>
             )}
 
@@ -421,7 +583,7 @@ export const TechnicianView = () => {
                             {finishing ? (
                                 <div className="pt-1 flex items-center gap-2 flex-wrap">
                                     <PlateBadge plate={finishing.order.plate} size="md" />
-                                    <Badge variant="outline">{finishing.slot.label}</Badge>
+                                    <Badge variant="outline">{finishing.slot ? finishing.slot.label : 'Instalación'}</Badge>
                                 </div>
                             ) : <span />}
                         </DialogDescription>

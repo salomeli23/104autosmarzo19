@@ -313,6 +313,8 @@ class OrderResponse(BaseModel):
     # Assignment data
     assigned_technician_id: Optional[str] = None
     assigned_technician_name: Optional[str] = None
+    assigned_technician_2_id: Optional[str] = None  # técnico de apoyo
+    assigned_technician_2_name: Optional[str] = None
     service_time_minutes: Optional[int] = None
     assigned_at: Optional[str] = None
     # Service data
@@ -409,7 +411,12 @@ class InspectionData(BaseModel):
 class AssignTechnician(BaseModel):
     order_id: str
     technician_id: str
-    service_time_minutes: int
+    service_time_minutes: Optional[int] = None
+
+
+class AssignTechnicians(BaseModel):
+    technician_ids: List[str]  # técnico principal y técnico de apoyo (1 o 2)
+    service_time_minutes: Optional[int] = None
 
 class TechnicianReport(BaseModel):
     order_id: str
@@ -1216,6 +1223,7 @@ async def get_orders(status: Optional[str] = None, date: Optional[str] = None, c
     if current_user["role"] == "tecnico":
         query["$or"] = [
             {"assigned_technician_id": current_user["id"]},
+            {"assigned_technician_2_id": current_user["id"]},
             {"route_slots.technician_id": current_user["id"]},
         ]
     
@@ -2257,73 +2265,108 @@ async def clear_pre_assignment(order_id: str, current_user: dict = Depends(requi
     return {"message": "Pre-asignación removida"}
 
 # Step 4: Assignment (Coordinator)
+# Flujo: Revisión 360° → asignar 2 técnicos → Corte (si lleva Polarizado/PPF/Ultrasecure) → Instalación.
+CUTTING_KEYWORDS = ["polarizado", "ppf", "ultrasecure", "nanooptik", "huperoptik", "black_ceramic",
+                    "ultraoptik", "ceramic_i3", "mixto", "micras", "sunroof", "matte", "brillante", "wrap"]
+
+
+def _order_needs_cutting(order: dict) -> bool:
+    """La orden pasa por Corte si tiene algún servicio de Polarizado, PPF o Ultrasecure."""
+    for svc in (order.get("services") or []):
+        if not isinstance(svc, dict):
+            continue
+        svc_id = (svc.get("service") or "").lower().replace(" ", "_")
+        svc_desc = (svc.get("description") or "").lower()
+        if any(kw in svc_id or kw in svc_desc for kw in CUTTING_KEYWORDS):
+            return True
+    return False
+
+
+async def _assign_technicians(order: dict, technician_ids: List[str], minutes: Optional[int], current_user: dict) -> dict:
+    ids = [t for t in dict.fromkeys(i.strip() for i in technician_ids if i and i.strip())]
+    if not 1 <= len(ids) <= 2:
+        raise HTTPException(status_code=400, detail="Asigna el técnico principal y, si aplica, el técnico de apoyo (máximo 2)")
+    status = order["status"]
+    if status == OrderStatus.INGRESADO.value:
+        raise HTTPException(status_code=400, detail="Primero completa la Revisión 360° del vehículo")
+    if status not in (OrderStatus.EN_REVISION.value, OrderStatus.EN_CORTE.value, OrderStatus.ASIGNADO.value):
+        raise HTTPException(status_code=400, detail=f"No se pueden cambiar los técnicos en estado {status}")
+    techs = []
+    for tid in ids:
+        tech = await db.users.find_one({"id": tid, "role": UserRole.TECNICO.value}, {"_id": 0})
+        if not tech:
+            raise HTTPException(status_code=404, detail="Técnico no encontrado")
+        techs.append(tech)
+
+    needs_cutting = _order_needs_cutting(order)
+    new_status = status
+    if status == OrderStatus.EN_REVISION.value:
+        new_status = OrderStatus.EN_CORTE.value if needs_cutting else OrderStatus.ASIGNADO.value
+    now = datetime.now(timezone.utc).isoformat()
+    second = techs[1] if len(techs) > 1 else None
+    update = {
+        "assigned_technician_id": techs[0]["id"],
+        "assigned_technician_name": techs[0]["name"],
+        "assigned_technician_2_id": second["id"] if second else None,
+        "assigned_technician_2_name": second["name"] if second else None,
+        # Corte de Piezas muestra el técnico pre-asignado
+        "pre_assigned_technician_id": techs[0]["id"],
+        "pre_assigned_technician_name": techs[0]["name"],
+        "service_time_minutes": minutes or order.get("service_time_minutes") or 60,
+        "assigned_at": order.get("assigned_at") or now,
+        "status": new_status,
+        "updated_at": now,
+    }
+    if new_status == OrderStatus.EN_CORTE.value and not order.get("cutting_status"):
+        update["cutting_status"] = "pendiente"
+    await db.orders.update_one({"id": order["id"]}, {"$set": update})
+
+    names = " y ".join(t["name"] for t in techs)
+    await log_order_history(
+        order["id"], "TECNICOS_ASIGNADOS", status, new_status,
+        current_user["id"], current_user["name"],
+        {"technicians": [t["name"] for t in techs], "next_step": "corte" if new_status == OrderStatus.EN_CORTE.value else "instalacion"},
+    )
+    if status == OrderStatus.EN_REVISION.value and new_status == OrderStatus.EN_CORTE.value:
+        await create_alert(
+            UserRole.CORTE.value, AlertType.NUEVO_CORTE,
+            "Nuevo vehículo para corte",
+            f"{order.get('plate')} · técnicos: {names}",
+            order["id"],
+        )
+    step = "Pasa a Corte; te avisaremos cuando esté listo para instalar" if new_status == OrderStatus.EN_CORTE.value \
+        else "Listo para instalación"
+    for t in techs:
+        await db.alerts.insert_one({
+            "id": str(uuid.uuid4()),
+            "recipient_id": t["id"],
+            "alert_type": AlertType.SERVICIO_ASIGNADO.value,
+            "title": "Nuevo servicio asignado",
+            "message": f"Vehículo {order.get('plate')} con {names}. {step}.",
+            "order_id": order["id"],
+            "read": False,
+            "created_at": now,
+        })
+    return {"message": "Técnicos asignados", "status": new_status, "needs_cutting": needs_cutting}
+
+
+@api_router.post("/orders/{order_id}/assign-technicians")
+async def assign_technicians(order_id: str, data: AssignTechnicians, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Asigna técnico principal y de apoyo. Si la orden lleva Polarizado/PPF/Ultrasecure pasa a Corte;
+    si no, queda lista para instalación."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    return await _assign_technicians(order, data.technician_ids, data.service_time_minutes, current_user)
+
+
 @api_router.post("/orders/assign")
 async def assign_technician(data: AssignTechnician, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
-    """Step 4: Assign technician with service time - Status: ASIGNADO"""
+    """Compatibilidad: asignar un solo técnico (mismo flujo que assign-technicians)."""
     order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    # Allow assignment from EN_REVISION (no cutting needed) or EN_CORTE with completed cutting
-    current_status = order["status"]
-    if current_status not in (OrderStatus.EN_REVISION.value, OrderStatus.EN_CORTE.value):
-        raise HTTPException(
-            status_code=400,
-            detail=f"La orden debe estar en Revisión 360° completada o Corte completado. Estado actual: {current_status}"
-        )
-    
-    # If order has cutting services, require cutting completion before assignment
-    cutting_keywords = ["polarizado", "ppf", "ultrasecure", "nanooptik", "huperoptik",
-                        "black_ceramic", "ultraoptik", "ceramic_i3", "matte", "brillante", "wrap"]
-    has_cutting_service = False
-    for svc in (order.get("services") or []):
-        svc_id = (svc.get("service") or "").lower().replace(" ", "_")
-        svc_desc = (svc.get("description") or "").lower()
-        if any(kw in svc_id or kw in svc_desc for kw in cutting_keywords):
-            has_cutting_service = True
-            break
-    if has_cutting_service and order.get("cutting_status") != "completado":
-        raise HTTPException(
-            status_code=400,
-            detail="Esta orden requiere completar el Corte de Piezas antes de asignar al técnico."
-        )
-    
-    technician = await db.users.find_one({"id": data.technician_id, "role": "tecnico"}, {"_id": 0})
-    if not technician:
-        raise HTTPException(status_code=404, detail="Técnico no encontrado")
-    
-    update_data = {
-        "assigned_technician_id": data.technician_id,
-        "assigned_technician_name": technician["name"],
-        "service_time_minutes": data.service_time_minutes,
-        "status": OrderStatus.ASIGNADO.value,
-        "assigned_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat()
-    }
-    
-    await db.orders.update_one({"id": data.order_id}, {"$set": update_data})
-    
-    # Log history
-    await log_order_history(
-        data.order_id, "TECNICO_ASIGNADO",
-        current_status, OrderStatus.ASIGNADO.value,
-        current_user["id"], current_user["name"],
-        {"technician_name": technician["name"], "service_time_minutes": data.service_time_minutes}
-    )
-    
-    # Alert technician
-    alert_doc = {
-        "id": str(uuid.uuid4()),
-        "recipient_id": data.technician_id,
-        "alert_type": AlertType.SERVICIO_ASIGNADO.value,
-        "title": "Nuevo servicio asignado",
-        "message": f"Vehículo {order['plate']} - Tiempo estimado: {data.service_time_minutes} min",
-        "order_id": data.order_id,
-        "read": False,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.alerts.insert_one(alert_doc)
-    
-    return {"message": "Técnico asignado exitosamente"}
+    return await _assign_technicians(order, [data.technician_id], data.service_time_minutes, current_user)
 
 # Step 5: Start service (Technician)
 @api_router.post("/orders/{order_id}/start-service")
@@ -2333,7 +2376,10 @@ async def start_service(order_id: str, current_user: dict = Depends(require_role
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     if order["status"] != OrderStatus.ASIGNADO.value:
-        raise HTTPException(status_code=400, detail="La orden debe estar en estado ASIGNADO")
+        raise HTTPException(status_code=400, detail="La orden debe estar lista para instalación")
+    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in (
+            order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+        raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
     
     update_data = {
         "status": OrderStatus.EN_PROCESO.value,
@@ -3099,9 +3145,9 @@ async def get_cutting_pending(current_user: dict = Depends(require_roles([UserRo
         "proteccion_ppf", "wrap", "polarizado", "3m", "crystalline", "mixto"
     ]
     
-    # Find orders that finished 360 inspection (en_revision) or are currently in cutting
+    # Corte recibe los vehículos cuando ya tienen técnicos asignados (estado en_corte)
     orders = await db.orders.find(
-        {"status": {"$in": ["en_revision", "en_corte"]}},
+        {"status": "en_corte"},
         {"_id": 0}
     ).to_list(100)
     
@@ -3140,15 +3186,10 @@ async def start_cutting(order_id: str, current_user: dict = Depends(require_role
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    if order.get("status") not in ("en_revision", "en_corte"):
+    if order.get("status") != "en_corte" or not order.get("assigned_technician_id"):
         raise HTTPException(
             status_code=400,
-            detail=f"La orden debe estar en Revisión 360° completada para iniciar corte. Estado actual: {order.get('status')}"
-        )
-    if not order.get("pre_assigned_technician_id") and not order.get("assigned_technician_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="Esta orden no tiene técnico asignado. Asígnela primero en 'Autos por Asignar'."
+            detail="Esta orden no tiene técnicos asignados. Asígnalos primero en 'Autos por Asignar'."
         )
     
     await db.orders.update_one(
@@ -3349,6 +3390,26 @@ async def complete_cutting(
         )
         inventory_deduction = (
             deduction_results[0] if len(deduction_results) == 1 else {"multi": deduction_results}
+        )
+    # Corte terminado → la orden queda lista para instalación con sus técnicos
+    if order.get("assigned_technician_id"):
+        now_inst = datetime.now(timezone.utc).isoformat()
+        await db.orders.update_one({"id": order_id}, {"$set": {"status": OrderStatus.ASIGNADO.value, "updated_at": now_inst}})
+        for tid in (order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+            if tid:
+                await db.alerts.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "recipient_id": tid,
+                    "alert_type": AlertType.CORTE_COMPLETADO.value,
+                    "title": "Listo para instalar",
+                    "message": f"Corte terminado: {order.get('plate')} - {order.get('brand')} {order.get('model')}",
+                    "order_id": order_id,
+                    "read": False,
+                    "created_at": now_inst,
+                })
+        await log_order_history(
+            order_id, "CORTE_COMPLETADO", "en_corte", OrderStatus.ASIGNADO.value,
+            current_user["id"], current_user.get("name", current_user["email"]), {},
         )
     await db.alerts.insert_one({
         "id": str(uuid.uuid4()),
