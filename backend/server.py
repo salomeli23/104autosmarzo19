@@ -30,6 +30,8 @@ from email_templates import (
     build_ingreso_html,
     build_invoice_html,
     qr_attachment,
+    qr_png_bytes,
+    appointment_qr_attachments,
     brand_attachments,
 )
 
@@ -1387,7 +1389,7 @@ async def send_notification(data: NotificationRequest, current_user: dict = Depe
                     "to": [email],
                     "subject": f"¡Tu cita está confirmada! #{order.get('order_code', '')} · PolarizadosYA!",
                     "html": html_content,
-                    "attachments": [qr_attachment(order.get('order_code', ''), cid="qr-code"), *brand_attachments()],
+                    "attachments": [*appointment_qr_attachments(order.get('order_code', ''), cid="qr-code"), *brand_attachments()],
                 }
                 email_result = await asyncio.to_thread(resend.Emails.send, params)
                 results["email"] = {"success": True, "email_id": email_result.get("id"), "sent_to": email}
@@ -1400,6 +1402,16 @@ async def send_notification(data: NotificationRequest, current_user: dict = Depe
             results["email"] = {"success": False, "error": "Servicio de email no configurado"}
     
     return {"message": "Notificación procesada", "results": results}
+
+@api_router.get("/public/qr/{code}.png")
+async def public_appointment_qr(code: str):
+    """Imagen del QR de una cita (enlace de respaldo en el correo). Solo codifica el código recibido."""
+    norm = (code or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9-]{4,20}", norm):
+        raise HTTPException(status_code=404, detail="Código inválido")
+    return FastAPIResponse(content=qr_png_bytes(norm), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
 
 @api_router.get("/notifications/whatsapp-url/{order_id}")
 async def get_whatsapp_url(order_id: str, current_user: dict = Depends(get_current_user)):
@@ -4682,7 +4694,7 @@ async def reschedule_appointment(
                 order["client_email"],
                 f"Cita reagendada · Nueva hora {new_scheduled_time} · #{order.get('order_code')} · PolarizadosYA!",
                 html,
-                [qr_attachment(order.get("order_code", ""), cid="qr-code"), *brand_attachments()],
+                [*appointment_qr_attachments(order.get("order_code", ""), cid="qr-code"), *brand_attachments()],
             )
         except Exception as e:
             logger.error(f"[reschedule-email] {e}")

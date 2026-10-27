@@ -13,6 +13,8 @@ from io import BytesIO
 from pathlib import Path
 from typing import List, Optional
 
+import os
+
 import qrcode
 
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -50,21 +52,43 @@ def brand_attachments() -> List[dict]:
 # QR helper
 # ============================================================
 def qr_png_bytes(code: str) -> bytes:
-    qr = qrcode.QRCode(version=1, box_size=8, border=2)
+    """QR negro sobre blanco con margen (zona de silencio): así lo leen todas las cámaras."""
+    qr = qrcode.QRCode(version=1, box_size=12, border=4,
+                       error_correction=qrcode.constants.ERROR_CORRECT_M)
     qr.add_data(code)
     qr.make(fit=True)
-    img = qr.make_image(fill_color="#ffffff", back_color="#000000")
+    img = qr.make_image(fill_color="#000000", back_color="#ffffff")
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
 
 
 def qr_attachment(code: str, cid: str = "qr-code"):
+    """QR embebido en el cuerpo del correo (cid:)."""
     return {
         "filename": "qr.png",
         "content": list(qr_png_bytes(code)),
         "content_id": cid,
     }
+
+
+def appointment_qr_attachments(code: str, cid: str = "qr-code") -> List[dict]:
+    """QR de la cita: embebido en el cuerpo y también como archivo adjunto visible."""
+    png = list(qr_png_bytes(code))
+    return [
+        {"filename": "qr.png", "content": png, "content_id": cid},
+        {"filename": f"QR_cita_{code}.png", "content": png},
+    ]
+
+
+def public_qr_url(code: str) -> Optional[str]:
+    """URL pública del QR (respaldo si el cliente de correo no muestra la imagen embebida)."""
+    base = (os.environ.get("PUBLIC_API_URL") or "").rstrip("/")
+    if not base and os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+        base = f"https://{os.environ['RAILWAY_PUBLIC_DOMAIN']}"
+    if not base or not code:
+        return None
+    return f"{base}/api/public/qr/{code}.png"
 
 
 def _fmt_money(v) -> str:
@@ -124,7 +148,7 @@ _BASE_CSS = """
   .total-row .total-val { color:#ffffff; font-size:26px; font-weight:900; letter-spacing:1px; }
   .note { color:#aaa; font-size:10px; line-height:1.4; }
   .qr-card { display:flex; gap:14px; align-items:center; }
-  .qr-img { width:110px; height:110px; background:#ffffff; border-radius:10px; padding:6px; }
+  .qr-img { width:200px; height:200px; background:#ffffff; border-radius:10px; padding:8px; }
   .qr-txt { flex:1; color:#ccc; font-size:12px; line-height:1.5; }
   .notes-list { margin:0; padding:0; }
   .note-item { display:flex; gap:10px; margin-bottom:10px; }
@@ -285,6 +309,10 @@ def build_appointment_confirmation_html(order: dict, qr_cid: str = "qr-code") ->
     total = float(order.get("negotiated_value") or order.get("final_value") or 0)
     services_first = (order.get("services") or [{}])[0]
     service_label = services_first.get("description") or services_first.get("service", "")
+    qr_url = public_qr_url(code)
+    qr_link_html = (
+        f"<br><a href='{qr_url}' style='color:#00e0d1;'>¿No ves el QR? Ábrelo aquí</a>" if qr_url else ""
+    )
 
     body = f"""
     <div class='card'>
@@ -323,14 +351,20 @@ def build_appointment_confirmation_html(order: dict, qr_cid: str = "qr-code") ->
       </div>
     </div>
 
-    <div class='card qr-card'>
-      <img src='cid:{qr_cid}' alt='QR' class='qr-img' />
-      <div class='qr-txt'>
-        <div style='display:flex;gap:6px;align-items:center;margin-bottom:6px;'>
-          <span style='font-size:16px;color:#00e0d1;'>🅰</span>
-          <b style='color:#fff;'>Presenta este código o el QR al llegar.</b>
-        </div>
-        <div>El check-in estará disponible a partir de las <b style='color:#00e0d1;'>{time_str}</b>.</div>
+    <div class='card' style='text-align:center;'>
+      <div class='lbl' style='margin-bottom:10px;'>QR de tu cita</div>
+      <table role='presentation' cellpadding='0' cellspacing='0' border='0' align='center' style='margin:0 auto;'>
+        <tr><td style='background:#ffffff;border-radius:12px;padding:10px;'>
+          <img src='cid:{qr_cid}' alt='QR de la cita {code}' width='220' height='220'
+               style='display:block;width:220px;height:220px;border:0;' />
+        </td></tr>
+      </table>
+      <div class='val val-lg' style='margin-top:10px;'>{code}</div>
+      <div class='qr-txt' style='margin-top:8px;'>
+        <b style='color:#fff;'>Presenta este QR o el código al llegar.</b><br>
+        El check-in estará disponible a partir de las <b style='color:#00e0d1;'>{time_str}</b>.<br>
+        También lo encuentras como archivo adjunto <b style='color:#fff;'>QR_cita_{code}.png</b>.
+        {qr_link_html}
       </div>
     </div>
     """
