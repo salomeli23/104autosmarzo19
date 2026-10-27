@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ordersAPI, inspectionsAPI } from '../lib/api';import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -22,6 +23,7 @@ const CONDITIONS = [
 ];
 
 export const Inspections = () => {
+    const [searchParams, setSearchParams] = useSearchParams();
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -60,6 +62,20 @@ export const Inspections = () => {
     useEffect(() => {
         fetchOrders();
     }, [fetchOrders]);
+
+    // Abrir directamente la revisión de la orden que llega por ?order=<id> (desde Vehículos)
+    const orderParam = searchParams.get('order');
+    useEffect(() => {
+        if (!orderParam || loading) return;
+        const target = orders.find(o => o.id === orderParam);
+        if (target) {
+            setSelectedOrder(target);
+            setDialogOpen(true);
+        } else {
+            toast.error('Esa orden ya no está pendiente de Revisión 360°');
+        }
+        setSearchParams({}, { replace: true });
+    }, [orderParam, loading, orders, setSearchParams]);
 
     const handleItemChange = (index, field, value) => {
         setInspectionItems(prev => {

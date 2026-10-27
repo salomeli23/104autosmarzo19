@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { vehiclesAPI, usersAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -71,6 +73,10 @@ const getPendingAlert = (vehicle) => {
 };
 
 export const Vehicles = () => {
+    const navigate = useNavigate();
+    const { user } = useAuth();
+    // Solo admin y asesor pueden guardar la Revisión 360°
+    const canDoInspection = ['admin', 'asesor'].includes(user?.role);
     const [view, setView] = useState('gestion'); // 'gestion' | 'ingresados'
     const [vehicles, setVehicles] = useState([]);
     const [technicians, setTechnicians] = useState([]);
@@ -379,6 +385,17 @@ export const Vehicles = () => {
                                         <AlertTriangle className="w-4 h-4 shrink-0" />
                                         {getPendingAlert(vehicle).label}
                                     </div>
+                                )}
+                                {getPendingAlert(vehicle)?.testId === 'missing-360' && canDoInspection && (
+                                    <Button
+                                        size="sm"
+                                        className="w-full mb-3 bg-amber-500 text-black hover:bg-amber-400"
+                                        onClick={() => navigate(`/inspections?order=${vehicle.id}`)}
+                                        data-testid={`do-360-btn-${vehicle.id}`}
+                                    >
+                                        <ClipboardCheck className="w-4 h-4 mr-2" />
+                                        Hacer Revisión 360°
+                                    </Button>
                                 )}
 
                                 <div className="space-y-2 pt-3 border-t">
