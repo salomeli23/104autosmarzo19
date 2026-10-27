@@ -372,6 +372,7 @@ class OrderResponse(BaseModel):
     # Asesor que realizó el check-in
     checkin_by_id: Optional[str] = None
     checkin_by_name: Optional[str] = None
+    signed_order_pdf_url: Optional[str] = None
     created_by_role: Optional[str] = None
     created_at: str
     updated_at: Optional[str] = None
@@ -390,6 +391,7 @@ class IngresoApproval(BaseModel):
     payment_method: Optional[str] = None  # 'efectivo' | 'tarjeta' | 'transferencia' | 'sin_pago' (solo postventa)
     requires_invoice: bool = False  # si True, se añadió IVA 19%
     discount_code: Optional[str] = None  # código de descuento opcional (solo si la orden no tiene uno)
+    order_pdf: Optional[str] = None  # PDF de la orden firmada por el cliente (data URI base64)
 
 class InspectionData(BaseModel):
     order_id: str
@@ -1819,6 +1821,22 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         "checkin_by_name": current_user["name"],
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
+
+    # Orden firmada (PDF): queda archivada con las fotos y el video de la orden
+    signed_pdf_bytes = _decode_signed_order_pdf(data.order_pdf)
+    if signed_pdf_bytes:
+        await db.order_documents.update_one(
+            {"order_id": data.order_id, "kind": "orden_firmada"},
+            {"$set": {
+                "order_id": data.order_id, "kind": "orden_firmada",
+                "data": BsonBinary(signed_pdf_bytes), "content_type": "application/pdf",
+                "size": len(signed_pdf_bytes), "uploaded_by": current_user["id"],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+        update_data["signed_order_pdf_url"] = f"/orders/{data.order_id}/signed-order-pdf"
+
     if disc_doc_ci:
         update_data.update({
             "discount_code": disc_doc_ci.get("code"),
@@ -1867,13 +1885,16 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
             order_after = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
             pdf_bytes = build_ingreso_receipt(order_after)
             attachments = [_pdf_attachment(f"recibo_ingreso_{order.get('order_code')}.pdf", pdf_bytes)]
+            if signed_pdf_bytes:
+                attachments.insert(0, _pdf_attachment(f"orden_firmada_{order.get('order_code')}.pdf", signed_pdf_bytes))
             attachments.extend(brand_attachments())
             front = order_after.get("profile_photo_url")
             front_att = _photo_attachment("foto_frontal.jpg", front) if front else None
             if front_att:
                 attachments.append(front_att)
             photo_count = 1 if front_att else 0
-            html = build_ingreso_html(order_after, pdf_attached=True, photo_count=photo_count)
+            html = build_ingreso_html(order_after, pdf_attached=True, photo_count=photo_count,
+                                      signed_order_attached=bool(signed_pdf_bytes))
             eid = await _send_email_with_attachments(
                 order["client_email"],
                 f"¡Recibo de ingreso! #{order.get('order_code')} · PolarizadosYA!",
@@ -1884,6 +1905,31 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
             logger.error(f"[ingreso-email] {e}")
 
     return {"message": "Ingreso aprobado exitosamente", "email_sent": email_sent}
+
+MAX_SIGNED_ORDER_PDF_BYTES = 5 * 1024 * 1024
+
+def _decode_signed_order_pdf(data_uri: Optional[str]) -> Optional[bytes]:
+    """Decodifica el PDF firmado (data URI o base64). Devuelve None si no es un PDF válido."""
+    if not data_uri:
+        return None
+    try:
+        b64 = data_uri.split(",", 1)[1] if data_uri.startswith("data:") else data_uri
+        raw = base64.b64decode(b64)
+    except Exception:
+        return None
+    if not raw.startswith(b"%PDF") or len(raw) > MAX_SIGNED_ORDER_PDF_BYTES:
+        return None
+    return raw
+
+
+@api_router.get("/orders/{order_id}/signed-order-pdf")
+async def get_signed_order_pdf(order_id: str, current_user: dict = Depends(get_current_user)):
+    """Descarga la orden firmada por el cliente en el check-in."""
+    doc = await db.order_documents.find_one({"order_id": order_id, "kind": "orden_firmada"}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Esta orden no tiene PDF firmado")
+    return FastAPIResponse(content=bytes(doc["data"]), media_type="application/pdf")
+
 
 # Step 3: Inspection 360
 @api_router.post("/orders/inspection")
@@ -1982,7 +2028,7 @@ async def get_inspected_vehicles(
         {"$project": {
             "_id": 0, "id": 1, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "year": 1,
             "color": 1, "client_name": 1, "client_phone": 1, "status": 1, "is_postventa": 1,
-            "checkin_by_name": 1,
+            "checkin_by_name": 1, "signed_order_pdf_url": 1,
             "inspection_at": 1, "inspection_notes": 1, "inspection_video_url": 1,
             "photos_count": {"$size": {"$ifNull": ["$inspection_photos", []]}},
         }},

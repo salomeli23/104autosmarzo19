@@ -11,7 +11,6 @@ import { ScrollArea } from '../components/ui/scroll-area';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { QRScanner } from '../components/QRScanner';
 import { QRDisplay } from '../components/QRDisplay';
-import { SignaturePad } from '../components/SignaturePad';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { formatCurrency, VEHICLE_PARTS, PPF_PARTS, CHECKIN_NOTICES } from '../lib/utils';
@@ -542,10 +541,6 @@ export const CheckIn = () => {
             toast.error('Ingresa el valor de al menos un servicio');
             return;
         }
-        if (!signature) {
-            toast.error('La firma del cliente es requerida');
-            return;
-        }
         if (!cedulaNumber) {
             toast.error('El número de cédula es requerido');
             return;
@@ -564,8 +559,9 @@ export const CheckIn = () => {
     };
 
     // Se ejecuta después de que el cliente confirma la orden y los avisos (2 veces)
-    const submitIngreso = async () => {
+    const submitIngreso = async (clientSignature) => {
         const total = calculateTotal();
+        setSignature(clientSignature);
         setLoading(true);
         try {
             const bk = calculateBreakdown();
@@ -602,11 +598,27 @@ export const CheckIn = () => {
                 };
             });
 
+            // PDF de la orden con la firma del cliente: se envía al correo y queda archivado
+            const pdfOrder = {
+                ...order,
+                services: servicesData,
+                negotiated_value: total,
+                client_id_number: cedulaNumber || order.client_id_number,
+                signature_url: clientSignature,
+            };
+            let orderPdf = null;
+            try {
+                orderPdf = await generateOrderPDF(pdfOrder, { download: false });
+            } catch (pdfErr) {
+                console.error('Error generando PDF:', pdfErr);
+            }
+
             await ordersAPI.approveIngreso({
                 order_id: order.id,
+                order_pdf: orderPdf,
                 services: servicesData,
                 final_value: grossFinalValue,
-                signature_url: signature,
+                signature_url: clientSignature,
                 cedula_number: cedulaNumber,
                 risk_agreement_accepted: riskAgreementAccepted,
                 profile_photo_url: profilePhoto,
@@ -617,17 +629,14 @@ export const CheckIn = () => {
 
             toast.success('Ingreso aprobado exitosamente');
 
-            // Auto-download Order PDF
-            try {
-                generateOrderPDF({
-                    ...order,
-                    services: servicesData,
-                    negotiated_value: total,
-                    client_id_number: cedulaNumber || order.client_id_number,
-                });
-                toast.success('Orden PDF descargada');
-            } catch (pdfErr) {
-                console.error('Error generando PDF:', pdfErr);
+            // Descargar también la orden firmada en este equipo
+            if (orderPdf) {
+                const link = document.createElement('a');
+                link.href = orderPdf;
+                link.download = `Orden_${order.order_code || 'pedido'}_${order.plate || ''}.pdf`;
+                link.click();
+                toast.success('Orden firmada descargada');
+            } else {
                 toast.error('No se pudo generar el PDF de la orden');
             }
 
@@ -1807,7 +1816,7 @@ export const CheckIn = () => {
                         <CardHeader>
                             <CardTitle className="font-heading text-lg flex items-center gap-2">
                                 <Pen className="w-5 h-5 text-primary" />
-                                Cédula y Firma
+                                Cédula del Cliente
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
@@ -1821,13 +1830,9 @@ export const CheckIn = () => {
                                     data-testid="cedula-input"
                                 />
                             </div>
-                            <div className="space-y-2">
-                                <Label>Firma del Cliente *</Label>
-                                <SignaturePad
-                                    onSave={(data) => setSignature(data)}
-                                    savedSignature={signature}
-                                />
-                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                El cliente firma al confirmar la orden, después de tocar "Aprobar Ingreso".
+                            </p>
 
                             {/* Advertencia de Garantía de Opacidad */}
                             <div
@@ -1943,7 +1948,9 @@ export const CheckIn = () => {
                                                 price: s.price,
                                                 parts: s.parts
                                             })),
-                                            negotiated_value: calculateTotal()
+                                            negotiated_value: calculateTotal(),
+                                            signature_url: signature,
+                                            client_id_number: cedulaNumber || order.client_id_number,
                                         });
                                         toast.success('PDF generado correctamente');
                                     } else {

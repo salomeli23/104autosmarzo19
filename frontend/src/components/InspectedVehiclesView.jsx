@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { OrderStatusBadge } from './OrderStatusBadge';
 import { toast } from 'sonner';
-import { Car, Search, User, Image as ImageIcon, Video, Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Car, Search, User, Image as ImageIcon, Video, Calendar, ChevronLeft, ChevronRight, X, FileText } from 'lucide-react';
 import { PostventaBadge } from './PostventaBadge';
 import { CheckinByTag } from './CheckinByTag';
 
@@ -27,6 +27,7 @@ export const InspectedVehiclesView = () => {
     const [selected, setSelected] = useState(null);
     const [photos, setPhotos] = useState([]);
     const [videoUrl, setVideoUrl] = useState(null);
+    const [openingPdf, setOpeningPdf] = useState(false);
     const [loadingMedia, setLoadingMedia] = useState(false);
     const [lightboxIndex, setLightboxIndex] = useState(null);
 
@@ -68,6 +69,22 @@ export const InspectedVehiclesView = () => {
             toast.error('No se pudieron cargar las fotos y el video');
         } finally {
             setLoadingMedia(false);
+        }
+    };
+
+    // Abre la orden firmada en una pestaña nueva
+    const openSignedPdf = async () => {
+        if (!selected) return;
+        setOpeningPdf(true);
+        try {
+            const res = await ordersAPI.getSignedOrderPdf(selected.id);
+            const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+            window.open(url, '_blank');
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+        } catch (e) {
+            toast.error('No se pudo abrir la orden firmada');
+        } finally {
+            setOpeningPdf(false);
         }
     };
 
@@ -153,6 +170,12 @@ export const InspectedVehiclesView = () => {
                                             <Video className="w-4 h-4" />
                                             {v.inspection_video_url ? 'Con video' : 'Sin video'}
                                         </span>
+                                        {v.signed_order_pdf_url && (
+                                            <span className="flex items-center gap-1 text-emerald-500">
+                                                <FileText className="w-4 h-4" />
+                                                Orden firmada
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             </CardContent>
@@ -184,6 +207,26 @@ export const InspectedVehiclesView = () => {
                                 </div>
                             ) : (
                                 <div className="space-y-5">
+                                    <div className="space-y-2">
+                                        <h3 className="font-heading flex items-center gap-2">
+                                            <FileText className="w-4 h-4 text-primary" /> Orden firmada
+                                        </h3>
+                                        {selected.signed_order_pdf_url ? (
+                                            <Button
+                                                variant="outline"
+                                                onClick={openSignedPdf}
+                                                disabled={openingPdf}
+                                                className="border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/10"
+                                                data-testid="open-signed-order-pdf"
+                                            >
+                                                <FileText className="w-4 h-4 mr-2" />
+                                                {openingPdf ? 'Abriendo...' : 'Ver orden firmada (PDF)'}
+                                            </Button>
+                                        ) : (
+                                            <p className="text-sm text-muted-foreground">Esta orden no tiene PDF firmado (check-in anterior a esta función).</p>
+                                        )}
+                                    </div>
+
                                     <div className="space-y-2">
                                         <h3 className="font-heading flex items-center gap-2">
                                             <Video className="w-4 h-4 text-primary" /> Video

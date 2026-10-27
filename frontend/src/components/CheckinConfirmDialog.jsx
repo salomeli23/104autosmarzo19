@@ -2,26 +2,29 @@ import React, { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { CHECKIN_NOTICES, formatCurrency } from '../lib/utils';
-import { AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { SignaturePad } from './SignaturePad';
+import { AlertTriangle, CheckCircle2, Pen } from 'lucide-react';
 
 const PAYMENT_LABELS = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', sin_pago: 'Sin pago' };
 
 /**
  * Antes de aprobar el ingreso muestra la orden y los avisos para confirmarlos con
- * el cliente. Pregunta dos veces.
+ * el cliente. Pregunta dos veces; en el segundo paso el cliente firma.
  * Props: open, onOpenChange(bool), order, services [{ serviceName, category, price, no_charge }],
- *        breakdown { extras, discountAmount, iva, total }, paymentMethod, requiresInvoice, onConfirm()
+ *        breakdown { extras, discountAmount, iva, total }, paymentMethod, requiresInvoice, onConfirm(signatureDataUrl)
  */
 export const CheckinConfirmDialog = ({
     open, onOpenChange, order, services = [], breakdown = {}, paymentMethod, requiresInvoice, onConfirm,
 }) => {
     const [step, setStep] = useState(1);
     const [accepted, setAccepted] = useState(false);
+    const [signature, setSignature] = useState(null);
 
     useEffect(() => {
         if (open) {
             setStep(1);
             setAccepted(false);
+            setSignature(null);
         }
     }, [open]);
 
@@ -119,6 +122,17 @@ export const CheckinConfirmDialog = ({
 
                         {noticesBlock}
 
+                        <div className="space-y-2" data-testid="checkin-confirm-signature">
+                            <p className="text-sm font-medium flex items-center gap-1.5">
+                                <Pen className="w-4 h-4 text-primary" />
+                                Firma del cliente *
+                            </p>
+                            <SignaturePad onSave={setSignature} height={160} />
+                            {!signature && (
+                                <p className="text-xs text-muted-foreground">El cliente debe firmar para aprobar el ingreso.</p>
+                            )}
+                        </div>
+
                         <div className="flex flex-col-reverse sm:flex-row gap-2">
                             <Button type="button" variant="outline" className="sm:flex-1" onClick={() => setStep(1)}>
                                 Volver
@@ -126,7 +140,8 @@ export const CheckinConfirmDialog = ({
                             <Button
                                 type="button"
                                 className="sm:flex-1 brand-glow"
-                                onClick={() => { onOpenChange(false); onConfirm(); }}
+                                disabled={!signature}
+                                onClick={() => { onOpenChange(false); onConfirm(signature); }}
                                 data-testid="checkin-confirm-final"
                             >
                                 <CheckCircle2 className="w-4 h-4 mr-2" />

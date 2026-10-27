@@ -1,7 +1,11 @@
 import jsPDF from 'jspdf';
 import { CHECKIN_NOTICES } from '../lib/utils';
 
-export const generateOrderPDF = async (order) => {
+/**
+ * Genera el PDF de la orden. Si order.signature_url existe, imprime la firma del cliente.
+ * options.download (por defecto true) descarga el archivo; siempre devuelve el PDF como data URI.
+ */
+export const generateOrderPDF = async (order, { download = true } = {}) => {
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
     const margin = 15;
@@ -283,6 +287,13 @@ export const generateOrderPDF = async (order) => {
     doc.setFontSize(9);
     
     // Client signature
+    if (order.signature_url) {
+        try {
+            doc.addImage(order.signature_url, 'PNG', margin + 19, yPos - 5, 32, 16);
+        } catch (e) {
+            console.error('No se pudo imprimir la firma en el PDF:', e);
+        }
+    }
     doc.line(margin, yPos + 12, margin + 70, yPos + 12);
     doc.text('Firma del Cliente', margin + 20, yPos + 17);
     doc.text(`Cedula: ${order.client_id_number || '________________'}`, margin, yPos + 23);
@@ -305,9 +316,11 @@ export const generateOrderPDF = async (order) => {
     doc.text('POLARIZADOS MANAGER - Documento generado automaticamente', pageWidth / 2, footerY, { align: 'center' });
 
     // Save the PDF
-    doc.save(`Orden_${order.order_code || 'pedido'}_${order.plate || ''}.pdf`);
-    
-    return true;
+    if (download) {
+        doc.save(`Orden_${order.order_code || 'pedido'}_${order.plate || ''}.pdf`);
+    }
+
+    return doc.output('datauristring');
 };
 
 export default generateOrderPDF;

@@ -353,7 +353,8 @@ def build_appointment_confirmation_html(order: dict, qr_cid: str = "qr-code") ->
 # ============================================================
 # 2) RECIBO DE INGRESO (Check-in)
 # ============================================================
-def build_ingreso_html(order: dict, pdf_attached: bool = True, photo_count: int = 0) -> str:
+def build_ingreso_html(order: dict, pdf_attached: bool = True, photo_count: int = 0,
+                       signed_order_attached: bool = False) -> str:
     code = order.get("order_code", "")
     date_str = _fmt_date(order.get("date", ""))
     time_str = order.get("scheduled_time", "")
@@ -413,8 +414,10 @@ def build_ingreso_html(order: dict, pdf_attached: bool = True, photo_count: int 
     """
 
     attachments_note = ""
-    if pdf_attached or photo_count:
+    if pdf_attached or photo_count or signed_order_attached:
         parts = []
+        if signed_order_attached:
+            parts.append("📝 <b>Orden de pedido firmada</b> (PDF)")
         if pdf_attached:
             parts.append("📄 <b>Recibo firmado</b> (PDF)")
         if photo_count:
