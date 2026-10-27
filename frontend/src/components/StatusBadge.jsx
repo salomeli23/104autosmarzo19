@@ -1,6 +1,6 @@
 import React from 'react';
 import { cn } from '../lib/utils';
-import { STATUS_LABELS } from '../lib/utils';
+import { STATUS_LABELS, ORDER_STATUS_LABELS, ORDER_STATUS_COLORS } from '../lib/utils';
 
 const statusStyles = {
     agendado: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
@@ -12,8 +12,8 @@ const statusStyles = {
 };
 
 export const StatusBadge = ({ status, className }) => {
-    const label = STATUS_LABELS[status] || status;
-    const style = statusStyles[status] || statusStyles.pending;
+    const label = STATUS_LABELS[status] || ORDER_STATUS_LABELS[status] || status;
+    const style = statusStyles[status] || ORDER_STATUS_COLORS[status] || statusStyles.pending;
 
     return (
         <span

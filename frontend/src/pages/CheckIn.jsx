@@ -1891,7 +1891,7 @@ export const CheckIn = () => {
                             <h2 className="font-heading text-2xl">¡Ingreso y Revisión 360° Completados!</h2>
                             <p className="text-muted-foreground">
                                 El vehículo está listo para Corte / Asignación. La orden quedó en estado
-                                <strong> En Revisión</strong>.
+                                <strong> Técnico por Asignar</strong>.
                             </p>
 
                             {/* Enviar fotos por email al cliente */}

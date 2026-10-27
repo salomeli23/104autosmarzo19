@@ -88,7 +88,7 @@ export const SERVICE_LABELS = {
 export const ORDER_STATUS_LABELS = {
     agendado: 'Agendado',
     ingresado: 'Ingresado',
-    en_revision: 'En Revisión',
+    en_revision: 'Técnico por Asignar',
     en_corte: 'En Corte',
     asignado: 'Asignado',
     en_proceso: 'En Proceso',
@@ -226,7 +226,7 @@ export const COLORS = ['Blanco', 'Negro', 'Gris', 'Plata', 'Rojo', 'Azul', 'Verd
 export const STATUS_LABELS = {
     agendado: 'Agendado',
     en_proceso: 'En Proceso',
-    en_revision: 'En Revisión',
+    en_revision: 'Técnico por Asignar',
     terminado: 'Terminado',
     pending: 'Pendiente',
     approved: 'Aprobado',

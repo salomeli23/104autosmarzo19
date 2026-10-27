@@ -1700,7 +1700,7 @@ async def checkin_order(data: CheckInRequest, current_user: dict = Depends(requi
     if order["status"] != OrderStatus.AGENDADO.value:
         status_labels = {
             "ingresado": "Aprobada (lista para Revisión 360°)",
-            "en_revision": "En Revisión 360°",
+            "en_revision": "Revisión 360° lista · Técnico por asignar",
             "en_corte": "En Corte de Piezas",
             "asignado": "Asignada a Técnico",
             "en_proceso": "Servicio en proceso",

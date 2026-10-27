@@ -1,6 +1,6 @@
 import React from 'react';
 import { cn } from '../lib/utils';
-import { VEHICLE_STATUS_LABELS } from '../lib/utils';
+import { VEHICLE_STATUS_LABELS, ORDER_STATUS_LABELS, ORDER_STATUS_COLORS } from '../lib/utils';
 
 const statusStyles = {
     agendado: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
@@ -13,8 +13,9 @@ const statusStyles = {
 export const VehicleStatusBadge = ({ status, className }) => {
     if (!status) return null;
     
-    const label = VEHICLE_STATUS_LABELS[status] || status;
-    const style = statusStyles[status] || 'bg-gray-500/10 text-gray-500 border-gray-500/20';
+    // Los vehículos traen el estado de su orden: usar esas etiquetas si no es un estado propio
+    const label = VEHICLE_STATUS_LABELS[status] || ORDER_STATUS_LABELS[status] || status;
+    const style = statusStyles[status] || ORDER_STATUS_COLORS[status] || 'bg-gray-500/10 text-gray-500 border-gray-500/20';
 
     return (
         <span

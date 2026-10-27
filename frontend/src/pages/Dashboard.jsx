@@ -226,7 +226,7 @@ export const Dashboard = () => {
                         {[
                             { status: 'agendado', label: 'Agendado', count: stats?.agendados || 0 },
                             { status: 'en_proceso', label: 'En Proceso', count: stats?.en_proceso || 0 },
-                            { status: 'en_revision', label: 'En Revisión', count: stats?.en_revision || 0 },
+                            { status: 'en_revision', label: 'Técnico por Asignar', count: stats?.en_revision || 0 },
                             { status: 'terminado_pagado', label: 'Terminado', count: stats?.terminado_pagado || 0 },
                         ].map((item) => (
                             <div 
