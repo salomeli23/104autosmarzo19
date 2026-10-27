@@ -1965,7 +1965,7 @@ async def get_inspected_vehicles(
         {"$limit": 500},
         {"$project": {
             "_id": 0, "id": 1, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "year": 1,
-            "color": 1, "client_name": 1, "client_phone": 1, "status": 1,
+            "color": 1, "client_name": 1, "client_phone": 1, "status": 1, "is_postventa": 1,
             "inspection_at": 1, "inspection_notes": 1, "inspection_video_url": 1,
             "photos_count": {"$size": {"$ifNull": ["$inspection_photos", []]}},
         }},

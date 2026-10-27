@@ -24,6 +24,7 @@ import {
     Clock, AlertTriangle, Timer, Shield, Package, Trash2, PlusCircle, Download, FileText
 } from 'lucide-react';
 import api from '../lib/api';
+import { PostventaBadge } from '../components/PostventaBadge';
 
 export const CheckIn = () => {
     const [step, setStep] = useState(1);
@@ -1084,7 +1085,10 @@ export const CheckIn = () => {
                                     <Car className="w-5 h-5 text-primary" />
                                     Datos de la Cita
                                 </CardTitle>
-                                <OrderStatusBadge status={order.status} />
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <PostventaBadge order={order} />
+                                    <OrderStatusBadge status={order.status} />
+                                </div>
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-4">

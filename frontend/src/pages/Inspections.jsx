@@ -14,6 +14,7 @@ import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { INSPECTION_AREAS } from '../lib/utils';
 import { toast } from 'sonner';
 import { Plus, ClipboardCheck, Car, AlertTriangle, Check, Camera, Image, Mail, Send, Video } from 'lucide-react';
+import { PostventaBadge } from '../components/PostventaBadge';
 
 const CONDITIONS = [
     { value: 'good', label: 'Bueno', color: 'text-blue-500' },
@@ -221,6 +222,7 @@ export const Inspections = () => {
                                                 <div className="flex-1">
                                                     <div className="flex items-center gap-2">
                                                         <p className="font-mono font-bold">{selectedOrder.plate}</p>
+                                                        <PostventaBadge order={selectedOrder} />
                                                         <OrderStatusBadge status={selectedOrder.status} />
                                                     </div>
                                                     <p className="text-sm text-muted-foreground">

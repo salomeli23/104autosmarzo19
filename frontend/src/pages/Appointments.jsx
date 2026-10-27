@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, CheckCircle, ArrowRight, AlertCircle, Users, Package, Trash2, PlusCircle, MessageCircle, Mail, Send, UserCog, CalendarClock, Lock } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { PostventaBadge } from '../components/PostventaBadge';
 
 const APPOINTMENT_TYPE_LABELS = { franja: 'Por franja', prioridad: 'Por prioridad', postventa: 'Postventa' };
 
@@ -1886,6 +1887,7 @@ export const Appointments = () => {
                                                                             </span>
                                                                         )}
                                                                         <PlateBadge plate={order.plate} size="md" />
+                                                                        <PostventaBadge order={order} />
                                                                         <p className="font-medium truncate">{order.client_name}</p>
                                                                         <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
                                                                             <QrCode className="w-3 h-3" />

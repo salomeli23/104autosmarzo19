@@ -8,6 +8,7 @@ import { CarAvatar } from '../components/CarAvatar';
 import { formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
 import { CheckCircle, AlertTriangle, LogOut, Loader2, Clock, DollarSign } from 'lucide-react';
+import { PostventaBadge } from '../components/PostventaBadge';
 
 export const AutosSalida = () => {
     const [orders, setOrders] = useState([]);
@@ -61,6 +62,7 @@ export const AutosSalida = () => {
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                             <PlateBadge plate={o.plate} size="md" />
+                            <PostventaBadge order={o} />
                             {hasBalance && (
                                 <Badge className="bg-red-500/20 text-red-500 border-red-500/40" data-testid={`falta-pago-${o.id}`}>
                                     <AlertTriangle className="w-3 h-3 mr-1" /> Falta por pago

@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { OrderStatusBadge } from './OrderStatusBadge';
 import { toast } from 'sonner';
 import { Car, Search, User, Image as ImageIcon, Video, Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { PostventaBadge } from './PostventaBadge';
 
 const formatDate = (iso) => {
     if (!iso) return '';
@@ -127,7 +128,10 @@ export const InspectedVehiclesView = () => {
                                             </p>
                                         </div>
                                     </div>
-                                    <OrderStatusBadge status={v.status} />
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <PostventaBadge order={v} />
+                                        <OrderStatusBadge status={v.status} />
+                                    </div>
                                 </div>
                                 <div className="space-y-1.5 pt-3 border-t text-sm">
                                     <div className="flex items-center gap-2">

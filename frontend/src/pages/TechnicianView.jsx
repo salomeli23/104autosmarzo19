@@ -11,6 +11,7 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { PlateBadge } from '../components/PlateBadge';
 import { CarAvatar } from '../components/CarAvatar';
 import { toast } from 'sonner';
+import { PostventaBadge } from '../components/PostventaBadge';
 import {
     Wrench, Play, CheckCircle, Clock, User, Phone,
     AlertTriangle, Timer, FileText, Scissors, Sparkles,
@@ -95,6 +96,7 @@ const SlotCard = ({ slot, order, onStart, onFinish, processing }) => {
                         <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                                 <PlateBadge plate={order.plate} size="md" />
+                                <PostventaBadge order={order} />
                                 <Badge variant="outline" className="text-xs">{slot.label}</Badge>
                             </div>
                             <p className="text-sm text-muted-foreground mt-1 truncate">

@@ -18,6 +18,7 @@ import { CarAvatar } from '../components/CarAvatar';
 import { ORDER_STATUS_LABELS as STATUS_LABELS, SERVICE_LABELS, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
 import { Plus, Wrench, Car, User, Clock, ArrowRight, Play, CheckCircle2 } from 'lucide-react';
+import { PostventaBadge } from '../components/PostventaBadge';
 
 const SERVICES = Object.entries(SERVICE_LABELS).map(([value, label]) => ({ value, label }));
 const STATUSES = [
@@ -325,8 +326,11 @@ export const ServiceOrders = () => {
                                                 </div>
 
                                                 {/* Plate */}
-                                                {order.plate && (
-                                                    <PlateBadge plate={order.plate} size="md" />
+                                                {(order.plate || order.is_postventa) && (
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        {order.plate && <PlateBadge plate={order.plate} size="md" />}
+                                                        <PostventaBadge order={order} />
+                                                    </div>
                                                 )}
 
                                                 {/* Vehicle */}

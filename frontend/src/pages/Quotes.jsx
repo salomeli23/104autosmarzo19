@@ -5,6 +5,7 @@ import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { formatCurrency, formatDateTime } from '../lib/utils';
 import { FileText, Car } from 'lucide-react';
+import { PostventaBadge } from '../components/PostventaBadge';
 
 export const Quotes = () => {
     const [orders, setOrders] = useState([]);
@@ -58,6 +59,7 @@ export const Quotes = () => {
                                         <div>
                                             <div className="flex items-center gap-2 mb-1">
                                                 <p className="font-mono font-bold">#{order.order_code}</p>
+                                                <PostventaBadge order={order} />
                                                 <OrderStatusBadge status={order.status} />
                                             </div>
                                             <p className="text-sm">{order.client_name}</p>

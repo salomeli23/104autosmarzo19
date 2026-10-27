@@ -11,6 +11,7 @@ import { VehicleStatusBadge } from '../components/VehicleStatusBadge';
 import { InspectedVehiclesView } from '../components/InspectedVehiclesView';
 import { toast } from 'sonner';
 import { Plus, Car, Search, User, Phone, Mail, UserPlus, Wrench, ClipboardCheck, AlertTriangle } from 'lucide-react';
+import { PostventaBadge } from '../components/PostventaBadge';
 
 // Lista de marcas y modelos
 const CAR_BRANDS = [
@@ -361,6 +362,7 @@ export const Vehicles = () => {
                                             <p className="text-sm text-muted-foreground">
                                                 {vehicle.brand} {vehicle.model} {vehicle.year}
                                             </p>
+                                            <PostventaBadge order={vehicle} className="mt-1" />
                                         </div>
                                     </div>
                                     <div className="flex flex-col items-end gap-1">

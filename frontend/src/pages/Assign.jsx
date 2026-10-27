@@ -37,6 +37,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { LiveTimer } from '../components/LiveTimer';
+import { PostventaBadge } from '../components/PostventaBadge';
 
 // Draggable Order Card Component
 const DraggableOrderCard = ({ order, onAssign, onDesist }) => {
@@ -89,6 +90,7 @@ const DraggableOrderCard = ({ order, onAssign, onDesist }) => {
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-lg">{order.plate}</span>
+                        <PostventaBadge order={order} />
                         <OrderStatusBadge status={order.status} />
                         {hasCuttingService && order.cutting_status === 'completado' && (
                             <Badge className="bg-green-500/20 text-green-400 text-xs">

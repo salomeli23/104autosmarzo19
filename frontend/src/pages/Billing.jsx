@@ -11,6 +11,7 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { CameraCapture } from '../components/CameraCapture';
 import { formatCurrency, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
+import { PostventaBadge } from '../components/PostventaBadge';
 import { 
     CreditCard, Car, User, Phone, DollarSign, 
     CheckCircle, Camera, Receipt, Truck, Tag
@@ -316,7 +317,10 @@ export const Billing = () => {
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <OrderStatusBadge status={order.status} />
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <PostventaBadge order={order} />
+                                                    <OrderStatusBadge status={order.status} />
+                                                </div>
                                             </div>
                                             
                                             <div className="space-y-2 mb-4">
@@ -375,7 +379,10 @@ export const Billing = () => {
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <OrderStatusBadge status={order.status} />
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <PostventaBadge order={order} />
+                                                    <OrderStatusBadge status={order.status} />
+                                                </div>
                                             </div>
                                             
                                             <div className="space-y-2 mb-4">
