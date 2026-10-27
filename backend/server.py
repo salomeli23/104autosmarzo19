@@ -32,6 +32,7 @@ from email_templates import (
     qr_attachment,
     qr_png_bytes,
     appointment_qr_attachments,
+    public_qr_url,
     brand_attachments,
 )
 
@@ -1328,6 +1329,8 @@ def generate_whatsapp_message(order: dict) -> str:
         parts = svc.get("parts", [])
         parts_text = f" ({', '.join(parts)})" if parts else ""
         services_text += f"• {svc_name}{parts_text}\n"
+    qr_url = public_qr_url(order.get("order_code", ""))
+    qr_line = f"\n🔳 Tu QR de la cita: {qr_url}" if qr_url else ""
     
     message = f"""🚗 *Polarizados Manager - Confirmación de Cita*
 
@@ -1343,15 +1346,93 @@ def generate_whatsapp_message(order: dict) -> str:
 {services_text}
 💰 *Total:* ${order.get('negotiated_value', 0):,.0f}
 
-📱 Presente este código al momento de ingresar.
+📱 Presente este código al momento de ingresar.{qr_line}
 ✅ El check-in estará disponible a partir de las {order.get('scheduled_time', 'hora indicada')}
 
 _Polarizados Manager - Servicio de Calidad_"""
     
     return message
 
+async def _log_notification(order_id: str, channel: str, to: str, success: bool, user: dict, error: str = None):
+    """Registra en la orden cada envío de la cita (correo) o apertura de WhatsApp."""
+    now = datetime.now(timezone.utc).isoformat()
+    entry = {"channel": channel, "to": to, "success": success, "at": now,
+             "by": user.get("name") or user.get("email"), "error": error}
+    update = {"$push": {"notifications_log": {"$each": [entry], "$slice": -20}}}
+    if success:
+        update["$set"] = {f"last_{channel}_at": now, f"last_{channel}_to": to}
+    await db.orders.update_one({"id": order_id}, update)
+
+
+@api_router.get("/notifications/appointments")
+async def list_appointment_notifications(
+    q: Optional[str] = None,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Citas agendadas para reenviar la notificación o corregir el contacto.
+    Sin búsqueda: citas de hoy en adelante. Con búsqueda: código, placa, cliente, teléfono o correo."""
+    query: Dict[str, Any] = {"status": OrderStatus.AGENDADO.value}
+    term = (q or "").strip()
+    if term:
+        rx = {"$regex": re.escape(term), "$options": "i"}
+        query["$or"] = [{"order_code": rx}, {"plate": rx}, {"client_name": rx},
+                        {"client_phone": rx}, {"client_email": rx}]
+    else:
+        query["date"] = {"$gte": get_colombia_time().strftime("%Y-%m-%d")}
+    fields = {"_id": 0, "id": 1, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "client_name": 1,
+              "client_phone": 1, "client_email": 1, "date": 1, "scheduled_time": 1, "time_slot": 1,
+              "status": 1, "is_postventa": 1, "notifications_log": 1,
+              "last_email_at": 1, "last_email_to": 1, "last_whatsapp_at": 1, "last_whatsapp_to": 1}
+    return await db.orders.find(query, fields).sort([("date", 1), ("scheduled_time", 1)]).to_list(300)
+
+
+class UpdateClientContact(BaseModel):
+    client_phone: Optional[str] = None
+    client_email: Optional[EmailStr] = None
+    reason: Optional[str] = None
+
+
+@api_router.patch("/orders/{order_id}/client-contact")
+async def update_client_contact(
+    order_id: str,
+    data: UpdateClientContact,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Corrige el teléfono y/o el correo del cliente en la cita."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    changes: Dict[str, Any] = {}
+    if data.client_phone is not None:
+        phone = data.client_phone.strip()
+        digits = "".join(ch for ch in phone if ch.isdigit())
+        if not 7 <= len(digits) <= 15:
+            raise HTTPException(status_code=400, detail="Teléfono inválido")
+        if phone != (order.get("client_phone") or ""):
+            changes["client_phone"] = phone
+    if data.client_email is not None:
+        email = str(data.client_email).strip().lower()
+        if email != (order.get("client_email") or "").lower():
+            changes["client_email"] = email
+    if not changes:
+        return {"message": "Sin cambios", "order": order}
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one({"id": order_id}, {"$set": {**changes, "updated_at": now}})
+    await log_order_history(
+        order_id, "CONTACTO_ACTUALIZADO",
+        order.get("status"), order.get("status"),
+        current_user["id"], current_user["name"],
+        {"reason": data.reason,
+         **{f"old_{k}": order.get(k) for k in changes},
+         **{f"new_{k}": v for k, v in changes.items()}},
+    )
+    updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    return {"message": "Contacto actualizado", "order": updated}
+
+
 @api_router.post("/notifications/send")
-async def send_notification(data: NotificationRequest, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR]))):
+async def send_notification(data: NotificationRequest, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))):
     """Send appointment notification via WhatsApp and/or Email"""
     order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
     if not order:
@@ -1375,6 +1456,7 @@ async def send_notification(data: NotificationRequest, current_user: dict = Depe
             encoded_message = urllib.parse.quote(message)
             whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_message}"
             results["whatsapp"] = {"success": True, "url": whatsapp_url}
+            await _log_notification(order["id"], "whatsapp", clean_phone, True, current_user)
         else:
             results["whatsapp"] = {"success": False, "error": "Número de teléfono no proporcionado"}
     
@@ -1393,9 +1475,11 @@ async def send_notification(data: NotificationRequest, current_user: dict = Depe
                 }
                 email_result = await asyncio.to_thread(resend.Emails.send, params)
                 results["email"] = {"success": True, "email_id": email_result.get("id"), "sent_to": email}
+                await _log_notification(order["id"], "email", email, True, current_user)
             except Exception as e:
                 logger.error(f"Failed to send email: {str(e)}")
                 results["email"] = {"success": False, "error": str(e)}
+                await _log_notification(order["id"], "email", email, False, current_user, str(e)[:200])
         elif not email:
             results["email"] = {"success": False, "error": "Email no proporcionado"}
         elif not RESEND_API_KEY:

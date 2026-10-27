@@ -99,6 +99,9 @@ export const alertsAPI = {
 export const notificationsAPI = {
     send: (data) => api.post('/notifications/send', data),
     getWhatsAppUrl: (orderId) => api.get(`/notifications/whatsapp-url/${orderId}`),
+    // Sección Notificaciones de la Agenda
+    appointments: (q) => api.get('/notifications/appointments', { params: q ? { q } : {} }),
+    updateContact: (orderId, data) => api.patch(`/orders/${orderId}/client-contact`, data),
 };
 
 // Dashboard

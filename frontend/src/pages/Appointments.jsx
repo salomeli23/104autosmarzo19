@@ -26,6 +26,7 @@ import { PostventaBadge } from '../components/PostventaBadge';
 import { CheckinByTag } from '../components/CheckinByTag';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
+import { AppointmentNotifications } from '../components/AppointmentNotifications';
 
 const APPOINTMENT_TYPE_LABELS = { franja: 'Por franja', prioridad: 'Por prioridad', postventa: 'Postventa' };
 
@@ -1942,6 +1943,9 @@ export const Appointments = () => {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Notificaciones: reenviar correo/WhatsApp y corregir contacto */}
+            <AppointmentNotifications />
 
             {/* Dialog Reasignar Cita */}
             <Dialog open={!!rescheduleOrder} onOpenChange={(v) => !v && closeReschedule()}>
