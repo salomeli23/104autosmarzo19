@@ -384,7 +384,7 @@ class IngresoApproval(BaseModel):
     cedula_number: str
     risk_agreement_accepted: bool = False
     profile_photo_url: Optional[str] = None  # foto frontal del vehículo (requerida en /checkin)
-    payment_method: Optional[str] = None  # 'efectivo' | 'tarjeta' | 'transferencia'
+    payment_method: Optional[str] = None  # 'efectivo' | 'tarjeta' | 'transferencia' | 'sin_pago' (solo postventa)
     requires_invoice: bool = False  # si True, se añadió IVA 19%
     discount_code: Optional[str] = None  # código de descuento opcional (solo si la orden no tiene uno)
 
@@ -1761,6 +1761,16 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         raise HTTPException(status_code=400, detail="El acuerdo de riesgo debe ser aceptado")
     if not data.profile_photo_url:
         raise HTTPException(status_code=400, detail="La foto frontal del vehículo es requerida")
+
+    # "Sin pago" solo se permite en servicios de postventa, y siempre vale 0
+    if any(svc.no_charge for svc in data.services):
+        if not order.get("is_postventa"):
+            raise HTTPException(status_code=400, detail="Solo los servicios de postventa pueden marcarse sin pago")
+        for svc in data.services:
+            if svc.no_charge:
+                svc.price = 0
+    if data.payment_method == "sin_pago" and not order.get("is_postventa"):
+        raise HTTPException(status_code=400, detail="Solo las órdenes de postventa pueden ir sin pago")
     
     # ===== Código de descuento en check-in =====
     # Si la orden ya tiene un código aplicado (desde agendamiento), no se puede aplicar otro.

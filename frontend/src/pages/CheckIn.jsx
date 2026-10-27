@@ -116,6 +116,7 @@ export const CheckIn = () => {
                 serviceName: s.description?.split(' - ')[1] || s.service,
                 category: s.description?.split(' - ')[0] || 'Servicio',
                 price: s.price || 0,
+                no_charge: !!s.no_charge,
                 parts: s.parts || [],
                 part_percentages: s.part_percentages || {},
                 extras: s.extras || [],
@@ -126,6 +127,10 @@ export const CheckIn = () => {
                 ppf_parts: s.ppf_parts || [],
             })) || [];
             setSelectedServices(initialServices);
+            // Postventa con todos los servicios sin pago: la forma de pago queda en "Sin pago"
+            if (orderRes.data.is_postventa && initialServices.length > 0 && initialServices.every(s => s.no_charge)) {
+                setPaymentMethod('sin_pago');
+            }
             // Precargar precios editables (sunroof) desde los extras que vienen del agendamiento
             const overrides = {};
             initialServices.forEach(s => {
@@ -243,6 +248,19 @@ export const CheckIn = () => {
     const handleServicePriceChange = (serviceId, price) => {
         setSelectedServices(prev => 
             prev.map(s => s.serviceId === serviceId ? { ...s, price: parseFloat(price) || 0 } : s)
+        );
+    };
+
+    // Solo postventa: marcar un servicio sin pago (valor 0)
+    const handleServiceNoChargeToggle = (serviceId, checked) => {
+        setSelectedServices(prev =>
+            prev.map(s => {
+                if (s.serviceId !== serviceId) return s;
+                // Guarda el valor anterior para devolverlo si se desmarca
+                return checked
+                    ? { ...s, no_charge: true, price: 0, price_before_no_charge: s.price }
+                    : { ...s, no_charge: false, price: s.price_before_no_charge ?? s.price };
+            })
         );
     };
 
@@ -553,7 +571,8 @@ export const CheckIn = () => {
                 ) : null;
                 return {
                     service: svc.serviceId,
-                    price: svc.price,
+                    price: svc.no_charge ? 0 : svc.price,
+                    no_charge: order.is_postventa ? !!svc.no_charge : null,
                     description: `${svc.category} - ${svc.serviceName}`,
                     parts: svc.parts || [],
                     part_percentages: svc.part_percentages || {},
@@ -1150,12 +1169,25 @@ export const CheckIn = () => {
                                                         <p className="text-xs text-muted-foreground">{svc.category}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
+                                                        {order?.is_postventa && (
+                                                            <label className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded border cursor-pointer whitespace-nowrap ${svc.no_charge ? 'bg-amber-500/15 border-amber-500/50 text-amber-500 font-medium' : 'border-input text-muted-foreground'}`}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={!!svc.no_charge}
+                                                                    onChange={(e) => handleServiceNoChargeToggle(svc.serviceId, e.target.checked)}
+                                                                    className="w-4 h-4 accent-amber-500"
+                                                                    data-testid={`checkin-nocharge-${svc.serviceId}`}
+                                                                />
+                                                                Sin pago
+                                                            </label>
+                                                        )}
                                                         <span className="text-sm">$</span>
                                                         <Input
                                                             type="number"
                                                             min="0"
-                                                            value={svc.price || ''}
+                                                            value={svc.no_charge ? 0 : (svc.price || '')}
                                                             onChange={(e) => handleServicePriceChange(svc.serviceId, e.target.value)}
+                                                            disabled={!!svc.no_charge}
                                                             className="w-28 h-8 text-right"
                                                             placeholder="Valor"
                                                         />
@@ -1500,11 +1532,13 @@ export const CheckIn = () => {
                             <div className="grid sm:grid-cols-2 gap-3">
                                 <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-2" data-testid="payment-method-block">
                                     <Label className="text-sm font-medium">Forma de pago *</Label>
-                                    <div className="grid grid-cols-3 gap-1">
+                                    <div className={`grid gap-1 ${order?.is_postventa ? 'grid-cols-2' : 'grid-cols-3'}`}>
                                         {[
                                             { value: 'efectivo', label: 'Efectivo' },
                                             { value: 'tarjeta', label: 'Tarjeta' },
                                             { value: 'transferencia', label: 'Transferencia' },
+                                            // "Sin pago" solo existe para postventa
+                                            ...(order?.is_postventa ? [{ value: 'sin_pago', label: 'Sin pago' }] : []),
                                         ].map(m => (
                                             <button
                                                 type="button"
