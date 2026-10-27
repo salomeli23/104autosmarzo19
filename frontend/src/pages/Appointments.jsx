@@ -46,6 +46,8 @@ export const Appointments = () => {
     
     // Services with individual prices
     const [selectedServices, setSelectedServices] = useState([]);
+    // Sunroof: siempre adicional, nunca dentro de un servicio (valor personalizable)
+    const [sunroof, setSunroof] = useState({ enabled: false, price: '' });
     // Servicios de una cita de postventa (tabla editable, el valor puede ser 0)
     const [postventaServices, setPostventaServices] = useState([]);
     
@@ -142,11 +144,8 @@ export const Appointments = () => {
         if (formData.appointment_type === 'postventa') {
             return postventaServices.reduce((sum, row) => sum + (row.no_charge ? 0 : (parseFloat(row.price) || 0)), 0);
         }
-        return selectedServices.reduce((sum, svc) => {
-            const base = svc.price || 0;
-            const sunroofExtra = (svc.parts || []).includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
-            return sum + base + sunroofExtra;
-        }, 0);
+        const servicesSum = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
+        return servicesSum + (sunroof.enabled ? (parseFloat(sunroof.price) || 0) : 0);
     };
 
     const handleDateSelect = (date) => {
@@ -227,7 +226,6 @@ export const Appointments = () => {
         { id: 'vidrio_trasero_copiloto', name: 'Vidrio Trasero Copiloto' },
         { id: 'trasero', name: 'Trasero' },
         { id: 'luneta', name: 'Luneta' },
-        { id: 'sunroof', name: 'Sunroof' },
         { id: 'custodias', name: 'Custodias' },
     ];
 
@@ -289,13 +287,6 @@ export const Appointments = () => {
                 const isAll = (s.parts || []).length === allIds.length;
                 return { ...s, parts: isAll ? [] : allIds };
             })
-        );
-    };
-
-    // Set custom Sunroof extra price for a service
-    const handleSunroofPriceChange = (serviceId, price) => {
-        setSelectedServices(prev =>
-            prev.map(s => s.serviceId === serviceId ? { ...s, sunroof_price: price } : s)
         );
     };
 
@@ -422,6 +413,7 @@ export const Appointments = () => {
         askedLookupsRef.current = new Set();
         setExistingMatch(null);
         setSelectedServices([]);
+        setSunroof({ enabled: false, price: '' });
         setPostventaServices([]);
         setCustomServiceName('');
         setCustomServicePrice('');
@@ -535,19 +527,23 @@ export const Appointments = () => {
                 };
             });
         }
-        const servicesData = selectedServices.map(svc => {
-            const parts = svc.parts || [];
-            const sunroofPrice = parts.includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
-            return {
-                service: svc.serviceId,
-                price: svc.price,
-                description: `${svc.category} - ${svc.serviceName}`,
-                parts,
-                extras: sunroofPrice > 0
-                    ? [{ id: 'sunroof', nombre: 'Sunroof (adicional)', price: sunroofPrice }]
-                    : [],
-            };
-        });
+        const servicesData = selectedServices.map(svc => ({
+            service: svc.serviceId,
+            price: svc.price,
+            description: `${svc.category} - ${svc.serviceName}`,
+            parts: svc.parts || [],
+            extras: [],
+        }));
+        // El sunroof va como línea propia (Check-in lo reconoce como adicional)
+        if (sunroof.enabled) {
+            servicesData.push({
+                service: 'sunroof_adicional',
+                price: parseFloat(sunroof.price) || 0,
+                description: 'Adicional - Sunroof',
+                parts: ['sunroof'],
+                extras: [],
+            });
+        }
         if (servicesData.length === 0 && formData.appointment_type === 'postventa') {
             return [{ service: 'postventa', description: `Postventa - ${formData.postventa_motivo.trim()}`, price: 0 }];
         }
@@ -584,6 +580,11 @@ export const Appointments = () => {
                 toast.error('Esta franja ya no tiene cupos disponibles');
                 return;
             }
+        }
+
+        if (!isPostventa && sunroof.enabled && (sunroof.price === '' || !(parseFloat(sunroof.price) >= 0))) {
+            toast.error('Ingresa el valor del sunroof adicional');
+            return;
         }
 
         if (!isPostventa && calculateTotal() <= 0) {
@@ -710,10 +711,10 @@ export const Appointments = () => {
                 rows: [
                     ...(type === 'postventa'
                         ? buildServicesData().map(svc => ({ label: svc.description.replace(/^Postventa - /, ''), value: svc.no_charge ? 'Sin pago' : formatCurrency(svc.price) }))
-                        : selectedServices.map(svc => {
-                            const sunroof = (svc.parts || []).includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
-                            return { label: svc.serviceName, value: formatCurrency((svc.price || 0) + sunroof) };
-                        })),
+                        : [
+                            ...selectedServices.map(svc => ({ label: svc.serviceName, value: formatCurrency(svc.price || 0) })),
+                            ...(sunroof.enabled ? [{ label: 'Sunroof (adicional)', value: formatCurrency(parseFloat(sunroof.price) || 0) }] : []),
+                        ]),
                     { label: `Descuento ${discountApplied?.code || ''}`, value: discountApplied ? `-${formatCurrency(discountApplied.discount_amount)}` : null },
                     { label: 'Total', value: formatCurrency(total), highlight: true },
                 ],
@@ -1410,24 +1411,6 @@ export const Appointments = () => {
                                                                                 );
                                                                             })}
                                                                         </div>
-                                                                        {selectedService?.parts?.includes('sunroof') && (
-                                                                            <div className="mt-3 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 space-y-1" data-testid={`sunroof-extra-${service.id}`}>
-                                                                                <Label className="text-xs text-amber-400 flex items-center gap-1">
-                                                                                    <DollarSign className="w-3 h-3" />
-                                                                                    Sunroof · costo adicional (personalizado)
-                                                                                </Label>
-                                                                                <Input
-                                                                                    type="number"
-                                                                                    min="0"
-                                                                                    value={selectedService?.sunroof_price || ''}
-                                                                                    onChange={(e) => handleSunroofPriceChange(service.id, e.target.value)}
-                                                                                    onClick={(e) => e.stopPropagation()}
-                                                                                    placeholder="Ingresa el valor extra por Sunroof"
-                                                                                    data-testid={`sunroof-price-${service.id}`}
-                                                                                    className="h-8"
-                                                                                />
-                                                                            </div>
-                                                                        )}
                                                                         {selectedService?.parts?.length > 0 && (
                                                                             <p className="text-xs text-cyan-400 mt-2">
                                                                                 {selectedService.parts.length} parte(s) seleccionada(s)
@@ -1533,6 +1516,12 @@ export const Appointments = () => {
                                                 </div>
                                             ))}
                                         </div>
+                                        {sunroof.enabled && (
+                                            <div className="flex justify-between text-sm text-amber-400" data-testid="summary-sunroof">
+                                                <span>+ Sunroof (adicional)</span>
+                                                <span className="font-mono">{formatCurrency(parseFloat(sunroof.price) || 0)}</span>
+                                            </div>
+                                        )}
                                         <div className="flex justify-between font-bold pt-2 border-t border-primary/30">
                                             <span>Total:</span>
                                             <span className="text-primary">{formatCurrency(calculateTotal())}</span>
@@ -1554,6 +1543,38 @@ export const Appointments = () => {
                                     </div>
                                 )}
                             </div>
+                            )}
+
+                            {/* Sunroof: siempre adicional, nunca dentro de un servicio */}
+                            {formData.appointment_type !== 'postventa' && (
+                                <div className={`p-3 rounded-lg border space-y-2 ${sunroof.enabled ? 'border-amber-500/50 bg-amber-500/10' : 'border-border bg-muted/30'}`} data-testid="appointment-sunroof-block">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={sunroof.enabled}
+                                            onChange={(e) => setSunroof(prev => ({ ...prev, enabled: e.target.checked }))}
+                                            className="w-4 h-4 accent-amber-500"
+                                            data-testid="appointment-sunroof-toggle"
+                                        />
+                                        <span className="text-sm font-medium">Sunroof (adicional)</span>
+                                        <span className="text-xs text-muted-foreground">· no está incluido en ningún servicio</span>
+                                    </label>
+                                    {sunroof.enabled && (
+                                        <div className="flex items-center gap-2">
+                                            <Label className="text-xs whitespace-nowrap">Valor *</Label>
+                                            <span className="text-sm text-muted-foreground">$</span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                value={sunroof.price}
+                                                onChange={(e) => setSunroof(prev => ({ ...prev, price: e.target.value }))}
+                                                placeholder="Valor del sunroof"
+                                                className="h-9 max-w-[200px] text-right font-mono"
+                                                data-testid="appointment-sunroof-price"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
                             )}
 
                             {/* Código de descuento */}
