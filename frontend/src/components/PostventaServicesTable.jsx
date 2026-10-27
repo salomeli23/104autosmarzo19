@@ -5,21 +5,26 @@ import { formatCurrency } from '../lib/utils';
 import { Plus, Trash2, Package } from 'lucide-react';
 
 let nextRowId = 1;
-export const newPostventaRow = () => ({ id: `pv-${nextRowId++}`, name: '', price: '0' });
+export const newPostventaRow = () => ({ id: `pv-${nextRowId++}`, name: '', price: '0', no_charge: false });
 
 /**
- * Tabla editable de servicios para una cita de postventa. El valor puede ser 0.
+ * Tabla editable de servicios para una cita de postventa. El valor puede ser 0 y
+ * cada servicio se puede marcar "Sin pago" (solo existe en postventa).
  * Props:
- *   rows: [{ id, name, price }]
+ *   rows: [{ id, name, price, no_charge }]
  *   onChange(rows)
  *   catalog: catálogo de servicios ({ categoria: { name, services: [{ id, name }] } }) para sugerencias
  */
 export const PostventaServicesTable = ({ rows, onChange, catalog = {} }) => {
     const suggestions = Object.values(catalog).flatMap(cat => (cat.services || []).map(s => s.name));
-    const total = rows.reduce((sum, r) => sum + (parseFloat(r.price) || 0), 0);
+    const total = rows.reduce((sum, r) => sum + (r.no_charge ? 0 : (parseFloat(r.price) || 0)), 0);
 
     const updateRow = (id, field, value) => {
         onChange(rows.map(r => (r.id === id ? { ...r, [field]: value } : r)));
+    };
+
+    const toggleNoCharge = (id, checked) => {
+        onChange(rows.map(r => (r.id === id ? { ...r, no_charge: checked, price: checked ? '0' : r.price } : r)));
     };
 
     return (
@@ -34,13 +39,14 @@ export const PostventaServicesTable = ({ rows, onChange, catalog = {} }) => {
                         <tr>
                             <th className="text-left font-medium px-3 py-2">Servicio</th>
                             <th className="text-right font-medium px-3 py-2 w-32 sm:w-40">Valor</th>
+                            <th className="text-center font-medium px-2 py-2 w-16">Sin pago</th>
                             <th className="w-10" aria-label="Quitar" />
                         </tr>
                     </thead>
                     <tbody>
                         {rows.length === 0 ? (
                             <tr>
-                                <td colSpan={3} className="px-3 py-6 text-center text-muted-foreground">
+                                <td colSpan={4} className="px-3 py-6 text-center text-muted-foreground">
                                     <Package className="w-6 h-6 mx-auto mb-1 opacity-50" />
                                     Agrega los servicios que se harán en esta postventa.
                                 </td>
@@ -66,6 +72,7 @@ export const PostventaServicesTable = ({ rows, onChange, catalog = {} }) => {
                                             inputMode="numeric"
                                             value={row.price}
                                             onChange={(e) => updateRow(row.id, 'price', e.target.value)}
+                                            disabled={row.no_charge}
                                             onBlur={(e) => {
                                                 if (e.target.value === '' || parseFloat(e.target.value) < 0) updateRow(row.id, 'price', '0');
                                             }}
@@ -73,6 +80,16 @@ export const PostventaServicesTable = ({ rows, onChange, catalog = {} }) => {
                                             data-testid={`postventa-row-price-${idx}`}
                                         />
                                     </div>
+                                </td>
+                                <td className="px-2 py-1.5 text-center">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!row.no_charge}
+                                        onChange={(e) => toggleNoCharge(row.id, e.target.checked)}
+                                        className="w-5 h-5 accent-primary cursor-pointer align-middle"
+                                        aria-label="Marcar servicio sin pago"
+                                        data-testid={`postventa-row-nocharge-${idx}`}
+                                    />
                                 </td>
                                 <td className="px-1 py-1.5 text-center">
                                     <Button
@@ -95,7 +112,7 @@ export const PostventaServicesTable = ({ rows, onChange, catalog = {} }) => {
                             <tr className="border-t bg-muted/30 font-bold">
                                 <td className="px-3 py-2">Total</td>
                                 <td className="px-3 py-2 text-right" data-testid="postventa-total">{formatCurrency(total)}</td>
-                                <td />
+                                <td colSpan={2} />
                             </tr>
                         </tfoot>
                     )}

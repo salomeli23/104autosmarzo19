@@ -243,6 +243,8 @@ class ServiceItem(BaseModel):
     ppf_parts: Optional[List[str]] = None  # ['Bomper', 'Capot', ...] (solo plan partes)
     # Extras aplicados a este servicio (id de service_extras y precio congelado al momento)
     extras: Optional[List[Dict[str, Any]]] = None  # [{id, nombre, price}]
+    # Solo en postventa: el servicio se marca sin pago (valor 0)
+    no_charge: Optional[bool] = None
 
 class OrderCreate(BaseModel):
     client_name: str
@@ -1036,6 +1038,14 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
             raise HTTPException(status_code=400, detail="PIN de confirmación requerido")
         if str(order.confirmation_pin).strip() != str(expected_pin).strip():
             raise HTTPException(status_code=400, detail="PIN de confirmación incorrecto")
+
+    # "Sin pago" solo se permite en servicios de postventa, y siempre vale 0
+    if any(s.no_charge for s in order.services):
+        if not order.is_postventa:
+            raise HTTPException(status_code=400, detail="Solo los servicios de postventa pueden marcarse sin pago")
+        for s in order.services:
+            if s.no_charge:
+                s.price = 0
     
     # Block duplicate: same plate + same date (excluding desistimiento and postventa)
     # Postventa/Garantía sí permite múltiples órdenes para misma placa+fecha si fuera necesario

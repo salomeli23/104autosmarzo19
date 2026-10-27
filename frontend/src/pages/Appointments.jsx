@@ -135,7 +135,7 @@ export const Appointments = () => {
     // Calculate total from selected services
     const calculateTotal = () => {
         if (formData.appointment_type === 'postventa') {
-            return postventaServices.reduce((sum, row) => sum + (parseFloat(row.price) || 0), 0);
+            return postventaServices.reduce((sum, row) => sum + (row.no_charge ? 0 : (parseFloat(row.price) || 0)), 0);
         }
         return selectedServices.reduce((sum, svc) => {
             const base = svc.price || 0;
@@ -525,7 +525,8 @@ export const Appointments = () => {
                 return {
                     service: match ? match.id : 'postventa',
                     description: `Postventa - ${name}`,
-                    price: parseFloat(row.price) || 0,
+                    price: row.no_charge ? 0 : (parseFloat(row.price) || 0),
+                    no_charge: !!row.no_charge,
                 };
             });
         }
@@ -703,7 +704,7 @@ export const Appointments = () => {
                 title: 'Servicios',
                 rows: [
                     ...(type === 'postventa'
-                        ? buildServicesData().map(svc => ({ label: svc.description.replace(/^Postventa - /, ''), value: formatCurrency(svc.price) }))
+                        ? buildServicesData().map(svc => ({ label: svc.description.replace(/^Postventa - /, ''), value: svc.no_charge ? 'Sin pago' : formatCurrency(svc.price) }))
                         : selectedServices.map(svc => {
                             const sunroof = (svc.parts || []).includes('sunroof') ? (parseFloat(svc.sunroof_price) || 0) : 0;
                             return { label: svc.serviceName, value: formatCurrency((svc.price || 0) + sunroof) };
@@ -1274,7 +1275,7 @@ export const Appointments = () => {
                                     Servicios de Postventa
                                 </h3>
                                 <p className="text-sm text-muted-foreground -mt-2">
-                                    Agrega los servicios que se harán. El valor puede ser $0 (por ejemplo, una garantía).
+                                    Agrega los servicios que se harán. El valor puede ser $0, y puedes marcar &quot;Sin pago&quot; los que no se cobran.
                                 </p>
                                 <PostventaServicesTable
                                     rows={postventaServices}
