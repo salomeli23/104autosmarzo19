@@ -27,6 +27,9 @@ import { PostventaBadge } from '../components/PostventaBadge';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 import { CheckinConfirmDialog } from '../components/CheckinConfirmDialog';
 
+// En celulares y tabletas se abre primero el escáner de QR con la cámara
+const PREFERS_SCAN = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+
 export const CheckIn = () => {
     const [step, setStep] = useState(1);
     const [orderCode, setOrderCode] = useState('');
@@ -91,6 +94,8 @@ export const CheckIn = () => {
 
     // Handle QR scan result
     const handleQRScan = async (scannedCode) => {
+        if (!scannedCode) return;
+        toast.success(`QR leído: ${scannedCode}`);
         setOrderCode(scannedCode);
         await searchOrder(scannedCode);
     };
@@ -1036,7 +1041,7 @@ export const CheckIn = () => {
 
                     {!waitingInfo && (
                         <>
-                            <Tabs defaultValue="code" className="w-full">
+                            <Tabs defaultValue={PREFERS_SCAN ? 'scan' : 'code'} className="w-full">
                                 <TabsList className="grid w-full grid-cols-2">
                                     <TabsTrigger value="scan" data-testid="scan-tab">
                                         <QrCode className="w-4 h-4 mr-2" />
@@ -1048,14 +1053,7 @@ export const CheckIn = () => {
                                     </TabsTrigger>
                                 </TabsList>
                                 <TabsContent value="scan" className="mt-4">
-                                    <Card>
-                                        <CardHeader>
-                                            <CardTitle className="font-heading text-lg">Escanear Código QR</CardTitle>
-                                        </CardHeader>
-                                        <CardContent>
-                                            <QRScanner onScan={handleQRScan} />
-                                        </CardContent>
-                                    </Card>
+                                    <QRScanner onScan={handleQRScan} autoStart />
                                 </TabsContent>
                                 <TabsContent value="code" className="mt-4">
                                     <Card>

@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { ROLE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
 import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff, UserPlus } from 'lucide-react';
+import { DiscountCodesSection } from '../components/DiscountCodesSection';
 import { SedesSection, CarSeriesSection, ServiceExtrasSection, ServiceRoutesSection, TechnicianRolesSection } from '../components/SettingsSections';
 
 export const Settings = () => {
@@ -334,6 +335,8 @@ export const Settings = () => {
                     </div>
                 </CardContent>
             </Card>
+
+            <DiscountCodesSection />
 
             {/* Crear usuario */}
             <Card className="card-hover" data-testid="create-user-card">

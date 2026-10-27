@@ -451,6 +451,8 @@ class DiscountCodeCreate(BaseModel):
     active: bool = True
     admin_password: str
     notes: Optional[str] = None
+    kind: str = "codigo"  # 'cupon' | 'codigo'
+    max_uses: Optional[int] = None  # None = usos ilimitados
 
 class DiscountCodeUpdate(BaseModel):
     discount_type: Optional[str] = None
@@ -458,7 +460,15 @@ class DiscountCodeUpdate(BaseModel):
     expires_at: Optional[str] = None
     active: Optional[bool] = None
     notes: Optional[str] = None
+    kind: Optional[str] = None
+    max_uses: Optional[int] = None  # 0 = quitar el límite
     admin_password: str
+
+DISCOUNT_KINDS = ("cupon", "codigo")
+
+def _is_discount_exhausted(doc: dict) -> bool:
+    limit = (doc or {}).get("max_uses")
+    return bool(limit) and int((doc or {}).get("usage_count") or 0) >= int(limit)
 
 class DiscountAdminAuth(BaseModel):
     admin_password: str
@@ -502,6 +512,8 @@ async def _resolve_discount_code(code: str) -> Optional[dict]:
     if not doc.get("active", True):
         return None
     if _is_discount_expired(doc):
+        return None
+    if _is_discount_exhausted(doc):
         return None
     return doc
 
@@ -1096,7 +1108,7 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     if order.discount_code:
         disc_doc = await _resolve_discount_code(order.discount_code)
         if not disc_doc:
-            raise HTTPException(status_code=400, detail="Código de descuento inválido, inactivo o vencido")
+            raise HTTPException(status_code=400, detail="Código de descuento inválido, inactivo, vencido o agotado")
         disc_amount = _compute_discount_amount(
             order.negotiated_value, disc_doc.get("discount_type"), disc_doc.get("discount_value")
         )
@@ -1809,7 +1821,7 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
             )
         disc_doc_ci = await _resolve_discount_code(data.discount_code)
         if not disc_doc_ci:
-            raise HTTPException(status_code=400, detail="Código de descuento inválido, inactivo o vencido")
+            raise HTTPException(status_code=400, detail="Código de descuento inválido, inactivo, vencido o agotado")
         disc_amount_ci = _compute_discount_amount(
             final_value_raw, disc_doc_ci.get("discount_type"), disc_doc_ci.get("discount_value")
         )
@@ -4981,6 +4993,8 @@ def _public_discount_doc(doc: dict) -> dict:
         return doc
     out = {k: v for k, v in doc.items() if k != "_id"}
     out["expired"] = _is_discount_expired(doc)
+    out["exhausted"] = _is_discount_exhausted(doc)
+    out.setdefault("kind", "codigo")
     return out
 
 @api_router.post("/discount-codes/admin/verify")
@@ -5018,6 +5032,11 @@ async def create_discount_code(
             datetime.strptime(data.expires_at, "%Y-%m-%d")
         except Exception:
             raise HTTPException(status_code=400, detail="Formato de fecha inválido (use YYYY-MM-DD)")
+    kind = (data.kind or "codigo").lower()
+    if kind not in DISCOUNT_KINDS:
+        raise HTTPException(status_code=400, detail="kind debe ser 'cupon' o 'codigo'")
+    if data.max_uses is not None and data.max_uses < 1:
+        raise HTTPException(status_code=400, detail="El límite de usos debe ser al menos 1")
     existing = await db.discount_codes.find_one({"code": code})
     if existing:
         raise HTTPException(status_code=409, detail=f"El código {code} ya existe")
@@ -5030,6 +5049,8 @@ async def create_discount_code(
         "expires_at": data.expires_at,
         "active": bool(data.active),
         "notes": data.notes,
+        "kind": kind,
+        "max_uses": data.max_uses,
         "usage_count": 0,
         "last_used_at": None,
         "created_at": now,
@@ -5072,6 +5093,17 @@ async def update_discount_code(
         update["active"] = bool(data.active)
     if data.notes is not None:
         update["notes"] = data.notes
+    if data.kind is not None:
+        if data.kind.lower() not in DISCOUNT_KINDS:
+            raise HTTPException(status_code=400, detail="kind debe ser 'cupon' o 'codigo'")
+        update["kind"] = data.kind.lower()
+    if data.max_uses is not None:
+        if data.max_uses < 0:
+            raise HTTPException(status_code=400, detail="El límite de usos no puede ser negativo")
+        update["max_uses"] = data.max_uses or None
+    if data.discount_value is not None and update.get("discount_type", existing.get("discount_type")) == "percentage" \
+            and float(data.discount_value) > 100:
+        raise HTTPException(status_code=400, detail="El porcentaje no puede ser mayor a 100")
     await db.discount_codes.update_one({"id": code_id}, {"$set": update})
     doc = await db.discount_codes.find_one({"id": code_id}, {"_id": 0})
     return _public_discount_doc(doc)
@@ -5102,6 +5134,8 @@ async def validate_discount_code(
         raise HTTPException(status_code=400, detail="El código está inactivo")
     if _is_discount_expired(doc):
         raise HTTPException(status_code=400, detail="El código está vencido")
+    if _is_discount_exhausted(doc):
+        raise HTTPException(status_code=400, detail="El código ya alcanzó su límite de usos")
     amount = _compute_discount_amount(subtotal, doc.get("discount_type"), doc.get("discount_value"))
     return {
         "code": doc.get("code"),
