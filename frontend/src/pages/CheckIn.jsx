@@ -27,6 +27,14 @@ import { PostventaBadge } from '../components/PostventaBadge';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 import { CheckinConfirmDialog } from '../components/CheckinConfirmDialog';
 
+// El sunroof nunca va dentro de un servicio: es un adicional con valor personalizable
+const SUNROOF_ID = 'sunroof_adicional';
+const SERVICE_PARTS = VEHICLE_PARTS.filter(p => p.id !== 'sunroof');
+const isSunroofExtra = (e) => String(e?.trigger_part || '').toLowerCase() === 'sunroof'
+    || String(e?.nombre || '').toLowerCase().includes('sunroof')
+    || String(e?.id || '').toLowerCase().includes('sunroof');
+const isSunroofLine = (s) => s.service === SUNROOF_ID || String(s.service || '').toLowerCase() === 'sunroof';
+
 // En celulares y tabletas se abre primero el escáner de QR con la cámara
 const PREFERS_SCAN = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
@@ -58,8 +66,8 @@ export const CheckIn = () => {
     const [discountCodeInput, setDiscountCodeInput] = useState('');
     const [discountApplied, setDiscountApplied] = useState(null); // { code, discount_type, discount_value, discount_amount, new_total }
     const [validatingDiscount, setValidatingDiscount] = useState(false);
-    // Overrides de precio de extras (por id) para permitir editar el Sunroof en Check-in
-    const [extraPriceOverrides, setExtraPriceOverrides] = useState({});
+    // Sunroof adicional (fuera de los servicios): { enabled, price, percentage }
+    const [sunroof, setSunroof] = useState({ enabled: false, price: '', percentage: '' });
     // Input transitorio del selector predictivo de partes PPF: { serviceId: texto }
     const [ppfPartInputs, setPpfPartInputs] = useState({});
     
@@ -118,37 +126,52 @@ export const CheckIn = () => {
             setOrder(orderRes.data);
             setServiceCatalog(catalogRes.data);
             
+            // El sunroof se separa de los servicios: si venía como parte, extra o línea propia
+            // del agendamiento, pasa al bloque "Sunroof (adicional)" con su valor.
+            const orderServices = orderRes.data.services || [];
+            let sunroofFound = null;
+            orderServices.forEach(s => {
+                if (isSunroofLine(s)) {
+                    sunroofFound = { price: s.price, percentage: s.part_percentages?.sunroof };
+                    return;
+                }
+                const ex = (s.extras || []).find(isSunroofExtra);
+                if (ex || (s.parts || []).includes('sunroof')) {
+                    sunroofFound = {
+                        price: ex?.price ?? sunroofFound?.price,
+                        percentage: s.part_percentages?.sunroof || sunroofFound?.percentage,
+                    };
+                }
+            });
+            setSunroof(sunroofFound
+                ? { enabled: true, price: sunroofFound.price != null ? String(sunroofFound.price) : '', percentage: sunroofFound.percentage || '' }
+                : { enabled: false, price: '', percentage: '' });
+
             // Initialize services from order with prices, parts and extras
-            const initialServices = orderRes.data.services?.map(s => ({
+            const initialServices = orderServices.filter(s => !isSunroofLine(s)).map(s => {
+                const pct = { ...(s.part_percentages || {}) };
+                delete pct.sunroof;
+                return {
                 serviceId: s.service,
                 serviceName: s.description?.split(' - ')[1] || s.service,
                 category: s.description?.split(' - ')[0] || 'Servicio',
                 price: s.price || 0,
                 no_charge: !!s.no_charge,
-                parts: s.parts || [],
-                part_percentages: s.part_percentages || {},
-                extras: s.extras || [],
+                parts: (s.parts || []).filter(p => p !== 'sunroof'),
+                part_percentages: pct,
+                extras: (s.extras || []).filter(e => !isSunroofExtra(e)),
                 ppf_scope: s.ppf_scope || (s.service === 'ppf_full_body' ? 'full' : s.service === 'ppf_partes' ? 'partes' : null),
                 ppf_finish: s.ppf_finish || null,
                 ppf_color: s.ppf_color || '',
                 ppf_zones: s.ppf_zones || [],
                 ppf_parts: s.ppf_parts || [],
-            })) || [];
+                };
+            });
             setSelectedServices(initialServices);
             // Postventa con todos los servicios sin pago: la forma de pago queda en "Sin pago"
             if (orderRes.data.is_postventa && initialServices.length > 0 && initialServices.every(s => s.no_charge)) {
                 setPaymentMethod('sin_pago');
             }
-            // Precargar precios editables (sunroof) desde los extras que vienen del agendamiento
-            const overrides = {};
-            initialServices.forEach(s => {
-                (s.extras || []).forEach(ex => {
-                    const isSunroof = String(ex.nombre || '').toLowerCase().includes('sunroof')
-                        || String(ex.id || '').toLowerCase().includes('sunroof');
-                    if (isSunroof && ex.price != null) overrides[ex.id] = String(ex.price);
-                });
-            });
-            if (Object.keys(overrides).length) setExtraPriceOverrides(overrides);
             setCedulaNumber(orderRes.data.client_cedula || '');
             
             // Precargar descuento aplicado en el agendamiento (si existe)
@@ -336,45 +359,37 @@ export const CheckIn = () => {
         })();
     }, []);
 
-    // Detecta si algún servicio seleccionado es Ultrasecure
-    const hasUltrasecureService = () => selectedServices.some(svc => {
-        const id = (svc.serviceId || '').toLowerCase();
-        const name = (svc.serviceName || '').toLowerCase();
-        const cat = (svc.category || '').toLowerCase();
-        // 'polarizado': antes Polarizado y Ultrasecure eran una sola categoría; se conserva la regla del sunroof
-        return id.includes('ultrasecure') || name.includes('ultrasecure') || cat.includes('ultrasecure') || cat === 'polarizado';
-    });
-
-    // Devuelve los extras que aplican según las partes seleccionadas en los servicios.
-    // Regla: los extras cuyo trigger_part sea "sunroof" o cuyo nombre contenga "sunroof"
-    // SOLO aplican si el servicio es Ultrasecure.
+    // Extras que aplican según las partes seleccionadas en los servicios.
+    // El sunroof nunca se suma por aquí: va aparte como adicional (sunroofLine).
     const applicableExtras = () => {
-        const activeExtras = serviceExtras.filter(e => e.active);
         const triggeredIds = new Set();
         selectedServices.forEach(svc => {
             (svc.parts || []).forEach(p => triggeredIds.add(p));
         });
-        const ultrasecureOn = hasUltrasecureService();
-        return activeExtras.filter(e => {
-            if (!e.trigger_part || !triggeredIds.has(e.trigger_part)) return false;
-            const isSunroofExtra =
-                (e.trigger_part || '').toLowerCase() === 'sunroof' ||
-                (e.nombre || '').toLowerCase().includes('sunroof');
-            if (isSunroofExtra && !ultrasecureOn) return false;
-            return true;
-        }).map(e => {
-            // Aplicar override manual si existe (Sunroof editable en Check-in)
-            const overridden = extraPriceOverrides[e.id];
-            if (overridden !== undefined && overridden !== '') {
-                const num = parseFloat(overridden);
-                if (!isNaN(num) && num >= 0) return { ...e, price: num };
-            }
-            return e;
-        });
+        return serviceExtras.filter(e => e.active && !isSunroofExtra(e)
+            && e.trigger_part && triggeredIds.has(e.trigger_part));
     };
 
-    const handleExtraPriceChange = (extraId, value) => {
-        setExtraPriceOverrides(prev => ({ ...prev, [extraId]: value }));
+    // Precio sugerido del sunroof: el del extra configurado en /settings (si existe)
+    const defaultSunroofPrice = () => {
+        const ex = serviceExtras.find(e => e.active && isSunroofExtra(e));
+        return ex?.price != null ? String(ex.price) : '';
+    };
+
+    const sunroofPrice = () => (sunroof.enabled ? (parseFloat(sunroof.price) || 0) : 0);
+
+    // Línea de servicio propia del sunroof para la orden, el PDF y el correo
+    const sunroofLine = () => {
+        if (!sunroof.enabled) return null;
+        return {
+            service: SUNROOF_ID,
+            price: sunroofPrice(),
+            no_charge: null,
+            description: 'Adicional - Sunroof',
+            parts: ['sunroof'],
+            part_percentages: sunroof.percentage ? { sunroof: sunroof.percentage } : {},
+            extras: null,
+        };
     };
 
     // Detecta si algún servicio seleccionado es PPF
@@ -438,6 +453,7 @@ export const CheckIn = () => {
     const calculateBreakdown = () => {
         const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
         const extras = applicableExtras();
+        if (sunroof.enabled) extras.push({ id: SUNROOF_ID, nombre: 'Sunroof (adicional)', price: sunroofPrice() });
         const extrasSum = extras.reduce((s, e) => s + (e.price || 0), 0);
         const baseSurcharge = subtotal + extrasSum;
         const cardSurcharge = 0; // ← eliminado 5% tarjeta
@@ -470,10 +486,8 @@ export const CheckIn = () => {
             return;
         }
         const bk = (() => {
-            const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
-            const extras = applicableExtras();
-            const extrasSum = extras.reduce((s, e) => s + (e.price || 0), 0);
-            return subtotal + extrasSum;
+            const b = calculateBreakdown();
+            return b.subtotal + b.extrasSum;
         })();
         if (bk <= 0) {
             toast.error('Agrega al menos un servicio antes de validar el código');
@@ -546,6 +560,10 @@ export const CheckIn = () => {
             toast.error('Ingresa el valor de al menos un servicio');
             return;
         }
+        if (sunroof.enabled && (sunroof.price === '' || !(parseFloat(sunroof.price) >= 0))) {
+            toast.error('Ingresa el valor del sunroof adicional');
+            return;
+        }
         if (!cedulaNumber) {
             toast.error('El número de cédula es requerido');
             return;
@@ -602,6 +620,8 @@ export const CheckIn = () => {
                         : null,
                 };
             });
+            const sunroofData = sunroofLine();
+            if (sunroofData) servicesData.push(sunroofData);
 
             // PDF de la orden con la firma del cliente: se envía al correo y queda archivado
             const pdfOrder = {
@@ -675,6 +695,7 @@ export const CheckIn = () => {
         setOrderCode('');
         setOrder(null);
         setSelectedServices([]);
+        setSunroof({ enabled: false, price: '', percentage: '' });
         setSignature(null);
         setCedulaNumber('');
         setProfilePhoto(null);
@@ -1398,7 +1419,7 @@ export const CheckIn = () => {
                                                             )}:
                                                         </p>
                                                         <div className="space-y-2">
-                                                            {VEHICLE_PARTS.map((part) => {
+                                                            {SERVICE_PARTS.map((part) => {
                                                                 const isPartSelected = svc.parts?.includes(part.id);
                                                                 const showPct = serviceRequiresPercentage(svc.serviceId);
                                                                 const pctValue = svc.part_percentages?.[part.id] || (isPartSelected ? '' : 'N/A');
@@ -1560,6 +1581,55 @@ export const CheckIn = () => {
                                 </div>
                             </div>
 
+                            {/* Sunroof: siempre adicional, nunca dentro de un servicio */}
+                            <div className={`p-3 rounded-lg border space-y-3 ${sunroof.enabled ? 'border-amber-500/50 bg-amber-500/10' : 'border-border bg-muted/30'}`} data-testid="sunroof-block">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={sunroof.enabled}
+                                        onChange={(e) => {
+                                            const on = e.target.checked;
+                                            setSunroof(prev => ({ ...prev, enabled: on, price: on && prev.price === '' ? defaultSunroofPrice() : prev.price }));
+                                        }}
+                                        className="w-4 h-4 accent-amber-500"
+                                        data-testid="sunroof-toggle"
+                                    />
+                                    <span className="text-sm font-medium">Sunroof (adicional)</span>
+                                    <span className="text-xs text-muted-foreground">· no está incluido en ningún servicio</span>
+                                </label>
+                                {sunroof.enabled && (
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Valor del sunroof *</Label>
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-sm text-muted-foreground">$</span>
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    value={sunroof.price}
+                                                    onChange={(e) => setSunroof(prev => ({ ...prev, price: e.target.value }))}
+                                                    placeholder="Valor"
+                                                    className="text-right font-mono"
+                                                    data-testid="sunroof-price"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">% de polarizado</Label>
+                                            <select
+                                                value={sunroof.percentage}
+                                                onChange={(e) => setSunroof(prev => ({ ...prev, percentage: e.target.value }))}
+                                                className="w-full h-9 text-sm px-2 rounded-md border border-input bg-background"
+                                                data-testid="sunroof-percentage"
+                                            >
+                                                <option value="">Sin indicar</option>
+                                                {TINT_PERCENTAGES.map(p => <option key={p} value={p}>{p}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
                             {/* Forma de pago + Factura electrónica */}
                             <div className="grid sm:grid-cols-2 gap-3">
                                 <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-2" data-testid="payment-method-block">
@@ -1614,32 +1684,12 @@ export const CheckIn = () => {
                                             <span>Subtotal servicios</span>
                                             <span className="font-mono">{formatCurrency(bk.subtotal)}</span>
                                         </div>
-                                        {bk.extras.map(e => {
-                                            const isSunroof =
-                                                (e.trigger_part || '').toLowerCase() === 'sunroof' ||
-                                                (e.nombre || '').toLowerCase().includes('sunroof');
-                                            return (
-                                                <div key={e.id} className="flex justify-between items-center gap-2 text-sm text-green-300" data-testid={`total-extra-${e.id}`}>
-                                                    <span className="flex-1">+ {e.nombre}</span>
-                                                    {isSunroof ? (
-                                                        <div className="flex items-center gap-1">
-                                                            <span className="text-xs text-muted-foreground">$</span>
-                                                            <Input
-                                                                type="number"
-                                                                min="0"
-                                                                value={extraPriceOverrides[e.id] ?? e.price ?? ''}
-                                                                onChange={(ev) => handleExtraPriceChange(e.id, ev.target.value)}
-                                                                className="w-28 h-7 text-right font-mono"
-                                                                placeholder="0"
-                                                                data-testid={`extra-price-input-${e.id}`}
-                                                            />
-                                                        </div>
-                                                    ) : (
-                                                        <span className="font-mono">+{formatCurrency(e.price)}</span>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+                                        {bk.extras.map(e => (
+                                            <div key={e.id} className="flex justify-between items-center gap-2 text-sm text-green-300" data-testid={`total-extra-${e.id}`}>
+                                                <span className="flex-1">+ {e.nombre}</span>
+                                                <span className="font-mono">+{formatCurrency(e.price)}</span>
+                                            </div>
+                                        ))}
                                         {bk.cardSurcharge > 0 && (
                                             <div className="flex justify-between text-sm text-cyan-300">
                                                 <span>Recargo tarjeta (5%)</span>
@@ -1940,12 +1990,15 @@ export const CheckIn = () => {
                                     if (order) {
                                         generateOrderPDF({
                                             ...order,
-                                            services: selectedServices.map(s => ({
-                                                service: s.serviceId,
-                                                description: s.serviceName,
-                                                price: s.price,
-                                                parts: s.parts
-                                            })),
+                                            services: [
+                                                ...selectedServices.map(s => ({
+                                                    service: s.serviceId,
+                                                    description: s.serviceName,
+                                                    price: s.price,
+                                                    parts: s.parts
+                                                })),
+                                                ...(sunroofLine() ? [sunroofLine()] : []),
+                                            ],
                                             negotiated_value: calculateTotal(),
                                             signature_url: signature,
                                             client_id_number: cedulaNumber || order.client_id_number,
