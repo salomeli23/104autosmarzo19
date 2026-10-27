@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { formatCurrency, formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
-import { PackageCheck, PackageOpen, Truck, Wrench, Boxes, Plus, Edit, Trash2, AlertTriangle, RefreshCw, PackagePlus } from 'lucide-react';
+import { PackageCheck, PackageOpen, Truck, Wrench, Boxes, Plus, Edit, Trash2, AlertTriangle, RefreshCw, PackagePlus, Lock, FlaskConical } from 'lucide-react';
 
 const STATUS_META = {
     pendiente: { label: 'Por despachar', className: 'bg-amber-500/15 text-amber-500 border-amber-500/30' },
@@ -39,6 +39,12 @@ const suggestInventoryItem = (reqItem, inventory) => {
     return withStock.find(i => (i.nombre || '').toLowerCase() === name) || null;
 };
 
+// Servicio de la orden sugerido para un accesorio: la línea del mismo accesorio
+const suggestService = (reqItem, orderServices = []) => {
+    const name = (reqItem.name || '').toLowerCase();
+    return orderServices.find(s => (s || '').toLowerCase().includes(name)) || orderServices[0] || reqItem.name;
+};
+
 export const Accesorios = () => {
     const { user } = useAuth();
     const canManage = ['admin', 'accesorios'].includes(user?.role);
@@ -53,6 +59,10 @@ export const Accesorios = () => {
     const [dispatchReq, setDispatchReq] = useState(null);
     const [dispatchRows, setDispatchRows] = useState([]);
     const [dispatchNotes, setDispatchNotes] = useState('');
+    const [dispatchTech, setDispatchTech] = useState('');
+    const [dispatchPin, setDispatchPin] = useState('');
+    const [deliverPin, setDeliverPin] = useState('');
+    const [seeding, setSeeding] = useState(false);
     const [deliverReq, setDeliverReq] = useState(null);
     const [deliverTech, setDeliverTech] = useState('');
     const [deliverNotes, setDeliverNotes] = useState('');
@@ -101,24 +111,42 @@ export const Accesorios = () => {
     const openDispatch = (req) => {
         setDispatchReq(req);
         setDispatchNotes('');
+        setDispatchTech(req.assigned_technician_id || '');
+        setDispatchPin('');
         setDispatchRows(req.items.map(it => ({
             inventory_item_id: suggestInventoryItem(it, inventory)?.id || '',
             cantidad: String(it.cantidad || 1),
+            service_name: suggestService(it, req.order_services),
         })));
     };
 
     const updateDispatchRow = (idx, changes) => setDispatchRows(prev => prev.map((r, i) => (i === idx ? { ...r, ...changes } : r)));
 
     const handleDispatch = async () => {
-        const items = dispatchRows.map(r => ({ inventory_item_id: r.inventory_item_id || null, cantidad: parseInt(r.cantidad, 10) || 0 }));
+        const items = dispatchRows.map(r => ({
+            inventory_item_id: r.inventory_item_id || null,
+            cantidad: parseInt(r.cantidad, 10) || 0,
+            service_name: r.service_name || null,
+        }));
         if (items.some(i => i.cantidad <= 0)) {
             toast.error('La cantidad de cada accesorio debe ser mayor a 0');
             return;
         }
+        if (!dispatchTech) {
+            toast.error('Selecciona el técnico que recibe los accesorios');
+            return;
+        }
+        if (!dispatchPin.trim()) {
+            toast.error('Ingresa el PIN para confirmar el despacho');
+            return;
+        }
         setSaving(true);
         try {
-            await accessoryRequestsAPI.dispatch(dispatchReq.id, { items, notes: dispatchNotes.trim() || null });
-            toast.success(`Pedido ${dispatchReq.code} despachado`);
+            await accessoryRequestsAPI.dispatch(dispatchReq.id, {
+                items, technician_id: dispatchTech, pin: dispatchPin.trim(), notes: dispatchNotes.trim() || null,
+            });
+            const techName = technicians.find(t => t.id === dispatchTech)?.name;
+            toast.success(`Pedido ${dispatchReq.code} despachado a ${techName}`);
             setDispatchReq(null);
             fetchAll();
         } catch (e) {
@@ -133,6 +161,7 @@ export const Accesorios = () => {
         setDeliverReq(req);
         setDeliverTech(req.assigned_technician_id || '');
         setDeliverNotes('');
+        setDeliverPin('');
     };
 
     const handleDeliver = async () => {
@@ -140,9 +169,13 @@ export const Accesorios = () => {
             toast.error('Selecciona el técnico instalador');
             return;
         }
+        if (!deliverPin.trim()) {
+            toast.error('Ingresa el PIN para confirmar la entrega');
+            return;
+        }
         setSaving(true);
         try {
-            await accessoryRequestsAPI.deliver(deliverReq.id, { technician_id: deliverTech, notes: deliverNotes.trim() || null });
+            await accessoryRequestsAPI.deliver(deliverReq.id, { technician_id: deliverTech, pin: deliverPin.trim(), notes: deliverNotes.trim() || null });
             toast.success('Accesorios entregados al técnico');
             setDeliverReq(null);
             fetchAll();
@@ -238,6 +271,36 @@ export const Accesorios = () => {
         }
     };
 
+    const testCount = inventory.filter(i => i.is_test).length;
+
+    const seedTestInventory = async () => {
+        setSeeding(true);
+        try {
+            const res = await inventoryAPI.seedTestAccessories();
+            const n = res.data.created_count;
+            toast.success(n ? `Inventario de prueba creado: ${n} accesorios con 2 o 3 unidades` : 'Todos los accesorios ya tienen inventario');
+            fetchAll();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'No se pudo crear el inventario de prueba');
+        } finally {
+            setSeeding(false);
+        }
+    };
+
+    const removeTestInventory = async () => {
+        if (!window.confirm(`¿Quitar los ${testCount} accesorios del inventario de prueba?`)) return;
+        setSeeding(true);
+        try {
+            const res = await inventoryAPI.removeTestAccessories();
+            toast.success(`Se quitaron ${res.data.removed_count} accesorios de prueba`);
+            fetchAll();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'No se pudo quitar el inventario de prueba');
+        } finally {
+            setSeeding(false);
+        }
+    };
+
     const stats = [
         { label: 'Por despachar', value: counts.pendiente, icon: PackageOpen, color: 'text-amber-500' },
         { label: 'Por entregar al técnico', value: counts.despachado, icon: Truck, color: 'text-sky-500' },
@@ -315,9 +378,14 @@ export const Accesorios = () => {
 
                                         <ul className="space-y-1 text-sm">
                                             {req.items.map((it, idx) => (
-                                                <li key={idx} className="flex justify-between gap-2 p-2 rounded bg-muted/40">
-                                                    <span>{it.cantidad || 1} × {it.name}</span>
-                                                    {it.inventory_codigo && <span className="text-xs text-muted-foreground font-mono">{it.inventory_codigo}</span>}
+                                                <li key={idx} className="p-2 rounded bg-muted/40">
+                                                    <div className="flex justify-between gap-2">
+                                                        <span>{it.cantidad || 1} × {it.name}</span>
+                                                        {it.inventory_codigo && <span className="text-xs text-muted-foreground font-mono">{it.inventory_codigo}</span>}
+                                                    </div>
+                                                    {it.service_name && (
+                                                        <p className="text-xs text-muted-foreground">Para el servicio: <b className="text-foreground">{it.service_name}</b></p>
+                                                    )}
                                                 </li>
                                             ))}
                                         </ul>
@@ -338,7 +406,7 @@ export const Accesorios = () => {
                                         {canManage && req.status === 'pendiente' && (
                                             <Button className="w-full" onClick={() => openDispatch(req)} data-testid={`dispatch-btn-${req.code}`}>
                                                 <PackageOpen className="w-4 h-4 mr-2" />
-                                                Despachar pedido
+                                                Despachar al técnico
                                             </Button>
                                         )}
                                         {canManage && req.status === 'despachado' && (
@@ -356,7 +424,17 @@ export const Accesorios = () => {
 
                 <TabsContent value="inventario" className="space-y-4">
                     {canManage && (
-                        <div className="flex justify-end">
+                        <div className="flex flex-wrap justify-end gap-2">
+                            {testCount > 0 && (
+                                <Button variant="outline" className="text-red-500" onClick={removeTestInventory} disabled={seeding} data-testid="remove-test-inventory">
+                                    <Trash2 className="w-4 h-4 mr-2" />
+                                    Quitar inventario de prueba ({testCount})
+                                </Button>
+                            )}
+                            <Button variant="outline" onClick={seedTestInventory} disabled={seeding} data-testid="seed-test-inventory">
+                                <FlaskConical className="w-4 h-4 mr-2" />
+                                Cargar inventario de prueba
+                            </Button>
                             <Button onClick={openNewItem} data-testid="new-accessory-item">
                                 <Plus className="w-4 h-4 mr-2" />
                                 Nuevo accesorio
@@ -378,7 +456,10 @@ export const Accesorios = () => {
                                         <div className="flex justify-between gap-2">
                                             <div className="min-w-0">
                                                 <p className="font-medium truncate">{it.nombre}</p>
-                                                <p className="text-xs text-muted-foreground font-mono">{it.codigo}</p>
+                                                <p className="text-xs text-muted-foreground font-mono">
+                                                    {it.codigo}
+                                                    {it.is_test && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-fuchsia-500/15 text-fuchsia-400 font-sans">Prueba</span>}
+                                                </p>
                                                 {it.linked_service && (
                                                     <p className="text-xs text-muted-foreground">Catálogo: {catalogName(it.linked_service) || it.linked_service}</p>
                                                 )}
@@ -420,7 +501,7 @@ export const Accesorios = () => {
                 <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="dispatch-dialog">
                     <DialogHeader>
                         <DialogTitle className="font-heading text-xl">Despachar pedido {dispatchReq?.code}</DialogTitle>
-                        <DialogDescription>{dispatchReq?.plate} · {dispatchReq?.client_name}. Se descuenta del inventario de accesorios.</DialogDescription>
+                        <DialogDescription>{dispatchReq?.plate} · {dispatchReq?.client_name}. Se descuenta del inventario y se entrega al técnico.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         {dispatchReq?.items.map((it, idx) => {
@@ -430,6 +511,19 @@ export const Accesorios = () => {
                             return (
                                 <div key={idx} className="p-3 rounded-lg border space-y-2" data-testid={`dispatch-row-${idx}`}>
                                     <p className="font-medium text-sm">{it.name}</p>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Para el servicio</Label>
+                                        <select
+                                            value={row.service_name || ''}
+                                            onChange={(e) => updateDispatchRow(idx, { service_name: e.target.value })}
+                                            className={selectClass}
+                                            data-testid={`dispatch-service-select-${idx}`}
+                                        >
+                                            {[...new Set([...(dispatchReq.order_services || []), it.name])].map(sv => (
+                                                <option key={sv} value={sv}>{sv}</option>
+                                            ))}
+                                        </select>
+                                    </div>
                                     <div className="flex gap-2">
                                         <select
                                             value={row.inventory_item_id || ''}
@@ -459,8 +553,34 @@ export const Accesorios = () => {
                             );
                         })}
                         <div className="space-y-1">
+                            <Label>Técnico que recibe *</Label>
+                            <select value={dispatchTech} onChange={(e) => setDispatchTech(e.target.value)} className={selectClass} data-testid="dispatch-tech-select">
+                                <option value="">Seleccionar técnico...</option>
+                                {technicians.map(t => (
+                                    <option key={t.id} value={t.id}>
+                                        {t.name}{t.id === dispatchReq?.assigned_technician_id ? ' (asignado a la orden)' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                            {!dispatchReq?.assigned_technician_id && (
+                                <p className="text-xs text-muted-foreground">La orden aún no tiene técnico asignado.</p>
+                            )}
+                        </div>
+                        <div className="space-y-1">
                             <Label>Notas</Label>
                             <Textarea value={dispatchNotes} onChange={(e) => setDispatchNotes(e.target.value)} rows={2} placeholder="Opcional" />
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> PIN de despacho *</Label>
+                            <Input
+                                type="password"
+                                inputMode="numeric"
+                                autoComplete="off"
+                                value={dispatchPin}
+                                onChange={(e) => setDispatchPin(e.target.value)}
+                                placeholder="PIN para confirmar"
+                                data-testid="dispatch-pin"
+                            />
                         </div>
                         <div className="flex flex-col-reverse sm:flex-row gap-2">
                             <Button variant="outline" className="sm:flex-1" onClick={() => setDispatchReq(null)} disabled={saving}>Cancelar</Button>
@@ -500,6 +620,10 @@ export const Accesorios = () => {
                         <div className="space-y-1">
                             <Label>Notas</Label>
                             <Textarea value={deliverNotes} onChange={(e) => setDeliverNotes(e.target.value)} rows={2} placeholder="Opcional" />
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> PIN de despacho *</Label>
+                            <Input type="password" inputMode="numeric" autoComplete="off" value={deliverPin} onChange={(e) => setDeliverPin(e.target.value)} placeholder="PIN para confirmar" data-testid="deliver-pin" />
                         </div>
                         <div className="flex flex-col-reverse sm:flex-row gap-2">
                             <Button variant="outline" className="sm:flex-1" onClick={() => setDeliverReq(null)} disabled={saving}>Cancelar</Button>

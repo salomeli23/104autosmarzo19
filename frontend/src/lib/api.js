@@ -157,6 +157,8 @@ export const inventoryAPI = {
     deduct: (id, params) => api.post(`/inventory/${id}/deduct`, null, { params }),
     movements: (params) => api.get('/inventory/movements', { params }),
     restock: (id, data) => api.post(`/inventory/${id}/restock`, data),
+    seedTestAccessories: () => api.post('/inventory/test-accessories'),
+    removeTestAccessories: () => api.post('/inventory/test-accessories/remove'),
 };
 
 // Solicitudes de accesorios: despacho desde inventario y entrega al técnico

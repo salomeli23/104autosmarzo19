@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Car, Search, User, Image as ImageIcon, Video, Calendar, ChevronLeft, ChevronRight, X, FileText } from 'lucide-react';
 import { PostventaBadge } from './PostventaBadge';
 import { CheckinByTag } from './CheckinByTag';
+import { OrderTimers } from './OrderTimers';
 
 const formatDate = (iso) => {
     if (!iso) return '';
@@ -157,6 +158,7 @@ export const InspectedVehiclesView = () => {
                                         <span>{v.client_name}</span>
                                     </div>
                                     <CheckinByTag order={v} />
+                                    <OrderTimers order={v} />
                                     <div className="flex items-center gap-2 text-muted-foreground">
                                         <Calendar className="w-4 h-4" />
                                         <span>{formatDate(v.inspection_at)}</span>

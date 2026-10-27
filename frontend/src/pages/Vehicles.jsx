@@ -16,6 +16,7 @@ import { Plus, Car, Search, User, Phone, Mail, UserPlus, Wrench, ClipboardCheck,
 import { PostventaBadge } from '../components/PostventaBadge';
 import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
 import { CheckinByTag } from '../components/CheckinByTag';
+import { OrderTimers } from '../components/OrderTimers';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
 
 // Lista de marcas y modelos
@@ -373,6 +374,7 @@ export const Vehicles = () => {
                                             </p>
                                             <PostventaBadge order={vehicle} className="mt-1" />
                                             <CheckinByTag order={vehicle} className="mt-1" />
+                                            <OrderTimers order={vehicle} className="mt-1" />
                                             <AccessoryStatusTag order={vehicle} className="mt-1" />
                                         </div>
                                     </div>

@@ -2162,7 +2162,7 @@ async def get_inspected_vehicles(
             "_id": 0, "id": 1, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "year": 1,
             "color": 1, "client_name": 1, "client_phone": 1, "status": 1, "is_postventa": 1,
             "checkin_by_name": 1, "signed_order_pdf_url": 1,
-            "inspection_at": 1, "inspection_notes": 1, "inspection_video_url": 1,
+            "ingreso_at": 1, "inspection_at": 1, "inspection_notes": 1, "inspection_video_url": 1,
             "photos_count": {"$size": {"$ifNull": ["$inspection_photos", []]}},
         }},
     ]
@@ -4534,24 +4534,76 @@ async def list_accessory_requests(
     if order_ids:
         async for o in db.orders.find({"id": {"$in": order_ids}},
                                       {"_id": 0, "id": 1, "status": 1, "assigned_technician_id": 1,
-                                       "assigned_technician_name": 1, "sede_nombre": 1}):
+                                       "assigned_technician_name": 1, "sede_nombre": 1, "services": 1}):
             orders[o["id"]] = o
     for r in reqs:
         o = orders.get(r["order_id"]) or {}
         r["order_status"] = o.get("status")
         r["assigned_technician_id"] = o.get("assigned_technician_id")
         r["assigned_technician_name"] = o.get("assigned_technician_name")
+        r["order_services"] = [s.get("description") or s.get("service") for s in (o.get("services") or [])
+                               if isinstance(s, dict)]
     return reqs
+
+
+@api_router.post("/inventory/test-accessories")
+async def seed_test_accessories(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS]))):
+    """Crea un inventario de prueba: 2 o 3 unidades de cada accesorio del catálogo que aún no tenga artículo."""
+    existing = set()
+    async for it in db.inventory.find({"active": True, "categoria": "accesorio"}, {"_id": 0, "linked_service": 1}):
+        if it.get("linked_service"):
+            existing.add(it["linked_service"])
+    last = await db.inventory.find_one({}, {"_id": 0, "seq": 1}, sort=[("seq", -1)])
+    seq = (last or {}).get("seq") or 0
+    now = datetime.now(timezone.utc).isoformat()
+    created = []
+    for i, svc in enumerate(SERVICES_CATALOG.get("accesorios", {}).get("services", [])):
+        if svc["id"] in existing:
+            continue
+        seq += 1
+        qty = 2 if i % 2 == 0 else 3
+        await db.inventory.insert_one({
+            "id": str(uuid.uuid4()), "seq": seq, "codigo": f"INV-{seq:05d}",
+            "nombre": svc["name"], "categoria": "accesorio", "tipo_articulo": "cantidad", "tipo_rollo": None,
+            "factura_compra": None, "metros_iniciales": None, "metros_restantes": None,
+            "cantidad_inicial": qty, "cantidad_restante": qty, "costo": 0, "linked_service": svc["id"],
+            "sede_id": None, "sede_nombre": None, "fecha_ingreso": now, "notes": "Inventario de prueba",
+            "stock_minimo": 1, "is_test": True, "active": True,
+            "created_by": current_user["id"], "created_at": now, "updated_at": now,
+        })
+        created.append(f"{svc['name']} ({qty})")
+    return {"created": created, "created_count": len(created), "skipped_count": len(existing)}
+
+
+@api_router.post("/inventory/test-accessories/remove")
+async def remove_test_accessories(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS]))):
+    """Quita (desactiva) los artículos del inventario de prueba de accesorios."""
+    res = await db.inventory.update_many(
+        {"is_test": True, "active": True},
+        {"$set": {"active": False, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"removed_count": res.modified_count}
 
 
 class AccessoryDispatchItem(BaseModel):
     inventory_item_id: Optional[str] = None
     cantidad: int = 1
+    service_name: Optional[str] = None  # servicio de la orden para el que se entrega
 
 
 class AccessoryDispatch(BaseModel):
     items: List[AccessoryDispatchItem]
+    technician_id: str  # técnico instalador que recibe los accesorios
+    pin: str
     notes: Optional[str] = None
+
+
+async def _check_accessory_pin(pin: str):
+    """PIN para confirmar despachos de accesorios (settings.accessory_dispatch_pin, por defecto 00000)."""
+    doc = await db.settings.find_one({"key": "accessory_dispatch_pin"}, {"_id": 0})
+    expected = (doc or {}).get("value", "00000")
+    if str(pin or "").strip() != str(expected).strip():
+        raise HTTPException(status_code=400, detail="PIN de despacho incorrecto")
 
 
 @api_router.post("/accessory-requests/{request_id}/dispatch")
@@ -4560,7 +4612,8 @@ async def dispatch_accessory_request(
     data: AccessoryDispatch,
     current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ACCESORIOS])),
 ):
-    """Despacha el pedido: descuenta cada accesorio del inventario."""
+    """Despacha el pedido al técnico instalador: descuenta cada accesorio del inventario,
+    registra el técnico y el servicio de la orden para el que se entrega. Requiere PIN."""
     req = await db.accessory_requests.find_one({"id": request_id}, {"_id": 0})
     if not req:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
@@ -4568,6 +4621,10 @@ async def dispatch_accessory_request(
         raise HTTPException(status_code=400, detail="La solicitud ya fue despachada")
     if len(data.items) != len(req.get("items") or []):
         raise HTTPException(status_code=400, detail="Debes indicar cada accesorio de la solicitud")
+    await _check_accessory_pin(data.pin)
+    tech = await db.users.find_one({"id": data.technician_id, "role": UserRole.TECNICO.value}, {"_id": 0})
+    if not tech:
+        raise HTTPException(status_code=400, detail="Selecciona el técnico que recibe los accesorios")
 
     # Validar stock antes de descontar (sumando si dos accesorios salen del mismo artículo)
     needed: Dict[str, int] = {}
@@ -4591,6 +4648,7 @@ async def dispatch_accessory_request(
     items = []
     for base, d in zip(req["items"], data.items):
         item = {**base, "cantidad": d.cantidad, "inventory_item_id": d.inventory_item_id,
+                "service_name": (d.service_name or "").strip() or base.get("name"),
                 "inventory_nombre": inv[d.inventory_item_id]["nombre"] if d.inventory_item_id else None,
                 "inventory_codigo": inv[d.inventory_item_id].get("codigo") if d.inventory_item_id else None}
         items.append(item)
@@ -4603,7 +4661,7 @@ async def dispatch_accessory_request(
                 "inventory_item_id": d.inventory_item_id,
                 "type": "deduct",
                 "cantidad": d.cantidad,
-                "reason": f"Despacho {req['code']} · {req.get('plate')}",
+                "reason": f"Despacho {req['code']} · {req.get('plate')} · {tech['name']}",
                 "order_id": req["order_id"],
                 "accessory_request_id": request_id,
                 "user_id": current_user["id"],
@@ -4613,11 +4671,16 @@ async def dispatch_accessory_request(
 
     await db.accessory_requests.update_one({"id": request_id}, {"$set": {
         "items": items,
-        "status": "despachado",
+        "status": "entregado",
         "dispatch_notes": data.notes,
         "dispatched_by_id": current_user["id"],
         "dispatched_by_name": user_name,
         "dispatched_at": now,
+        "delivered_to_id": tech["id"],
+        "delivered_to_name": tech["name"],
+        "delivered_by_id": current_user["id"],
+        "delivered_by_name": user_name,
+        "delivered_at": now,
         "updated_at": now,
     }})
     await _refresh_order_accessory_status(req["order_id"])
@@ -4626,13 +4689,25 @@ async def dispatch_accessory_request(
         req["order_id"], "ACCESORIOS_DESPACHADOS",
         (order or {}).get("status"), (order or {}).get("status"),
         current_user["id"], user_name,
-        {"request": req["code"], "items": [f"{i['cantidad']} x {i['name']}" for i in items]},
+        {"request": req["code"], "technician_name": tech["name"],
+         "items": [f"{i['cantidad']} x {i['name']} → {i['service_name']}" for i in items]},
     )
+    await db.alerts.insert_one({
+        "id": str(uuid.uuid4()),
+        "recipient_id": tech["id"],
+        "alert_type": AlertType.ACCESORIOS_ENTREGADOS.value,
+        "title": "Accesorios entregados",
+        "message": f"Vehículo {req.get('plate')}: " + ", ".join(f"{i['cantidad']} x {i['name']} ({i['service_name']})" for i in items),
+        "order_id": req["order_id"],
+        "read": False,
+        "created_at": now,
+    })
     return await db.accessory_requests.find_one({"id": request_id}, {"_id": 0})
 
 
 class AccessoryDeliver(BaseModel):
     technician_id: str
+    pin: str
     notes: Optional[str] = None
 
 
@@ -4648,6 +4723,7 @@ async def deliver_accessory_request(
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     if req["status"] != "despachado":
         raise HTTPException(status_code=400, detail="Primero debes despachar la solicitud")
+    await _check_accessory_pin(data.pin)
     tech = await db.users.find_one({"id": data.technician_id, "role": UserRole.TECNICO.value}, {"_id": 0})
     if not tech:
         raise HTTPException(status_code=404, detail="Técnico no encontrado")

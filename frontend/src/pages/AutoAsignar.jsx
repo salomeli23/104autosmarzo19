@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
 import { CheckinByTag } from '../components/CheckinByTag';
+import { OrderTimers } from '../components/OrderTimers';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
 import {
     User, Clock, RefreshCw, ChevronDown, ChevronRight, Play, Check, DollarSign, Wallet, AlertCircle, Wrench, Sparkles, Droplet, Shield, Boxes, Paintbrush, Route as RouteIcon,
@@ -195,6 +196,7 @@ const OrderCard = ({ order, technicians, onRefresh }) => {
                                 <PlateBadge plate={order.plate} size="md" />
                                 <PostventaBadge order={order} />
                                 <CheckinByTag order={order} />
+                                <OrderTimers order={order} />
                                 <AccessoryStatusTag order={order} />
                                 <OrderStatusBadge status={order.status} />
                                 <span className={`text-[11px] px-2 py-0.5 rounded-full border flex items-center gap-1 ${pay.color}`} data-testid={`payment-tag-${order.id}`}>

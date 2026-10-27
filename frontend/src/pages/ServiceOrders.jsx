@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import { Plus, Wrench, Car, User, Clock, ArrowRight, Play, CheckCircle2 } from 'lucide-react';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { CheckinByTag } from '../components/CheckinByTag';
+import { OrderTimers } from '../components/OrderTimers';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
 
 const SERVICES = Object.entries(SERVICE_LABELS).map(([value, label]) => ({ value, label }));
@@ -362,6 +363,7 @@ export const ServiceOrders = () => {
                                                     </div>
                                                 )}
                                                 <CheckinByTag order={order} />
+                                                <OrderTimers order={order} />
                                                 <UpdateOrderButton order={order} onUpdated={fetchData} className="w-full" />
 
                                                 {/* Technician */}
