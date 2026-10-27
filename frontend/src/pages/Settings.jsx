@@ -8,7 +8,8 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ROLE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff, UserPlus } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff, UserPlus, LockKeyhole } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { DiscountCodesSection } from '../components/DiscountCodesSection';
 import { SedesSection, CarSeriesSection, ServiceExtrasSection, TechnicianRolesSection } from '../components/SettingsSections';
 
@@ -37,6 +38,13 @@ export const Settings = () => {
     const emptyNewUser = { name: '', email: '', phone: '', role: 'accesorios', password: '' };
     const [newUser, setNewUser] = useState(emptyNewUser);
     const [creatingUser, setCreatingUser] = useState(false);
+
+    // Restablecer contraseña (admin)
+    const [resetUser, setResetUser] = useState(null);
+    const [resetPwd, setResetPwd] = useState('');
+    const [resetPwd2, setResetPwd2] = useState('');
+    const [showResetPwd, setShowResetPwd] = useState(false);
+    const [resetting, setResetting] = useState(false);
 
     useEffect(() => {
         const fetchUsers = async () => {
@@ -137,6 +145,35 @@ export const Settings = () => {
             toast.success('Rol actualizado correctamente');
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al actualizar rol');
+        }
+    };
+
+    const openResetPassword = (u) => {
+        setResetUser(u);
+        setResetPwd('');
+        setResetPwd2('');
+        setShowResetPwd(false);
+    };
+
+    const handleResetPassword = async () => {
+        if (resetPwd.length < 6) {
+            toast.error('La contraseña debe tener al menos 6 caracteres');
+            return;
+        }
+        if (resetPwd !== resetPwd2) {
+            toast.error('Las contraseñas no coinciden');
+            return;
+        }
+        try {
+            setResetting(true);
+            await usersAPI.resetPassword(resetUser.id, resetPwd);
+            toast.success(`Contraseña actualizada para ${resetUser.name}`);
+            setResetUser(null);
+        } catch (error) {
+            const detail = error.response?.data?.detail;
+            toast.error(typeof detail === 'string' ? detail : 'No se pudo actualizar la contraseña');
+        } finally {
+            setResetting(false);
         }
     };
 
@@ -436,6 +473,15 @@ export const Settings = () => {
                                                 </SelectContent>
                                             </Select>
                                         )}
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => openResetPassword(u)}
+                                            data-testid={`reset-password-btn-${u.id}`}
+                                        >
+                                            <LockKeyhole className="w-4 h-4 sm:mr-1" />
+                                            <span className="hidden sm:inline">Restablecer contraseña</span>
+                                        </Button>
                                     </div>
                                 </div>
                             ))}
@@ -443,6 +489,52 @@ export const Settings = () => {
                     )}
                 </CardContent>
             </Card>
+
+            <Dialog open={!!resetUser} onOpenChange={(v) => !v && !resetting && setResetUser(null)}>
+                <DialogContent className="max-w-sm" data-testid="reset-password-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading text-xl">Restablecer contraseña</DialogTitle>
+                        <DialogDescription>{resetUser?.name} · {resetUser?.email}</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div className="space-y-2">
+                            <Label htmlFor="reset-pwd">Nueva contraseña (mínimo 6 caracteres)</Label>
+                            <div className="flex gap-2">
+                                <Input
+                                    id="reset-pwd"
+                                    type={showResetPwd ? 'text' : 'password'}
+                                    autoComplete="new-password"
+                                    value={resetPwd}
+                                    onChange={(e) => setResetPwd(e.target.value)}
+                                    data-testid="reset-password-input"
+                                />
+                                <Button type="button" variant="ghost" size="icon" onClick={() => setShowResetPwd(v => !v)} aria-label="Mostrar contraseña">
+                                    {showResetPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </Button>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="reset-pwd2">Confirmar contraseña</Label>
+                            <Input
+                                id="reset-pwd2"
+                                type={showResetPwd ? 'text' : 'password'}
+                                autoComplete="new-password"
+                                value={resetPwd2}
+                                onChange={(e) => setResetPwd2(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleResetPassword()}
+                                data-testid="reset-password-confirm"
+                            />
+                        </div>
+                        <p className="text-xs text-muted-foreground">La contraseña anterior deja de funcionar de inmediato. Comunícale la nueva al usuario.</p>
+                        <div className="flex flex-col-reverse sm:flex-row gap-2">
+                            <Button variant="outline" className="sm:flex-1" onClick={() => setResetUser(null)} disabled={resetting}>Cancelar</Button>
+                            <Button className="sm:flex-1" onClick={handleResetPassword} disabled={resetting} data-testid="reset-password-save">
+                                {resetting ? 'Guardando...' : 'Guardar contraseña'}
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             {/* System Info */}
             <Card className="card-hover">

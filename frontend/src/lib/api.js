@@ -38,6 +38,7 @@ export const usersAPI = {
     getAll: (role) => api.get('/users', { params: role ? { role } : {} }),
     getTechnicians: () => api.get('/users/technicians'),
     updateRole: (userId, role) => api.put(`/users/${userId}/role`, { role }),
+    resetPassword: (userId, newPassword) => api.put(`/users/${userId}/password`, { new_password: newPassword }),
 };
 
 // Orders (nuevo flujo completo)

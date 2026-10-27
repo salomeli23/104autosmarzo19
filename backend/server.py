@@ -986,6 +986,29 @@ async def update_user_role(user_id: str, data: UserRoleUpdate, current_user: dic
     return {"message": "Rol actualizado", "role": data.role.value}
 
 
+class UserPasswordReset(BaseModel):
+    new_password: str
+
+
+@api_router.put("/users/{user_id}/password")
+async def reset_user_password(user_id: str, data: UserPasswordReset, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """El admin pone una nueva contraseña a un usuario (p. ej. cuando la olvida)."""
+    pwd = data.new_password or ""
+    if len(pwd) < 6:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "name": 1})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one({"id": user_id}, {"$set": {
+        "password": hash_password(pwd),
+        "password_reset_at": now,
+        "password_reset_by": current_user["id"],
+    }})
+    logger.info(f"[users] contraseña restablecida para {user_id} por {current_user['id']}")
+    return {"message": f"Contraseña actualizada para {user['name']}"}
+
+
 class UserRolesUpdate(BaseModel):
     tecnico_roles: List[str] = []  # ['lavado','ceramico','polarizado','ppf','accesorios','latoneria_pintura','detailing']
 
