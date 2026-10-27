@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { PostventaBadge } from '../components/PostventaBadge';
+import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 
 export const CheckIn = () => {
     const [step, setStep] = useState(1);
@@ -333,7 +334,8 @@ export const CheckIn = () => {
         const id = (svc.serviceId || '').toLowerCase();
         const name = (svc.serviceName || '').toLowerCase();
         const cat = (svc.category || '').toLowerCase();
-        return id.includes('ultrasecure') || name.includes('ultrasecure') || cat.includes('ultrasecure');
+        // 'polarizado': antes Polarizado y Ultrasecure eran una sola categoría; se conserva la regla del sunroof
+        return id.includes('ultrasecure') || name.includes('ultrasecure') || cat.includes('ultrasecure') || cat === 'polarizado';
     });
 
     // Devuelve los extras que aplican según las partes seleccionadas en los servicios.
@@ -496,7 +498,7 @@ export const CheckIn = () => {
             'mixto', 'micras_300', 'micras_500', 'micras_700', 'micras_1000', 'micras_1700'
         ];
         return selectedServices.some(s => polarizadoServices.includes(s.serviceId) || 
-            s.category === 'Polarizado/Ultrasecure');
+            ['Polarizado/Ultrasecure', 'Polarizado', 'Ultrasecure'].includes(s.category));
     };
 
     // Get relevant risk checks based on services
@@ -1481,7 +1483,7 @@ export const CheckIn = () => {
                                                                         </svg>
                                                                     )}
                                                                 </div>
-                                                                <span className="text-sm flex-1">{service.name}</span>
+                                                                <span className="text-sm flex-1"><ServiceCatalogLabel service={service} /></span>
                                                                 {isSelected && <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />}
                                                             </div>
                                                         );

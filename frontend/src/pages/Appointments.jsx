@@ -25,6 +25,7 @@ import { es } from 'date-fns/locale';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { CheckinByTag } from '../components/CheckinByTag';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
+import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 
 const APPOINTMENT_TYPE_LABELS = { franja: 'Por franja', prioridad: 'Por prioridad', postventa: 'Postventa' };
 
@@ -1333,7 +1334,7 @@ export const Appointments = () => {
                                                                         htmlFor={`svc-${service.id}`} 
                                                                         className="flex-1 cursor-pointer"
                                                                     >
-                                                                        {service.name}
+                                                                        <ServiceCatalogLabel service={service} />
                                                                     </label>
                                                                     {isSelected && (
                                                                         <div className="flex items-center gap-2">

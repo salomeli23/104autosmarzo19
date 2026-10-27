@@ -2390,8 +2390,8 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
 # ==================== SERVICES CATALOG ====================
 # Catálogo completo de servicios organizados por categorías
 SERVICES_CATALOG = {
-    "polarizado_ultrasecure": {
-        "name": "Polarizado/Ultrasecure",
+    "polarizado": {
+        "name": "Polarizado",
         "services": [
             {"id": "nanooptik", "name": "Nanooptik"},
             {"id": "black_ceramic_autobahn", "name": "Black Ceramic Autobahn"},
@@ -2400,11 +2400,22 @@ SERVICES_CATALOG = {
             {"id": "ceramic_i3_plus_autobahn", "name": "Ceramic i3+ Autobahn"},
             {"id": "huperoptik", "name": "Huperoptik"},
             {"id": "mixto", "name": "Mixto"},
-            {"id": "micras_300", "name": "300 Micras"},
-            {"id": "micras_500", "name": "500 Micras"},
-            {"id": "micras_700", "name": "700 Micras"},
-            {"id": "micras_1000", "name": "1000 Micras"},
-            {"id": "micras_1700", "name": "1.700 Micras"},
+        ]
+    },
+    # Ultrasecure (película de seguridad). protection_level: nivel de protección (%) para mostrar.
+    "ultrasecure": {
+        "name": "Ultrasecure",
+        "services": [
+            {"id": "micras_300", "name": "300 Micras", "tagline": "Entrada",
+             "description": "Protección básica del vidrio", "protection_level": 40},
+            {"id": "micras_500", "name": "500 Micras", "tagline": "Alta resistencia",
+             "description": "Mayor resistencia al impacto", "protection_level": 55},
+            {"id": "micras_700", "name": "700 Micras", "tagline": "Protección reforzada",
+             "protection_level": 70},
+            {"id": "micras_1000", "name": "1.000 Micras", "tagline": "Protección superior",
+             "description": "Refuerzo superior contra impactos", "protection_level": 85},
+            {"id": "micras_1700", "name": "1.700 Micras", "tagline": "Máxima protección",
+             "description": "Máximo nivel de protección disponible", "protection_level": 100},
         ]
     },
     "ppf": {
