@@ -23,6 +23,7 @@ import { Plus, Calendar as CalendarIcon, Clock, User, Car, DollarSign, QrCode, C
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { PostventaBadge } from '../components/PostventaBadge';
+import { CheckinByTag } from '../components/CheckinByTag';
 
 const APPOINTMENT_TYPE_LABELS = { franja: 'Por franja', prioridad: 'Por prioridad', postventa: 'Postventa' };
 
@@ -1903,6 +1904,7 @@ export const Appointments = () => {
                                                                             Asesor: {order.created_by_name}
                                                                         </p>
                                                                     )}
+                                                                    <CheckinByTag order={order} className="mt-1" />
                                                                 </div>
                                                                 <div className="flex items-center gap-2 shrink-0">
                                                                     <div className="hidden sm:flex gap-1">

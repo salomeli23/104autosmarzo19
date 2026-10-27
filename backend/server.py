@@ -369,6 +369,9 @@ class OrderResponse(BaseModel):
     # Metadata
     created_by: str
     created_by_name: Optional[str] = None
+    # Asesor que realizó el check-in
+    checkin_by_id: Optional[str] = None
+    checkin_by_name: Optional[str] = None
     created_by_role: Optional[str] = None
     created_at: str
     updated_at: Optional[str] = None
@@ -1811,6 +1814,9 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         "requires_invoice": bool(data.requires_invoice),
         "status": OrderStatus.INGRESADO.value,
         "ingreso_at": datetime.now(timezone.utc).isoformat(),
+        # Asesor que realizó el check-in
+        "checkin_by_id": current_user["id"],
+        "checkin_by_name": current_user["name"],
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     if disc_doc_ci:
@@ -1976,6 +1982,7 @@ async def get_inspected_vehicles(
         {"$project": {
             "_id": 0, "id": 1, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "year": 1,
             "color": 1, "client_name": 1, "client_phone": 1, "status": 1, "is_postventa": 1,
+            "checkin_by_name": 1,
             "inspection_at": 1, "inspection_notes": 1, "inspection_video_url": 1,
             "photos_count": {"$size": {"$ifNull": ["$inspection_photos", []]}},
         }},
@@ -4598,6 +4605,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def backfill_checkin_by():
+    """Completa el asesor del check-in en órdenes antiguas usando el historial (INGRESO_APROBADO)."""
+    try:
+        pending = await db.orders.find(
+            {"ingreso_at": {"$ne": None}, "checkin_by_name": None}, {"_id": 0, "id": 1}
+        ).to_list(5000)
+        for o in pending:
+            h = await db.order_history.find_one(
+                {"order_id": o["id"], "action": "INGRESO_APROBADO"}, {"_id": 0}, sort=[("created_at", -1)]
+            )
+            if h and h.get("changed_by_name"):
+                await db.orders.update_one(
+                    {"id": o["id"]},
+                    {"$set": {"checkin_by_id": h.get("changed_by_id"), "checkin_by_name": h["changed_by_name"]}},
+                )
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"No se pudo completar checkin_by en órdenes antiguas: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

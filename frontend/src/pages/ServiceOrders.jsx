@@ -19,6 +19,7 @@ import { ORDER_STATUS_LABELS as STATUS_LABELS, SERVICE_LABELS, formatDateTime } 
 import { toast } from 'sonner';
 import { Plus, Wrench, Car, User, Clock, ArrowRight, Play, CheckCircle2 } from 'lucide-react';
 import { PostventaBadge } from '../components/PostventaBadge';
+import { CheckinByTag } from '../components/CheckinByTag';
 
 const SERVICES = Object.entries(SERVICE_LABELS).map(([value, label]) => ({ value, label }));
 const STATUSES = [
@@ -359,6 +360,7 @@ export const ServiceOrders = () => {
                                                         <span>Agendó: {order.created_by_name}</span>
                                                     </div>
                                                 )}
+                                                <CheckinByTag order={order} />
 
                                                 {/* Technician */}
                                                 {order.assigned_technician_name ? (

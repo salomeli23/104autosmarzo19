@@ -12,6 +12,7 @@ import { CarAvatar } from '../components/CarAvatar';
 import { LiveTimer } from '../components/LiveTimer';
 import { toast } from 'sonner';
 import { PostventaBadge } from '../components/PostventaBadge';
+import { CheckinByTag } from '../components/CheckinByTag';
 import {
     User, Clock, RefreshCw, ChevronDown, ChevronRight, Play, Check, DollarSign, Wallet, AlertCircle, Wrench, Sparkles, Droplet, Shield, Boxes, Paintbrush, Route as RouteIcon,
 } from 'lucide-react';
@@ -191,6 +192,7 @@ const OrderCard = ({ order, technicians, onRefresh }) => {
                             <div className="flex items-center gap-2 flex-wrap">
                                 <PlateBadge plate={order.plate} size="md" />
                                 <PostventaBadge order={order} />
+                                <CheckinByTag order={order} />
                                 <OrderStatusBadge status={order.status} />
                                 <span className={`text-[11px] px-2 py-0.5 rounded-full border flex items-center gap-1 ${pay.color}`} data-testid={`payment-tag-${order.id}`}>
                                     <PayIcon className="w-3 h-3" />
