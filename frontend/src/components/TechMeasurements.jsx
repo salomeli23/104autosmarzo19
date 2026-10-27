@@ -1,15 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
-import { VehicleGlassDiagram, MEASURE_ZONES } from './VehicleGlassDiagram';
+import { MEASURE_ZONES } from '../lib/measureZones';
+
+// three.js solo se descarga cuando se abre la ventana de medidas
+const Vehicle3D = React.lazy(() => import('./Vehicle3D'));
 import { ordersAPI } from '../lib/api';
 import { toast } from 'sonner';
 import { Ruler, CheckCircle2, Clock } from 'lucide-react';
 
-const LATERAL_PARTS = ['vidrio_copiloto', 'vidrio_piloto', 'vidrio_trasero_piloto', 'vidrio_trasero_copiloto', 'custodias'];
+const LEFT_PARTS = ['vidrio_piloto', 'vidrio_trasero_piloto', 'custodias'];
+const RIGHT_PARTS = ['vidrio_copiloto', 'vidrio_trasero_copiloto', 'custodias'];
 const REAR_PARTS = ['luneta', 'trasero', 'vidrio_trasero'];
 
 // Qué zonas aplican según los servicios de la orden (si no hay partes, todas menos sunroof)
@@ -18,12 +22,13 @@ const defaultApplies = (order) => {
     const parts = new Set(services.flatMap(s => s.parts || []));
     const hasSunroof = parts.has('sunroof') || services.some(s => String(s.service || '').includes('sunroof'));
     if (parts.size === 0 || (parts.size === 1 && hasSunroof)) {
-        return { panoramico: true, trasero: true, laterales: true, sunroof: hasSunroof };
+        return { panoramico: true, trasero: true, laterales_izquierdo: true, laterales_derecho: true, sunroof: hasSunroof };
     }
     return {
         panoramico: parts.has('panoramico'),
         trasero: REAR_PARTS.some(p => parts.has(p)),
-        laterales: LATERAL_PARTS.some(p => parts.has(p)),
+        laterales_izquierdo: LEFT_PARTS.some(p => parts.has(p)),
+        laterales_derecho: RIGHT_PARTS.some(p => parts.has(p)),
         sunroof: hasSunroof,
     };
 };
@@ -47,11 +52,16 @@ export const TechMeasurementsSummary = ({ order, compact = false }) => {
                 <Ruler className="w-3.5 h-3.5" /> Medidas del técnico · {m.confirmed_by_name}
             </p>
             <div className={compact ? 'flex flex-wrap gap-x-3 gap-y-0.5' : 'grid grid-cols-2 gap-x-3 gap-y-0.5'}>
-                {MEASURE_ZONES.map(z => (
+                {MEASURE_ZONES.filter(z => m[z.id]).map(z => (
                     <span key={z.id} className={m[z.id]?.aplica === false ? 'text-muted-foreground' : ''}>
                         <b>{z.n}. {z.label}:</b> {zoneText(m[z.id])}
                     </span>
                 ))}
+                {m.laterales && (
+                    <span className={m.laterales.aplica === false ? 'text-muted-foreground' : ''}>
+                        <b>Laterales:</b> {zoneText(m.laterales)}
+                    </span>
+                )}
             </div>
             {m.notes && <p className="italic text-muted-foreground">“{m.notes}”</p>}
         </div>
@@ -80,7 +90,7 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
             next[z.id] = p
                 ? { aplica: p.aplica !== false, ancho: p.ancho ?? '', alto: p.alto ?? '', piezas: p.piezas ?? '' }
                 : emptyZone(applies[z.id]);
-            if (z.id === 'laterales' && !next[z.id].piezas) next[z.id].piezas = '4';
+            if (z.id.startsWith('laterales') && !next[z.id].piezas) next[z.id].piezas = '2';
         });
         setZones(next);
         setNotes(prev?.notes || '');
@@ -113,7 +123,7 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
         MEASURE_ZONES.forEach(z => {
             const v = zones[z.id];
             payload[z.id] = v.aplica
-                ? { aplica: true, ancho: parseFloat(v.ancho), alto: parseFloat(v.alto), piezas: z.id === 'laterales' ? parseInt(v.piezas, 10) || 1 : null }
+                ? { aplica: true, ancho: parseFloat(v.ancho), alto: parseFloat(v.alto), piezas: z.id.startsWith('laterales') ? parseInt(v.piezas, 10) || 1 : null }
                 : { aplica: false };
         });
         setSaving(true);
@@ -143,8 +153,10 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="rounded-xl border bg-gradient-to-b from-slate-900 to-slate-950 p-2">
-                    <VehicleGlassDiagram status={status} active={active} onSelect={setActive} className="w-full h-auto" />
+                <div className="rounded-xl border overflow-hidden bg-[radial-gradient(ellipse_at_center,_#4b4f56_0%,_#2b2e33_55%,_#18191c_100%)] p-1">
+                    <Suspense fallback={<div className="h-[300px] flex items-center justify-center text-sm text-slate-300">Cargando carro 3D…</div>}>
+                        <Vehicle3D status={status} active={active} onSelect={setActive} className="w-full" />
+                    </Suspense>
                     <div className="flex flex-wrap justify-center gap-3 text-[11px] text-slate-300 pb-1">
                         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Falta medida</span>
                         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-600" /> Medida lista</span>
@@ -181,7 +193,7 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
                                 </div>
                                 {z.hint && <p className="text-[11px] text-cyan-400">{z.hint}</p>}
                                 {v.aplica && (
-                                    <div className={`grid gap-2 ${z.id === 'laterales' ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                                    <div className={`grid gap-2 ${z.id.startsWith('laterales') ? 'grid-cols-3' : 'grid-cols-2'}`}>
                                         <div className="space-y-1">
                                             <Label className="text-[11px]">Ancho (cm)</Label>
                                             <Input type="number" min="1" max="500" inputMode="decimal" value={v.ancho} onChange={(e) => update(z.id, { ancho: e.target.value })} className="h-9" data-testid={`measure-ancho-${z.id}`} />
@@ -190,10 +202,10 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
                                             <Label className="text-[11px]">Alto (cm)</Label>
                                             <Input type="number" min="1" max="500" inputMode="decimal" value={v.alto} onChange={(e) => update(z.id, { alto: e.target.value })} className="h-9" data-testid={`measure-alto-${z.id}`} />
                                         </div>
-                                        {z.id === 'laterales' && (
+                                        {z.id.startsWith('laterales') && (
                                             <div className="space-y-1">
                                                 <Label className="text-[11px]">Vidrios</Label>
-                                                <Input type="number" min="1" max="10" inputMode="numeric" value={v.piezas} onChange={(e) => update(z.id, { piezas: e.target.value })} className="h-9" data-testid="measure-piezas-laterales" />
+                                                <Input type="number" min="1" max="10" inputMode="numeric" value={v.piezas} onChange={(e) => update(z.id, { piezas: e.target.value })} className="h-9" data-testid={`measure-piezas-${z.id}`} />
                                             </div>
                                         )}
                                     </div>

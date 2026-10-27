@@ -3163,20 +3163,21 @@ async def release_bahia(
 
 # ==================== CUTTING MODULE ====================
 # ==================== MEDIDAS DEL TÉCNICO (antes de completar corte) ====================
-MEASURE_ZONES = ("panoramico", "trasero", "laterales", "sunroof")
+MEASURE_ZONES = ("panoramico", "trasero", "laterales_izquierdo", "laterales_derecho", "sunroof")
 
 
 class MeasureZone(BaseModel):
     aplica: bool = True
     ancho: Optional[float] = None  # cm
     alto: Optional[float] = None   # cm
-    piezas: Optional[int] = None   # solo laterales: número de vidrios
+    piezas: Optional[int] = None   # solo laterales: número de vidrios de ese lado
 
 
 class TechMeasurements(BaseModel):
     panoramico: MeasureZone
     trasero: MeasureZone
-    laterales: MeasureZone
+    laterales_izquierdo: MeasureZone  # lado del piloto
+    laterales_derecho: MeasureZone    # lado del copiloto
     sunroof: MeasureZone
     notes: Optional[str] = None
 
@@ -3209,7 +3210,7 @@ async def save_tech_measurements(
         if not z.ancho or not z.alto or z.ancho <= 0 or z.alto <= 0 or z.ancho > 500 or z.alto > 500:
             raise HTTPException(status_code=400, detail=f"Coloca ancho y alto (cm) válidos para {key}, o márcalo como No aplica")
         zone = {"aplica": True, "ancho": round(float(z.ancho), 1), "alto": round(float(z.alto), 1)}
-        if key == "laterales":
+        if key.startswith("laterales"):
             zone["piezas"] = max(1, int(z.piezas or 1))
         zones[key] = zone
     if not any(z["aplica"] for z in zones.values()):
