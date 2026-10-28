@@ -2656,6 +2656,44 @@ ULTRASECURE_FILMS = [
     {"id": "huperoptik", "label": "Hüperoptik"},
 ]
 
+def _acc_options(prefix: str, names: List[str]) -> List[Dict[str, str]]:
+    def slug(t: str) -> str:
+        t = t.lower().replace("ñ", "n")
+        for a, b in (("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u")):
+            t = t.replace(a, b)
+        return re.sub(r"[^a-z0-9]+", "_", t).strip("_")
+    return [{"id": f"acc_{prefix}_{slug(n)}", "name": n} for n in names]
+
+
+ACCESSORY_GROUPS = [
+    {"id": "tuercas", "name": "Tuercas", "type": "select", "options": _acc_options("tuercas", [
+        "Tuercas MG 12 x 1.5 CC", "Tuercas MG 12 x 1.5 SC", "Tuercas MG 12 x 1.25 SC", "Tuercas MG 14 x 1.5 CC",
+        "Tuercas MG 14 x 1.5 CS", "Tuercas IMAPAR 12 x 1.5 SC", "Tuercas IMAPAR 12 x 1.25 SC",
+        "Tuercas IMAPAR 14 x 1.5 SC", "Tuercas MG 14 x 1.5 CS Tesla", "Tuerca FARAD 14 x 1.5 Tesla"])},
+    {"id": "pernos", "name": "Pernos de seguridad", "type": "select", "options": _acc_options("pernos", [
+        "Pernos de seguridad 12 x 1.5", "Pernos de seguridad 12 x 1.25", "Pernos de seguridad 14 x 1.5"])},
+    {"id": "productos", "name": "Productos", "type": "multi", "options": _acc_options("productos", [
+        "Guayas", "Cinta amarilla", "Cinta negra", "Colonbinas", "Tollas amarillas", "Silicona", "Sika",
+        "Glass Cleaner"])},
+    {"id": "plumillas", "name": "Plumillas Defender", "type": "select", "options": _acc_options("plumillas", [
+        f"Plumillas Defender {n} pulgadas" for n in (12, 14, 16, 18, 20, 22, 24, 26, 28)])},
+    {"id": "tapetes", "name": "Tapetes", "type": "select", "options": _acc_options("tapetes", [
+        "Tapetes Prado LC250", "Tapetes Toyota Corolla Cross", "Tapetes baúl Toyota Corolla Cross", "Tapetes de KA",
+        "Tapetes de Magdas 2", "Tapetes de Prado cara vieja", "Tapetes de Tesla Model 3",
+        "Tapetes universales Defender", "Tapetes de Tesla Model Y"])},
+    {"id": "tiro_arrastre", "name": "Tiro de arrastre", "type": "single", "options": _acc_options("tiro", [
+        "Tiro de arrastre Toyota Corolla Cross", "Tiro de arrastre Toyota Prado Runner",
+        "Tiro de arrastre Toyota Fortuner"])},
+    {"id": "otros", "name": "Otros", "type": "single", "options": _acc_options("otros", [
+        "Cadenas Defender", "Lengüetas", "Seguro de llanta Toyota", "Plato de Defender",
+        "Seguro de llanta Toyota universal", "Seguro de llanta Toyota Prado", "Hidrofilms", "Opulum"])},
+    {"id": "camaras", "name": "Cámaras", "type": "single", "options": _acc_options("camaras", [
+        "Cámara 4K", "Cámara estándar"])},
+    {"id": "guayas_camaras", "name": "Guayas cámaras", "type": "multi", "options": _acc_options("guayas_camaras", [
+        "Guayas para cámaras"])},
+]
+
+
 SERVICES_CATALOG = {
     "polarizado": {
         "name": "Polarizado",
@@ -2719,26 +2757,10 @@ SERVICES_CATALOG = {
     },
     "accesorios": {
         "name": "Accesorios",
-        "services": [
-            {"id": "seguros_luna", "name": "Seguros de Luna"},
-            {"id": "seguros_guaya", "name": "Seguros de Guaya"},
-            {"id": "tuercas_i", "name": "Tuercas I (5 medidas)"},
-            {"id": "pernos_i", "name": "Pernos I"},
-            {"id": "tuercas_mg", "name": "Tuercas MG (5 medidas)"},
-            {"id": "pernos_mg", "name": "Pernos MG"},
-            {"id": "plumillas", "name": "Plumillas"},
-            {"id": "glass_cleaner", "name": "Glass Cleaner"},
-            {"id": "opulum", "name": "Opulum"},
-            {"id": "hidrofilms", "name": "Hidrofilms"},
-            {"id": "cadena_kryptonite", "name": "Cadena Kryptonite"},
-            {"id": "camara_4k", "name": "Cámara de seguridad 4K"},
-            {"id": "camara_hd", "name": "Cámara de seguridad HD"},
-            {"id": "tiros_arrastre", "name": "Tiros de arrastre"},
-            {"id": "cadena_defender", "name": "Cadena Defender"},
-            {"id": "seguros_llanta", "name": "Seguros de llanta"},
-            {"id": "tapetes_termoformado", "name": "Tapetes Termoformado Lengueta"},
-            {"id": "tapetes_defender", "name": "Tapetes Defender Universal"},
-        ]
+        # Grupos como en el formulario: select/single = una opción por grupo; multi = varias.
+        "groups": ACCESSORY_GROUPS,
+        # Lista plana de todas las opciones (pedidos de accesorios, inventario y despacho)
+        "services": [{"id": o["id"], "name": o["name"], "group": g["id"]} for g in ACCESSORY_GROUPS for o in g["options"]],
     },
     "detailing": {
         "name": "Detailing",

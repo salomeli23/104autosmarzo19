@@ -28,6 +28,7 @@ import { UpdateOrderButton } from '../components/UpdateOrderButton';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 import { UltrasecureFilmPicker, SuggestedPriceHint } from '../components/UltrasecureFilmPicker';
 import { SunroofAddon, SUNROOF_CATEGORIES } from '../components/SunroofAddon';
+import { AccessoryGroups, applyAccessoryGroup } from '../components/AccessoryGroups';
 import { findCatalogService, defaultServicePrice, serviceDescription } from '../lib/servicePricing';
 import { AppointmentNotifications } from '../components/AppointmentNotifications';
 
@@ -1337,8 +1338,32 @@ export const Appointments = () => {
                                                 </div>
                                             </AccordionTrigger>
                                             <AccordionContent>
+                                                {category.groups && (
+                                                    <AccessoryGroups
+                                                        category={category}
+                                                        isSelected={(id) => selectedServices.some(s => s.serviceId === id)}
+                                                        onSetGroup={(group, ids) => setSelectedServices(prev => applyAccessoryGroup(
+                                                            prev, group, ids, s => s.serviceId,
+                                                            o => ({ serviceId: o.id, serviceName: o.name, category: category.name, price: 0 }),
+                                                        ))}
+                                                        renderPrice={(o) => (
+                                                            <div className="flex items-center gap-1">
+                                                                <span className="text-sm text-muted-foreground">$</span>
+                                                                <Input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    value={selectedServices.find(s => s.serviceId === o.id)?.price || ''}
+                                                                    onChange={(e) => handleServicePriceChange(o.id, e.target.value)}
+                                                                    placeholder="Valor"
+                                                                    className="w-32 h-8 text-right"
+                                                                    data-testid={`price-${o.id}`}
+                                                                />
+                                                            </div>
+                                                        )}
+                                                    />
+                                                )}
                                                 <div className="space-y-2 pt-2">
-                                                    {category.services.map((service) => {
+                                                    {(category.groups ? [] : category.services).map((service) => {
                                                         const isSelected = selectedServices.some(s => s.serviceId === service.id);
                                                         const selectedService = selectedServices.find(s => s.serviceId === service.id);
                                                         const showParts = isSelected && serviceRequiresParts(service.id);

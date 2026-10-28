@@ -17,6 +17,7 @@ import { formatCurrency, VEHICLE_PARTS, PPF_PARTS, CHECKIN_NOTICES } from '../li
 import { SUNROOF_ID, isSunroofExtra, isSunroofLine, findSunroof, stripSunroof, buildSunroofLine } from '../lib/sunroof';
 import { UltrasecureFilmPicker, SuggestedPriceHint } from '../components/UltrasecureFilmPicker';
 import { SunroofAddon, SUNROOF_CATEGORIES } from '../components/SunroofAddon';
+import { AccessoryGroups, applyAccessoryGroup } from '../components/AccessoryGroups';
 import { findCatalogService, defaultServicePrice, serviceDescription, stripFilmFromName } from '../lib/servicePricing';
 import { generateOrderPDF } from '../components/OrderPDFGenerator';
 import { Inspection360Inline } from '../components/Inspection360Inline';
@@ -1539,8 +1540,18 @@ export const CheckIn = () => {
                                                 <span>{category.name}</span>
                                             </AccordionTrigger>
                                             <AccordionContent>
+                                                {category.groups && (
+                                                    <AccessoryGroups
+                                                        category={category}
+                                                        isSelected={(id) => selectedServices.some(s => s.serviceId === id)}
+                                                        onSetGroup={(group, ids) => setSelectedServices(prev => applyAccessoryGroup(
+                                                            prev, group, ids, s => s.serviceId,
+                                                            o => ({ serviceId: o.id, serviceName: o.name, category: category.name, price: 0 }),
+                                                        ))}
+                                                    />
+                                                )}
                                                 <div className="space-y-1 pt-2">
-                                                    {category.services.map((service) => {
+                                                    {(category.groups ? [] : category.services).map((service) => {
                                                         const isSelected = selectedServices.some(s => s.serviceId === service.id);
                                                         return (
                                                             <div

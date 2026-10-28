@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { formatCurrency, VEHICLE_PARTS } from '../lib/utils';
 import { isSunroofLine, findSunroof, stripSunroof, buildSunroofLine } from '../lib/sunroof';
 import { UltrasecureFilmPicker, SuggestedPriceHint } from './UltrasecureFilmPicker';
+import { AccessoryGroups, applyAccessoryGroup } from './AccessoryGroups';
 import { findCatalogService, defaultServicePrice, serviceDescription, stripFilmFromName } from '../lib/servicePricing';
 import { toast } from 'sonner';
 import { FilePenLine, Plus, PlusCircle, Trash2, Lock, Package, Car, CheckCircle } from 'lucide-react';
@@ -372,8 +373,21 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                             <span>{cat.name}</span>
                                         </AccordionTrigger>
                                         <AccordionContent>
+                                            {cat.groups && (
+                                                <AccessoryGroups
+                                                    category={cat}
+                                                    isSelected={(id) => rows.some(r => r.serviceId === id)}
+                                                    onSetGroup={(group, ids) => setRows(prev => applyAccessoryGroup(
+                                                        prev, group, ids, r => r.serviceId,
+                                                        o => ({
+                                                            key: `row-${nextKey++}`, base: null, serviceId: o.id, category: cat.name, name: o.name,
+                                                            price: '0', no_charge: false, parts: [], part_percentages: {}, isCustom: false,
+                                                        }),
+                                                    ))}
+                                                />
+                                            )}
                                             <div className="space-y-1 pt-2">
-                                                {(cat.services || []).map(service => {
+                                                {(cat.groups ? [] : (cat.services || [])).map(service => {
                                                     const on = rows.some(r => r.serviceId === service.id);
                                                     return (
                                                         <div
