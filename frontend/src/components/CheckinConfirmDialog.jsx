@@ -66,7 +66,7 @@ export const CheckinConfirmDialog = ({
                                 <p className="font-heading text-primary mb-1">Servicios</p>
                                 {services.map((s, idx) => (
                                     <div key={`${s.serviceId}-${idx}`} className="flex justify-between gap-3">
-                                        <span className="truncate">{s.serviceName}</span>
+                                        <span className="truncate">{s.serviceName}{s.film_label ? ` · ${s.film_label}` : ''}</span>
                                         <span className="font-mono shrink-0">{s.no_charge ? 'Sin pago' : formatCurrency(s.price || 0)}</span>
                                     </div>
                                 ))}

@@ -253,6 +253,10 @@ class ServiceItem(BaseModel):
     extras: Optional[List[Dict[str, Any]]] = None  # [{id, nombre, price}]
     # Solo en postventa: el servicio se marca sin pago (valor 0)
     no_charge: Optional[bool] = None
+    # Ultrasecure: película de polarizado elegida y precio sugerido de la tabla (el precio final es editable)
+    film: Optional[str] = None
+    film_label: Optional[str] = None
+    list_price: Optional[float] = None
 
 class OrderCreate(BaseModel):
     client_name: str
@@ -2642,6 +2646,16 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
 
 # ==================== SERVICES CATALOG ====================
 # Catálogo completo de servicios organizados por categorías
+# Películas de polarizado que acompañan al Ultrasecure (definen su precio sugerido)
+ULTRASECURE_FILMS = [
+    {"id": "nano", "label": "Nano"},
+    {"id": "black_ceramic", "label": "Black Ceramic"},
+    {"id": "3m_ir", "label": "3M IR"},
+    {"id": "ceramic_i3", "label": "Ceramic i3"},
+    {"id": "ceramic_i3_plus", "label": "Ceramic i3+"},
+    {"id": "huperoptik", "label": "Hüperoptik"},
+]
+
 SERVICES_CATALOG = {
     "polarizado": {
         "name": "Polarizado",
@@ -2658,17 +2672,42 @@ SERVICES_CATALOG = {
     # Ultrasecure (película de seguridad). protection_level: nivel de protección (%) para mostrar.
     "ultrasecure": {
         "name": "Ultrasecure",
+        # El precio depende de la película de polarizado que se instala con el Ultrasecure
+        # (incluye otros componentes y servicios). Es precio sugerido: se puede modificar.
+        "films": ULTRASECURE_FILMS,
         "services": [
             {"id": "micras_300", "name": "300 Micras", "tagline": "Entrada",
-             "description": "Protección básica del vidrio", "protection_level": 40},
+             "description": "Protección básica del vidrio", "protection_level": 40,
+             "resistencia": ["4 a 6 golpes contundentes", "2 a 3 impactos con arma traumática"],
+             "entrega": "Entrega 1 día hábil",
+             "film_prices": {"nano": 1200000, "black_ceramic": 1800000, "3m_ir": 2500000,
+                             "ceramic_i3": 2800000, "ceramic_i3_plus": 3500000, "huperoptik": 3500000}},
             {"id": "micras_500", "name": "500 Micras", "tagline": "Alta resistencia",
-             "description": "Mayor resistencia al impacto", "protection_level": 55},
+             "description": "Mayor resistencia al impacto", "protection_level": 55,
+             "resistencia": ["10 a 12 golpes contundentes", "4 a 6 impactos con arma traumática"],
+             "entrega": "Entrega 1 día hábil",
+             "film_prices": {"nano": 2000000, "black_ceramic": 2500000, "3m_ir": 3500000,
+                             "ceramic_i3": 3800000, "ceramic_i3_plus": 4000000, "huperoptik": 4000000}},
             {"id": "micras_700", "name": "700 Micras", "tagline": "Protección reforzada",
-             "protection_level": 70},
+             "protection_level": 70,
+             "resistencia": ["14 a 16 golpes contundentes", "10 a 12 impactos con arma traumática"],
+             "entrega": "Entrega 1 día hábil",
+             "film_prices": {"nano": 3500000, "black_ceramic": 4000000, "3m_ir": 5000000,
+                             "ceramic_i3": 5300000, "ceramic_i3_plus": 5500000, "huperoptik": 5500000}},
             {"id": "micras_1000", "name": "1.000 Micras", "tagline": "Protección superior",
-             "description": "Refuerzo superior contra impactos", "protection_level": 85},
+             "description": "Refuerzo superior contra impactos", "protection_level": 85,
+             "resistencia": ["20 a 22 golpes contundentes", "16 a 18 impactos con arma traumática"],
+             "entrega": "Entrega de 1 a 2 días hábiles",
+             "film_prices": {"nano": 5500000, "black_ceramic": 5800000, "3m_ir": 6000000,
+                             "ceramic_i3": 6300000, "ceramic_i3_plus": 6500000, "huperoptik": 6500000}},
             {"id": "micras_1700", "name": "1.700 Micras", "tagline": "Máxima protección",
-             "description": "Máximo nivel de protección disponible", "protection_level": 100},
+             "description": "Máximo nivel de protección disponible", "protection_level": 100,
+             "resistencia": ["25 golpes contundentes", "45 a 50 impactos con arma traumática",
+                             "1 impacto con arma calibre .38", "4 impactos con arma calibre .765"],
+             "entrega": "Entrega de 1 a 2 días hábiles",
+             "nota": "No se garantiza como balístico",
+             "film_prices": {"nano": 7500000, "black_ceramic": 8000000, "3m_ir": 8500000,
+                             "ceramic_i3": 8800000, "ceramic_i3_plus": 9000000, "huperoptik": 9000000}},
         ]
     },
     "ppf": {
@@ -2705,10 +2744,12 @@ SERVICES_CATALOG = {
         "name": "Detailing",
         "services": [
             {"id": "polichado_profesional", "name": "Polichado Profesional"},
-            {"id": "ceramico_3_anos", "name": "Cerámico 3 años"},
-            {"id": "ceramico_5_anos", "name": "Cerámico 5 años"},
-            {"id": "lavado", "name": "Lavado"},
-            {"id": "mantenimiento_ceramico", "name": "Mantenimiento Cerámico"},
+            {"id": "ceramico_3_anos", "name": "Cerámico 3 años", "default_price": 1500000, "min_price": 1300000},
+            {"id": "ceramico_5_anos", "name": "Cerámico 5 años", "default_price": 2000000, "min_price": 1800000},
+            {"id": "lavado", "name": "Lavado", "default_price": 60000, "min_price": 50000},
+            {"id": "manto_1_ano_ceras", "name": "Manto 1 año (ceras)", "default_price": 800000, "min_price": 600000},
+            {"id": "mantenimiento_manto_1_ano", "name": "Mantenimiento Manto 1 año", "default_price": 400000, "min_price": 300000},
+            {"id": "mantenimiento_ceramico", "name": "Mantenimiento Cerámico 3 y 5 años", "default_price": 500000, "min_price": 400000},
             {"id": "lavado_chasis", "name": "Lavado Chasis"},
             {"id": "ceramico_cojineria", "name": "Cerámico Cojinería"},
             {"id": "ceramico_plasticos", "name": "Cerámico Plásticos"},

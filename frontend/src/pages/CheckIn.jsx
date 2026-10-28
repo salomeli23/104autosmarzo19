@@ -15,6 +15,8 @@ import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { formatCurrency, VEHICLE_PARTS, PPF_PARTS, CHECKIN_NOTICES } from '../lib/utils';
 import { SUNROOF_ID, isSunroofExtra, isSunroofLine, findSunroof, stripSunroof, buildSunroofLine } from '../lib/sunroof';
+import { UltrasecureFilmPicker, SuggestedPriceHint } from '../components/UltrasecureFilmPicker';
+import { findCatalogService, defaultServicePrice, serviceDescription, stripFilmFromName } from '../lib/servicePricing';
 import { generateOrderPDF } from '../components/OrderPDFGenerator';
 import { Inspection360Inline } from '../components/Inspection360Inline';
 import { toast } from 'sonner';
@@ -134,9 +136,12 @@ export const CheckIn = () => {
             const initialServices = orderServices.filter(s => !isSunroofLine(s)).map(stripSunroof).map(s => {
                 return {
                 serviceId: s.service,
-                serviceName: s.description?.split(' - ')[1] || s.service,
+                serviceName: stripFilmFromName(s.description?.split(' - ').slice(1).join(' - ') || s.service, s.film_label),
                 category: s.description?.split(' - ')[0] || 'Servicio',
                 price: s.price || 0,
+                film: s.film || null,
+                film_label: s.film_label || null,
+                list_price: s.list_price ?? null,
                 no_charge: !!s.no_charge,
                 parts: s.parts,
                 part_percentages: s.part_percentages,
@@ -244,16 +249,25 @@ export const CheckIn = () => {
                 const ppfPreset = serviceId === 'ppf_full_body' ? { ppf_scope: 'full' }
                     : serviceId === 'ppf_partes' ? { ppf_scope: 'partes' }
                     : {};
+                // Detailing con precio de lista: se precarga (editable)
+                const suggested = defaultServicePrice(findCatalogService(serviceCatalog, serviceId).service);
                 return [...prev, { 
                     serviceId, 
                     serviceName, 
                     category: categoryName, 
-                    price: 0,
+                    price: suggested || 0,
                     parts: serviceRequiresParts(serviceId) ? [] : undefined,
                     ...ppfPreset
                 }];
             }
         });
+    };
+
+    // Ultrasecure: la película de polarizado define el precio sugerido (editable)
+    const handleFilmPick = (serviceId, { film, film_label, price }) => {
+        setSelectedServices(prev => prev.map(s => (s.serviceId === serviceId
+            ? { ...s, film, film_label, list_price: price, price }
+            : s)));
     };
 
     // Update service price
@@ -533,6 +547,12 @@ export const CheckIn = () => {
             toast.error('Ingresa el valor de al menos un servicio');
             return;
         }
+        const missingFilm = !order?.is_postventa && selectedServices.find(svc =>
+            findCatalogService(serviceCatalog, svc.serviceId).service?.film_prices && !svc.film);
+        if (missingFilm) {
+            toast.error(`Elige el polarizado que lleva ${missingFilm.serviceName} (Ultrasecure)`);
+            return;
+        }
         if (sunroof.enabled && (sunroof.price === '' || !(parseFloat(sunroof.price) >= 0))) {
             toast.error('Ingresa el valor del sunroof adicional');
             return;
@@ -579,7 +599,10 @@ export const CheckIn = () => {
                     service: svc.serviceId,
                     price: svc.no_charge ? 0 : svc.price,
                     no_charge: order.is_postventa ? !!svc.no_charge : null,
-                    description: `${svc.category} - ${svc.serviceName}`,
+                    description: serviceDescription(svc.category, svc.serviceName, svc.film_label),
+                    film: svc.film || null,
+                    film_label: svc.film_label || null,
+                    list_price: svc.list_price ?? null,
                     parts: svc.parts || [],
                     part_percentages: svc.part_percentages || {},
                     ppf_scope: svc.ppf_scope || null,
@@ -1190,7 +1213,7 @@ export const CheckIn = () => {
                                                                     Personalizado
                                                                 </span>
                                                             )}
-                                                            <p className="font-medium text-sm">{svc.serviceName}</p>
+                                                            <p className="font-medium text-sm">{svc.serviceName}{svc.film_label ? ` · ${svc.film_label}` : ''}</p>
                                                         </div>
                                                         <p className="text-xs text-muted-foreground">{svc.category}</p>
                                                     </div>
@@ -1381,6 +1404,29 @@ export const CheckIn = () => {
                                                         </p>
                                                     </div>
                                                 )}
+                                                {/* Ultrasecure: película y precio sugerido · Detailing: precio sugerido */}
+                                                {(() => {
+                                                    const { service: catSvc, category: catCat } = findCatalogService(serviceCatalog, svc.serviceId);
+                                                    if (!catSvc) return null;
+                                                    return (
+                                                        <>
+                                                            <UltrasecureFilmPicker
+                                                                service={catSvc}
+                                                                films={catCat?.films}
+                                                                value={svc.film}
+                                                                price={svc.price}
+                                                                onPick={(pick) => handleFilmPick(svc.serviceId, pick)}
+                                                                className="mt-3 pt-3 border-t border-border/50"
+                                                            />
+                                                            {catSvc.resistencia?.length > 0 && (
+                                                                <p className="text-[11px] text-muted-foreground mt-1">
+                                                                    Resistencia: {catSvc.resistencia.join(' · ')}{catSvc.entrega ? ` · ${catSvc.entrega}` : ''}
+                                                                </p>
+                                                            )}
+                                                            <div className="mt-1 text-right"><SuggestedPriceHint service={catSvc} price={svc.price} /></div>
+                                                        </>
+                                                    );
+                                                })()}
                                                 {/* Vehicle parts selection for polarizado services */}
                                                 {serviceRequiresParts(svc.serviceId) && (
                                                     <div className="mt-3 pt-3 border-t border-border/50">

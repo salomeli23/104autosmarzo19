@@ -10,6 +10,8 @@ import { ordersAPI, servicesAPI } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency, VEHICLE_PARTS } from '../lib/utils';
 import { isSunroofLine, findSunroof, stripSunroof, buildSunroofLine } from '../lib/sunroof';
+import { UltrasecureFilmPicker, SuggestedPriceHint } from './UltrasecureFilmPicker';
+import { findCatalogService, defaultServicePrice, serviceDescription, stripFilmFromName } from '../lib/servicePricing';
 import { toast } from 'sonner';
 import { FilePenLine, Plus, PlusCircle, Trash2, Lock, Package, Car, CheckCircle } from 'lucide-react';
 
@@ -36,17 +38,24 @@ const splitDescription = (svc) => {
         ? { category: parts[0], name: parts.slice(1).join(' - ') }
         : { category: 'Servicio', name: svc.description || svc.service };
 };
-const rowFromService = (svc) => ({
+const rowFromService = (svc) => {
+    const { category, name } = splitDescription(svc);
+    return {
     key: `row-${nextKey++}`,
     base: svc,
     serviceId: svc.service,
-    ...splitDescription(svc),
+    category,
+    name: stripFilmFromName(name, svc.film_label),
+    film: svc.film || null,
+    film_label: svc.film_label || null,
+    list_price: svc.list_price ?? null,
     price: String(svc.price ?? 0),
     no_charge: !!svc.no_charge,
     parts: svc.parts || [],
     part_percentages: svc.part_percentages || {},
     isCustom: svc.service === 'personalizado' || String(svc.service || '').startsWith('custom_'),
-});
+    };
+};
 const extrasSum = (svc) => (svc?.extras || []).reduce((s, e) => s + (parseFloat(e?.price) || 0), 0);
 const showsParts = (r) => SERVICES_WITH_PARTS.includes(r.serviceId) || (r.parts || []).length > 0;
 
@@ -133,7 +142,7 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
         }
         setRows(prev => [...prev, {
             key: `row-${nextKey++}`, base: null, serviceId: service.id,
-            category: categoryName, name: service.name, price: '0', no_charge: false,
+            category: categoryName, name: service.name, price: String(defaultServicePrice(service) || 0), no_charge: false,
             parts: [], part_percentages: {}, isCustom: false,
         }]);
     };
@@ -165,6 +174,11 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
             toast.error('Ingresa el valor del sunroof adicional');
             return;
         }
+        const missingFilm = !isPostventa && rows.find(r => findCatalogService(catalog, r.serviceId).service?.film_prices && !r.film);
+        if (missingFilm) {
+            toast.error(`Elige el polarizado que lleva ${missingFilm.name} (Ultrasecure)`);
+            return;
+        }
         if (!password.trim()) {
             toast.error('Ingresa la contraseña para actualizar la orden');
             return;
@@ -173,7 +187,10 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
             const price = r.no_charge ? 0 : (parseFloat(r.price) || 0);
             const fields = {
                 service: r.serviceId,
-                description: `${r.category} - ${r.name}`,
+                description: serviceDescription(r.category, r.name, r.film_label),
+                film: r.film || null,
+                film_label: r.film_label || null,
+                list_price: r.list_price ?? null,
                 price,
                 no_charge: isPostventa ? r.no_charge : null,
                 parts: r.parts,
@@ -241,7 +258,7 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                                         <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded">Personalizado</span>
                                                     )}
                                                     {!r.base && <span className="text-xs bg-emerald-500/20 text-emerald-500 px-1.5 py-0.5 rounded">Nuevo</span>}
-                                                    <p className="font-medium text-sm truncate">{r.name}</p>
+                                                    <p className="font-medium text-sm truncate">{r.name}{r.film_label ? ` · ${r.film_label}` : ''}</p>
                                                 </div>
                                                 <p className="text-xs text-muted-foreground truncate">
                                                     {r.category}
@@ -284,6 +301,23 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                             </div>
                                         </div>
 
+                                        {(() => {
+                                            const { service: catSvc, category: catCat } = findCatalogService(catalog, r.serviceId);
+                                            if (!catSvc) return null;
+                                            return (
+                                                <>
+                                                    <UltrasecureFilmPicker
+                                                        service={catSvc}
+                                                        films={catCat?.films}
+                                                        value={r.film}
+                                                        price={r.price}
+                                                        onPick={({ film, film_label, price }) => updateRow(r.key, { film, film_label, list_price: price, price: String(price) })}
+                                                        className="mt-3 pt-3 border-t border-border/50"
+                                                    />
+                                                    <div className="mt-1 text-right"><SuggestedPriceHint service={catSvc} price={r.price} /></div>
+                                                </>
+                                            );
+                                        })()}
                                         {withParts && (
                                             <div className="mt-3 pt-3 border-t border-border/50">
                                                 <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">

@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatCurrency } from '../lib/utils';
 
 /**
  * Nombre de un servicio del catálogo con su detalle opcional
@@ -27,6 +28,18 @@ export const ServiceCatalogLabel = ({ service }) => {
                         <span className="block h-full rounded-full bg-emerald-500" style={{ width: `${level}%` }} />
                     </span>
                     <span className="text-[11px] text-muted-foreground">Protección {level}%</span>
+                </span>
+            )}
+            {service.resistencia?.length > 0 && (
+                <span className="block text-[11px] text-muted-foreground mt-1" data-testid={`resistencia-${service.id}`}>
+                    <b className="text-foreground/80">Resistencia:</b> {service.resistencia.join(' · ')}
+                    {service.entrega && <> · {service.entrega}</>}
+                </span>
+            )}
+            {service.nota && <span className="block text-[11px] text-amber-500">{service.nota}</span>}
+            {service.default_price != null && (
+                <span className="block text-[11px] text-muted-foreground mt-0.5">
+                    Sugerido {formatCurrency(service.default_price)}{service.min_price ? ` · mín. ${formatCurrency(service.min_price)}` : ''}
                 </span>
             )}
         </span>

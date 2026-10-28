@@ -26,6 +26,8 @@ import { PostventaBadge } from '../components/PostventaBadge';
 import { CheckinByTag } from '../components/CheckinByTag';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
+import { UltrasecureFilmPicker, SuggestedPriceHint } from '../components/UltrasecureFilmPicker';
+import { findCatalogService, defaultServicePrice, serviceDescription } from '../lib/servicePricing';
 import { AppointmentNotifications } from '../components/AppointmentNotifications';
 
 const APPOINTMENT_TYPE_LABELS = { franja: 'Por franja', prioridad: 'Por prioridad', postventa: 'Postventa' };
@@ -241,15 +243,24 @@ export const Appointments = () => {
             if (exists) {
                 return prev.filter(s => s.serviceId !== serviceId);
             } else {
+                // Detailing con precio de lista: se precarga (editable)
+                const suggested = defaultServicePrice(findCatalogService(serviceCatalog, serviceId).service);
                 return [...prev, { 
                     serviceId, 
                     serviceName, 
                     category: categoryName, 
-                    price: 0,
+                    price: suggested || 0,
                     parts: serviceRequiresParts(serviceId) ? [] : undefined
                 }];
             }
         });
+    };
+
+    // Ultrasecure: la película de polarizado define el precio sugerido (editable)
+    const handleFilmPick = (serviceId, { film, film_label, price }) => {
+        setSelectedServices(prev => prev.map(s => (s.serviceId === serviceId
+            ? { ...s, film, film_label, list_price: price, price }
+            : s)));
     };
 
     // Update service price
@@ -530,9 +541,12 @@ export const Appointments = () => {
         const servicesData = selectedServices.map(svc => ({
             service: svc.serviceId,
             price: svc.price,
-            description: `${svc.category} - ${svc.serviceName}`,
+            description: serviceDescription(svc.category, svc.serviceName, svc.film_label),
             parts: svc.parts || [],
             extras: [],
+            film: svc.film || null,
+            film_label: svc.film_label || null,
+            list_price: svc.list_price ?? null,
         }));
         // El sunroof va como línea propia (Check-in lo reconoce como adicional)
         if (sunroof.enabled) {
@@ -565,6 +579,15 @@ export const Appointments = () => {
             toast.error('Ingresa la marca y el modelo del vehículo');
             return;
         }
+        const missingFilm = !isPostventa && selectedServices.find(svc => {
+            const { service } = findCatalogService(serviceCatalog, svc.serviceId);
+            return service?.film_prices && !svc.film;
+        });
+        if (missingFilm) {
+            toast.error(`Elige el polarizado que lleva ${missingFilm.serviceName} (Ultrasecure)`);
+            return;
+        }
+
         if (!isPostventa && selectedServices.length === 0) {
             toast.error('Selecciona al menos un servicio');
             return;
@@ -712,7 +735,7 @@ export const Appointments = () => {
                     ...(type === 'postventa'
                         ? buildServicesData().map(svc => ({ label: svc.description.replace(/^Postventa - /, ''), value: svc.no_charge ? 'Sin pago' : formatCurrency(svc.price) }))
                         : [
-                            ...selectedServices.map(svc => ({ label: svc.serviceName, value: formatCurrency(svc.price || 0) })),
+                            ...selectedServices.map(svc => ({ label: svc.film_label ? `${svc.serviceName} · ${svc.film_label}` : svc.serviceName, value: formatCurrency(svc.price || 0) })),
                             ...(sunroof.enabled ? [{ label: 'Sunroof (adicional)', value: formatCurrency(parseFloat(sunroof.price) || 0) }] : []),
                         ]),
                     { label: `Descuento ${discountApplied?.code || ''}`, value: discountApplied ? `-${formatCurrency(discountApplied.discount_amount)}` : null },
@@ -1354,6 +1377,21 @@ export const Appointments = () => {
                                                                         </div>
                                                                     )}
                                                                 </div>
+                                                                {isSelected && (
+                                                                    <>
+                                                                        <UltrasecureFilmPicker
+                                                                            service={service}
+                                                                            films={category.films}
+                                                                            value={selectedService?.film}
+                                                                            price={selectedService?.price}
+                                                                            onPick={(pick) => handleFilmPick(service.id, pick)}
+                                                                            className="mt-3 pt-3 border-t border-border/50"
+                                                                        />
+                                                                        <div className="mt-1 text-right">
+                                                                            <SuggestedPriceHint service={service} price={selectedService?.price} />
+                                                                        </div>
+                                                                    </>
+                                                                )}
                                                                 {/* Vehicle parts selection for polarizado services */}
                                                                 {showParts && (
                                                                     <div className="mt-3 pt-3 border-t border-border/50">
@@ -1482,7 +1520,7 @@ export const Appointments = () => {
                                                                     Personalizado
                                                                 </span>
                                                             )}
-                                                            <span className="font-medium truncate">{svc.serviceName}</span>
+                                                            <span className="font-medium truncate">{svc.serviceName}{svc.film_label ? ` · ${svc.film_label}` : ''}</span>
                                                         </div>
                                                         <div className="flex items-center justify-between sm:justify-end gap-2 flex-shrink-0">
                                                             <span className="font-mono text-base">{formatCurrency(svc.price)}</span>
