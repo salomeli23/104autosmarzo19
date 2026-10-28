@@ -29,6 +29,7 @@ import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 import { UltrasecureFilmPicker, SuggestedPriceHint } from '../components/UltrasecureFilmPicker';
 import { SunroofAddon, SUNROOF_CATEGORIES } from '../components/SunroofAddon';
 import { AccessoryGroups, applyAccessoryGroup } from '../components/AccessoryGroups';
+import { PpfPartsPicker, ppfZonesFor, ppfPartsDescription } from '../components/PpfPartsPicker';
 import { findCatalogService, defaultServicePrice, serviceDescription } from '../lib/servicePricing';
 import { AppointmentNotifications } from '../components/AppointmentNotifications';
 
@@ -252,7 +253,10 @@ export const Appointments = () => {
                     serviceName, 
                     category: categoryName, 
                     price: suggested || 0,
-                    parts: serviceRequiresParts(serviceId) ? [] : undefined
+                    parts: serviceRequiresParts(serviceId) ? [] : undefined,
+                    // PPF: el plan viene definido por la opción del catálogo
+                    ...(serviceId === 'ppf_partes' ? { ppf_scope: 'partes', ppf_parts: [] } : {}),
+                    ...(serviceId === 'ppf_full_body' ? { ppf_scope: 'full' } : {}),
                 }];
             }
         });
@@ -549,6 +553,12 @@ export const Appointments = () => {
             film: svc.film || null,
             film_label: svc.film_label || null,
             list_price: svc.list_price ?? null,
+            ...(svc.ppf_scope ? {
+                ppf_scope: svc.ppf_scope,
+                ppf_parts: svc.ppf_scope === 'partes' ? (svc.ppf_parts || []) : [],
+                ppf_zones: svc.ppf_scope === 'partes' ? ppfZonesFor(svc.ppf_parts || []) : [],
+                ppf_parts_description: svc.ppf_scope === 'partes' ? ppfPartsDescription(svc.ppf_parts || []) : 'Full Body',
+            } : {}),
         }));
         // El sunroof va como línea propia (Check-in lo reconoce como adicional)
         if (sunroof.enabled) {
@@ -587,6 +597,10 @@ export const Appointments = () => {
         });
         if (missingFilm) {
             toast.error(`Elige el polarizado que lleva ${missingFilm.serviceName} (Ultrasecure)`);
+            return;
+        }
+        if (!isPostventa && selectedServices.some(svc => svc.ppf_scope === 'partes' && !(svc.ppf_parts || []).length)) {
+            toast.error('Elige las partes del PPF por partes');
             return;
         }
 
@@ -1403,6 +1417,16 @@ export const Appointments = () => {
                                                                         </div>
                                                                     )}
                                                                 </div>
+                                                                {isSelected && service.id === 'ppf_partes' && (
+                                                                    <div className="mt-3 pt-3 border-t border-border/50 space-y-1">
+                                                                        <p className="text-xs text-muted-foreground">Partes a proteger con PPF:</p>
+                                                                        <PpfPartsPicker
+                                                                            value={selectedService?.ppf_parts || []}
+                                                                            onChange={(parts) => setSelectedServices(prev => prev.map(s => (s.serviceId === service.id ? { ...s, ppf_parts: parts } : s)))}
+                                                                            testId="appointment-ppf-parts"
+                                                                        />
+                                                                    </div>
+                                                                )}
                                                                 {isSelected && (
                                                                     <>
                                                                         <UltrasecureFilmPicker
@@ -1549,7 +1573,7 @@ export const Appointments = () => {
                                                                     Personalizado
                                                                 </span>
                                                             )}
-                                                            <span className="font-medium truncate">{svc.serviceName}{svc.film_label ? ` · ${svc.film_label}` : ''}</span>
+                                                            <span className="font-medium truncate">{svc.serviceName}{svc.film_label ? ` · ${svc.film_label}` : ''}{svc.ppf_parts?.length ? ` · ${svc.ppf_parts.length} parte(s)` : ''}</span>
                                                         </div>
                                                         <div className="flex items-center justify-between sm:justify-end gap-2 flex-shrink-0">
                                                             <span className="font-mono text-base">{formatCurrency(svc.price)}</span>

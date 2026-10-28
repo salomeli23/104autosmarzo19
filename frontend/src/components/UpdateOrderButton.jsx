@@ -12,6 +12,7 @@ import { formatCurrency, VEHICLE_PARTS } from '../lib/utils';
 import { isSunroofLine, findSunroof, stripSunroof, buildSunroofLine } from '../lib/sunroof';
 import { UltrasecureFilmPicker, SuggestedPriceHint } from './UltrasecureFilmPicker';
 import { AccessoryGroups, applyAccessoryGroup } from './AccessoryGroups';
+import { PpfPartsPicker, ppfZonesFor, ppfPartsDescription } from './PpfPartsPicker';
 import { findCatalogService, defaultServicePrice, serviceDescription, stripFilmFromName } from '../lib/servicePricing';
 import { toast } from 'sonner';
 import { FilePenLine, Plus, PlusCircle, Trash2, Lock, Package, Car, CheckCircle } from 'lucide-react';
@@ -50,6 +51,8 @@ const rowFromService = (svc) => {
     film: svc.film || null,
     film_label: svc.film_label || null,
     list_price: svc.list_price ?? null,
+    ppf_scope: svc.ppf_scope || (svc.service === 'ppf_partes' ? 'partes' : svc.service === 'ppf_full_body' ? 'full' : null),
+    ppf_parts: svc.ppf_parts || [],
     price: String(svc.price ?? 0),
     no_charge: !!svc.no_charge,
     parts: svc.parts || [],
@@ -145,6 +148,8 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
             key: `row-${nextKey++}`, base: null, serviceId: service.id,
             category: categoryName, name: service.name, price: String(defaultServicePrice(service) || 0), no_charge: false,
             parts: [], part_percentages: {}, isCustom: false,
+            ppf_scope: service.id === 'ppf_partes' ? 'partes' : service.id === 'ppf_full_body' ? 'full' : null,
+            ppf_parts: [],
         }]);
     };
 
@@ -175,6 +180,10 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
             toast.error('Ingresa el valor del sunroof adicional');
             return;
         }
+        if (!isPostventa && rows.some(r => r.ppf_scope === 'partes' && !(r.ppf_parts || []).length)) {
+            toast.error('Elige las partes del PPF por partes');
+            return;
+        }
         const missingFilm = !isPostventa && rows.find(r => findCatalogService(catalog, r.serviceId).service?.film_prices && !r.film);
         if (missingFilm) {
             toast.error(`Elige el polarizado que lleva ${missingFilm.name} (Ultrasecure)`);
@@ -192,6 +201,12 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                 film: r.film || null,
                 film_label: r.film_label || null,
                 list_price: r.list_price ?? null,
+                ...(r.ppf_scope === 'partes' ? {
+                    ppf_scope: 'partes',
+                    ppf_parts: r.ppf_parts,
+                    ppf_zones: ppfZonesFor(r.ppf_parts),
+                    ppf_parts_description: ppfPartsDescription(r.ppf_parts),
+                } : {}),
                 price,
                 no_charge: isPostventa ? r.no_charge : null,
                 parts: r.parts,
@@ -319,6 +334,16 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                                 </>
                                             );
                                         })()}
+                                        {r.ppf_scope === 'partes' && (
+                                            <div className="mt-3 pt-3 border-t border-border/50 space-y-1">
+                                                <p className="text-xs text-muted-foreground">Partes a proteger con PPF:</p>
+                                                <PpfPartsPicker
+                                                    value={r.ppf_parts || []}
+                                                    onChange={(parts) => updateRow(r.key, { ppf_parts: parts })}
+                                                    testId={`update-order-ppf-${idx}`}
+                                                />
+                                            </div>
+                                        )}
                                         {withParts && (
                                             <div className="mt-3 pt-3 border-t border-border/50">
                                                 <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
@@ -377,6 +402,22 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                                 <AccessoryGroups
                                                     category={cat}
                                                     isSelected={(id) => rows.some(r => r.serviceId === id)}
+                                                    renderPrice={(o) => {
+                                                        const row = rows.find(r => r.serviceId === o.id);
+                                                        return row ? (
+                                                            <div className="flex items-center gap-1">
+                                                                <span className="text-sm text-muted-foreground">$</span>
+                                                                <Input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    value={row.price}
+                                                                    onChange={(e) => updateRow(row.key, { price: e.target.value })}
+                                                                    className="w-28 h-8 text-right"
+                                                                    data-testid={`update-order-acc-price-${o.id}`}
+                                                                />
+                                                            </div>
+                                                        ) : null;
+                                                    }}
                                                     onSetGroup={(group, ids) => setRows(prev => applyAccessoryGroup(
                                                         prev, group, ids, r => r.serviceId,
                                                         o => ({

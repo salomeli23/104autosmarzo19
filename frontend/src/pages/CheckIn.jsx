@@ -13,7 +13,8 @@ import { QRScanner } from '../components/QRScanner';
 import { QRDisplay } from '../components/QRDisplay';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
-import { formatCurrency, VEHICLE_PARTS, PPF_PARTS, CHECKIN_NOTICES } from '../lib/utils';
+import { formatCurrency, VEHICLE_PARTS, CHECKIN_NOTICES } from '../lib/utils';
+import { PpfPartsPicker, ppfZonesFor, ppfPartsDescription } from '../components/PpfPartsPicker';
 import { SUNROOF_ID, isSunroofExtra, isSunroofLine, findSunroof, stripSunroof, buildSunroofLine } from '../lib/sunroof';
 import { UltrasecureFilmPicker, SuggestedPriceHint } from '../components/UltrasecureFilmPicker';
 import { SunroofAddon, SUNROOF_CATEGORIES } from '../components/SunroofAddon';
@@ -68,8 +69,6 @@ export const CheckIn = () => {
     const [validatingDiscount, setValidatingDiscount] = useState(false);
     // Sunroof adicional (fuera de los servicios): { enabled, price, percentage }
     const [sunroof, setSunroof] = useState({ enabled: false, price: '', percentage: '' });
-    // Input transitorio del selector predictivo de partes PPF: { serviceId: texto }
-    const [ppfPartInputs, setPpfPartInputs] = useState({});
     
     // Risk Agreement Modal
     const [showRiskAgreement, setShowRiskAgreement] = useState(false);
@@ -411,39 +410,9 @@ export const CheckIn = () => {
             patch.ppf_parts = [];
         }
         updateSvcPPF(serviceId, patch);
-        setPpfPartInputs(prev => ({ ...prev, [serviceId]: '' }));
     };
-    const togglePpfZone = (serviceId, zone) => {
-        const svc = selectedServices.find(s => s.serviceId === serviceId);
-        const zones = new Set(svc?.ppf_zones || []);
-        if (zones.has(zone)) zones.delete(zone); else zones.add(zone);
-        updateSvcPPF(serviceId, { ppf_zones: Array.from(zones) });
-    };
-    const addPpfPart = (serviceId, part) => {
-        const p = (part || '').trim();
-        if (!p) return;
-        const svc = selectedServices.find(s => s.serviceId === serviceId);
-        const parts = svc?.ppf_parts || [];
-        if (parts.some(x => x.toLowerCase() === p.toLowerCase())) {
-            setPpfPartInputs(prev => ({ ...prev, [serviceId]: '' }));
-            return;
-        }
-        // Capitaliza la primera letra
-        const label = p.charAt(0).toUpperCase() + p.slice(1);
-        updateSvcPPF(serviceId, { ppf_parts: [...parts, label] });
-        setPpfPartInputs(prev => ({ ...prev, [serviceId]: '' }));
-    };
-    const removePpfPart = (serviceId, part) => {
-        const svc = selectedServices.find(s => s.serviceId === serviceId);
-        updateSvcPPF(serviceId, { ppf_parts: (svc?.ppf_parts || []).filter(x => x !== part) });
-    };
-    const getPpfPartSuggestions = (serviceId) => {
-        const q = (ppfPartInputs[serviceId] || '').trim().toLowerCase();
-        const svc = selectedServices.find(s => s.serviceId === serviceId);
-        const selected = (svc?.ppf_parts || []).map(x => x.toLowerCase());
-        const base = PPF_PARTS.filter(p => !selected.includes(p.toLowerCase()));
-        if (!q) return base.slice(0, 8);
-        return base.filter(p => p.toLowerCase().includes(q)).slice(0, 8);
+    const setPpfParts = (serviceId, parts) => {
+        updateSvcPPF(serviceId, { ppf_parts: parts, ppf_zones: ppfZonesFor(parts) });
     };
 
     // Calculate total (IVA 19% si aplica factura). El recargo por tarjeta fue removido por decisión de negocio.
@@ -563,6 +532,10 @@ export const CheckIn = () => {
             toast.error(`Elige el polarizado que lleva ${missingFilm.serviceName} (Ultrasecure)`);
             return;
         }
+        if (selectedServices.some(svc => isPPFService(svc) && svc.ppf_scope === 'partes' && !(svc.ppf_parts || []).length)) {
+            toast.error('Elige las partes del PPF por partes');
+            return;
+        }
         if (sunroof.enabled && (sunroof.price === '' || !(parseFloat(sunroof.price) >= 0))) {
             toast.error('Ingresa el valor del sunroof adicional');
             return;
@@ -602,7 +575,7 @@ export const CheckIn = () => {
                     svc.ppf_scope === 'full'
                         ? `Full Body · ${svc.ppf_finish ? svc.ppf_finish.charAt(0).toUpperCase() + svc.ppf_finish.slice(1) : ''}${svc.ppf_color ? ` · Color: ${svc.ppf_color}` : ''}`
                         : svc.ppf_scope === 'partes'
-                            ? `Partes (${(svc.ppf_zones || []).map(z => z.charAt(0).toUpperCase() + z.slice(1)).join(' + ') || 'sin zona'}) · ${svc.ppf_finish ? svc.ppf_finish.charAt(0).toUpperCase() + svc.ppf_finish.slice(1) : ''}${svc.ppf_color ? ` · Color: ${svc.ppf_color}` : ''} · ${(svc.ppf_parts || []).join(', ')}`
+                            ? `${ppfPartsDescription(svc.ppf_parts || [])}${svc.ppf_finish ? ` · ${svc.ppf_finish.charAt(0).toUpperCase() + svc.ppf_finish.slice(1)}` : ''}${svc.ppf_color ? ` · Color: ${svc.ppf_color}` : ''}`
                             : null
                 ) : null;
                 return {
@@ -1329,84 +1302,15 @@ export const CheckIn = () => {
                                                             </div>
                                                         )}
 
-                                                        {/* Zonas + Partes (solo plan partes) */}
+                                                        {/* Partes (solo plan partes): la zona se calcula según las partes */}
                                                         {svc.ppf_scope === 'partes' && (
-                                                            <div className="space-y-2">
-                                                                <p className="text-[11px] text-blue-200/80">Zona</p>
-                                                                <div className="grid grid-cols-2 gap-1">
-                                                                    {[
-                                                                        { value: 'interior', label: 'Interior' },
-                                                                        { value: 'exterior', label: 'Exterior' },
-                                                                    ].map(opt => {
-                                                                        const active = (svc.ppf_zones || []).includes(opt.value);
-                                                                        return (
-                                                                            <button
-                                                                                key={opt.value}
-                                                                                type="button"
-                                                                                onClick={() => togglePpfZone(svc.serviceId, opt.value)}
-                                                                                className={`text-xs px-2 py-1.5 rounded border transition-colors ${
-                                                                                    active
-                                                                                        ? 'bg-blue-500/25 border-blue-500/60 text-blue-200 font-medium'
-                                                                                        : 'border-input hover:border-blue-500/40 text-muted-foreground'
-                                                                                }`}
-                                                                                data-testid={`ppf-zone-${svc.serviceId}-${opt.value}`}
-                                                                            >
-                                                                                {opt.label}
-                                                                            </button>
-                                                                        );
-                                                                    })}
-                                                                </div>
-
-                                                                <p className="text-[11px] text-blue-200/80">Partes</p>
-                                                                {/* Chips de partes seleccionadas */}
-                                                                {(svc.ppf_parts || []).length > 0 && (
-                                                                    <div className="flex flex-wrap gap-1" data-testid={`ppf-parts-chips-${svc.serviceId}`}>
-                                                                        {(svc.ppf_parts || []).map(part => (
-                                                                            <span key={part} className="inline-flex items-center gap-1 text-xs bg-blue-500/20 text-blue-200 border border-blue-500/40 px-2 py-0.5 rounded">
-                                                                                {part}
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => removePpfPart(svc.serviceId, part)}
-                                                                                    className="text-blue-300 hover:text-red-400"
-                                                                                    data-testid={`ppf-part-remove-${svc.serviceId}-${part}`}
-                                                                                >
-                                                                                    ×
-                                                                                </button>
-                                                                            </span>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                                {/* Selector predictivo */}
-                                                                <div className="relative">
-                                                                    <Input
-                                                                        value={ppfPartInputs[svc.serviceId] || ''}
-                                                                        onChange={(e) => setPpfPartInputs(prev => ({ ...prev, [svc.serviceId]: e.target.value }))}
-                                                                        onKeyDown={(e) => {
-                                                                            if (e.key === 'Enter') {
-                                                                                e.preventDefault();
-                                                                                addPpfPart(svc.serviceId, ppfPartInputs[svc.serviceId]);
-                                                                            }
-                                                                        }}
-                                                                        placeholder="Escribe para buscar: bomper, capot, espejos..."
-                                                                        className="h-8 text-xs"
-                                                                        data-testid={`ppf-part-input-${svc.serviceId}`}
-                                                                    />
-                                                                    {getPpfPartSuggestions(svc.serviceId).length > 0 && (
-                                                                        <div className="mt-1 flex flex-wrap gap-1" data-testid={`ppf-part-suggestions-${svc.serviceId}`}>
-                                                                            {getPpfPartSuggestions(svc.serviceId).map(part => (
-                                                                                <button
-                                                                                    key={part}
-                                                                                    type="button"
-                                                                                    onClick={() => addPpfPart(svc.serviceId, part)}
-                                                                                    className="text-[11px] px-2 py-0.5 rounded border border-input text-muted-foreground hover:border-blue-500/50 hover:text-blue-200 transition-colors"
-                                                                                    data-testid={`ppf-part-suggestion-${svc.serviceId}-${part}`}
-                                                                                >
-                                                                                    + {part}
-                                                                                </button>
-                                                                            ))}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
+                                                            <div className="space-y-1">
+                                                                <p className="text-[11px] text-blue-200/80">Partes a proteger</p>
+                                                                <PpfPartsPicker
+                                                                    value={svc.ppf_parts || []}
+                                                                    onChange={(parts) => setPpfParts(svc.serviceId, parts)}
+                                                                    testId={`ppf-parts-${svc.serviceId}`}
+                                                                />
                                                             </div>
                                                         )}
                                                         <p className="text-[11px] text-muted-foreground">
