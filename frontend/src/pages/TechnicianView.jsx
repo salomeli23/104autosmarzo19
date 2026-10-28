@@ -249,15 +249,24 @@ const InstallCard = ({ order, userId, onStart, onFinish, onMeasure, processing }
                 <WorkflowSteps order={order} />
 
                 <div className="space-y-1">
-                    {(order.services || []).filter(s => typeof s === 'object').map((s, i) => {
-                        const parts = (s.parts || []).map(p => `${PART_LABELS[p] || p}${s.part_percentages?.[p] ? ` ${s.part_percentages[p]}` : ''}`);
-                        return (
-                            <div key={i} className="text-xs p-2 rounded bg-muted/40">
-                                <p className="font-medium">{s.description || s.service}</p>
-                                {parts.length > 0 && <p className="text-muted-foreground">{parts.join(' · ')}</p>}
-                            </div>
-                        );
-                    })}
+                    {(order.services || []).filter(s => typeof s === 'object').map((s, i) => (
+                        <div key={i} className="text-xs p-2 rounded bg-muted/40 space-y-1">
+                            <p className="font-medium">{s.description || s.service}</p>
+                            {(s.parts || []).length > 0 && (
+                                <div className="flex flex-wrap gap-1" data-testid={`tech-parts-${order.id}-${i}`}>
+                                    {s.parts.map(p => (
+                                        <span key={p} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-background/60 border border-border">
+                                            {PART_LABELS[p] || p}
+                                            {s.part_percentages?.[p] && (
+                                                <b className="text-yellow-400">{s.part_percentages[p]}</b>
+                                            )}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                            {(s.ppf_parts || []).length > 0 && <p className="text-muted-foreground">PPF: {s.ppf_parts.join(', ')}</p>}
+                        </div>
+                    ))}
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs bg-muted/40 rounded-md p-2 border border-muted">

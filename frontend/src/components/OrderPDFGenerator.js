@@ -1,3 +1,4 @@
+import { partsWithOpacity } from '../lib/opacity';
 import jsPDF from 'jspdf';
 import { CHECKIN_NOTICES } from '../lib/utils';
 
@@ -141,14 +142,24 @@ export const generateOrderPDF = async (order, { download = true } = {}) => {
     const services = order.services || [];
     services.forEach((svc, idx) => {
         const name = svc.description || svc.service || 'Servicio';
-        const parts = svc.parts && svc.parts.length > 0 ? ` (${svc.parts.join(', ')})` : '';
-        const displayName = `${name}${parts}`;
+        const displayName = name;
         const price = `$${(svc.price || 0).toLocaleString('es-CO')}`;
+        // Vidrios con la opacidad elegida por el cliente (y partes de PPF)
+        const detail = [
+            partsWithOpacity(svc).join(' · '),
+            (svc.ppf_parts || []).length ? `Partes PPF: ${svc.ppf_parts.join(', ')}` : '',
+        ].filter(Boolean).join(' | ');
+        let detailLines = [];
+        if (detail) {
+            doc.setFontSize(7);
+            detailLines = doc.splitTextToSize(`Opacidad / partes: ${detail}`, pageWidth - 80);
+        }
+        const rowHeight = 8 + detailLines.length * 3.5;
         
         // Alternate row color
         if (idx % 2 === 0) {
             doc.setFillColor(250, 250, 250);
-            doc.rect(margin, yPos - 2, pageWidth - 2 * margin, 8, 'F');
+            doc.rect(margin, yPos - 2, pageWidth - 2 * margin, rowHeight, 'F');
         }
         
         doc.setFont('helvetica', 'normal');
@@ -166,7 +177,13 @@ export const generateOrderPDF = async (order, { download = true } = {}) => {
         }
         doc.text(truncatedName, margin + 15, yPos + 4);
         doc.text(price, pageWidth - 35, yPos + 4);
-        yPos += 8;
+        if (detailLines.length) {
+            doc.setFontSize(7);
+            doc.setTextColor(30, 64, 175);
+            doc.text(detailLines, margin + 15, yPos + 7.5);
+            doc.setTextColor(0, 0, 0);
+        }
+        yPos += rowHeight;
     });
 
     // Custom services if any

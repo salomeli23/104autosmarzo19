@@ -9,6 +9,7 @@ import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, 
 import { LiveTimer } from '../components/LiveTimer';
 import { TechMeasurementsSummary } from '../components/TechMeasurements';
 import { CompleteCuttingDialog } from '../components/CompleteCuttingDialog';
+import { partLabel } from '../lib/opacity';
 
 const CuttingView = () => {
     const [orders, setOrders] = useState([]);
@@ -201,7 +202,7 @@ const CuttingView = () => {
                                                             <div className="flex flex-wrap gap-1 mt-1">
                                                                 {svc.parts.map((part, pidx) => (
                                                                     <span key={pidx} className="text-xs bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded">
-                                                                        {part.replace(/_/g, ' ')}
+                                                                        {partLabel(part)}{svc.part_percentages?.[part] ? ` · ${svc.part_percentages[part]}` : ''}
                                                                     </span>
                                                                 ))}
                                                             </div>
@@ -287,7 +288,7 @@ const CuttingView = () => {
                                                             <div className="flex flex-wrap gap-1 mt-1">
                                                                 {svc.parts.map((part, pidx) => (
                                                                     <span key={pidx} className="text-xs bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded">
-                                                                        {part.replace(/_/g, ' ')}
+                                                                        {partLabel(part)}{svc.part_percentages?.[part] ? ` · ${svc.part_percentages[part]}` : ''}
                                                                     </span>
                                                                 ))}
                                                             </div>

@@ -7,6 +7,7 @@ import { Textarea } from './ui/textarea';
 import { MEASURE_ZONES } from '../lib/measureZones';
 import { LinearMeasureInput, formatLinear } from './LinearMeasureInput';
 import { TechMeasurementsSummary, zoneText } from './TechMeasurements';
+import { zoneOpacityText } from '../lib/opacity';
 import { cuttingAPI, inventoryAPI, cuttingCatalogAPI } from '../lib/api';
 import { toast } from 'sonner';
 import { Scissors, Plus, Trash2, Recycle, CheckCircle2, ArrowLeft, Gauge, AlertTriangle } from 'lucide-react';
@@ -239,6 +240,13 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             </p>
                                             <span className="text-xs text-muted-foreground">Técnico: <b className="text-foreground">{zoneText(tm[z.id])}</b> · {limitText(z.id)}</span>
                                         </div>
+                                        {zoneOpacityText(order, z.id) && (
+                                            <p className="text-xs" data-testid={`cut-opacity-${z.id}`}>
+                                                <span className="px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 font-semibold">
+                                                    Opacidad: {zoneOpacityText(order, z.id)}
+                                                </span>
+                                            </p>
+                                        )}
                                         {ls.map((l, idx) => (
                                             <div key={l.key} className="grid grid-cols-1 sm:grid-cols-[1.3fr_1.3fr_1fr_auto] gap-2 items-end" data-testid={`cut-line-${z.id}-${idx}`}>
                                                 <div className="space-y-1">
@@ -320,7 +328,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             data-testid={`cut-reuse-${l.key}`}
                                         />
                                         <div className="flex-1 min-w-0 text-sm">
-                                            <p className="font-medium">{z.n}. {z.label} · {formatLinear(parseFloat(l.cm))}</p>
+                                            <p className="font-medium">{z.n}. {z.label} · {formatLinear(parseFloat(l.cm))}{zoneOpacityText(order, l.zone) ? ` · ${zoneOpacityText(order, l.zone)}` : ''}</p>
                                             <p className="text-xs text-muted-foreground truncate">
                                                 {l.material} · {roll ? `${roll.codigo} ${roll.nombre}` : 'sin rollo'}
                                             </p>

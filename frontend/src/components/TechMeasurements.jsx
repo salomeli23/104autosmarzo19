@@ -6,6 +6,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { MEASURE_ZONES } from '../lib/measureZones';
 import { LinearMeasureInput, formatLinear } from './LinearMeasureInput';
+import { zoneOpacityText } from '../lib/opacity';
 
 // three.js solo se descarga cuando se abre la ventana de medidas
 const Vehicle3D = React.lazy(() => import('./Vehicle3D'));
@@ -197,6 +198,13 @@ export const TechMeasurementsDialog = ({ order, onClose, onSaved }) => {
                                     </label>
                                 </div>
                                 {z.hint && <p className="text-[11px] text-cyan-400">{z.hint}</p>}
+                                {zoneOpacityText(order, z.id) && (
+                                    <p className="text-[11px]" data-testid={`measure-opacity-${z.id}`}>
+                                        <span className="px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 font-semibold">
+                                            Opacidad: {zoneOpacityText(order, z.id)}
+                                        </span>
+                                    </p>
+                                )}
                                 {v.aplica && (
                                     <div className={`grid gap-2 ${z.id.startsWith('laterales') ? 'grid-cols-[1fr_72px]' : 'grid-cols-1'}`}>
                                         <div className="space-y-1">
