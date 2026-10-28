@@ -234,48 +234,6 @@ export const generateOrderPDF = async (order, { download = true } = {}) => {
     doc.setFont('helvetica', 'normal');
     yPos += noticesHeight + 6;
 
-    // Section: Vehicle Condition Check
-    doc.setTextColor(0, 0, 0);
-    doc.setFillColor(240, 240, 240);
-    doc.rect(margin, yPos, pageWidth - 2 * margin, 8, 'F');
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text('VERIFICACION DEL VEHICULO', margin + 3, yPos + 6);
-    yPos += 12;
-
-    // Interior items
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Interior:', margin, yPos);
-    doc.setFont('helvetica', 'normal');
-    yPos += 5;
-    
-    const interiorItems = ['Radio', 'Antena', 'Espejos', 'Encendedor', 'Tapetes', 'Herramientas', 'Gato', 'Llanta Rep.'];
-    interiorItems.forEach((item, idx) => {
-        const xOffset = margin + (idx % 4) * 45;
-        const yOffset = yPos + Math.floor(idx / 4) * 6;
-        doc.rect(xOffset, yOffset - 3, 3, 3);
-        doc.text(item, xOffset + 5, yOffset);
-    });
-    
-    yPos += 15;
-
-    // Exterior items
-    doc.setFont('helvetica', 'bold');
-    doc.text('Exterior:', margin, yPos);
-    doc.setFont('helvetica', 'normal');
-    yPos += 5;
-    
-    const exteriorItems = ['Antena', 'Plumillas', 'Pito', 'Emblemas', 'Espejos', 'Stops', 'Exploradoras', 'Rayones'];
-    exteriorItems.forEach((item, idx) => {
-        const xOffset = margin + (idx % 4) * 45;
-        const yOffset = yPos + Math.floor(idx / 4) * 6;
-        doc.rect(xOffset, yOffset - 3, 3, 3);
-        doc.text(item, xOffset + 5, yOffset);
-    });
-
-    yPos += 18;
-
     // Legal notes
     doc.setFillColor(245, 245, 245);
     doc.rect(margin, yPos, pageWidth - 2 * margin, 32, 'F');
