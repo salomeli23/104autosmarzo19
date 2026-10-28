@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
-import { MEASURE_ZONES } from '../lib/measureZones';
+import { MEASURE_ZONES, zonesInMeasurements } from '../lib/measureZones';
 import { LinearMeasureInput, formatLinear } from './LinearMeasureInput';
 import { TechMeasurementsSummary, zoneText } from './TechMeasurements';
 import { zoneOpacityText } from '../lib/opacity';
@@ -18,6 +18,8 @@ const Vehicle3D = React.lazy(() => import('./Vehicle3D'));
 const ZONE_LIMITS = {
     panoramico: [1, 1],
     trasero: [1, 1],
+    laterales_delanteros: [3, 2],
+    laterales_traseros: [3, 2],
     laterales_izquierdo: [3, 2],
     laterales_derecho: [3, 2],
     sunroof: [1, 1],
@@ -56,12 +58,14 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const [saving, setSaving] = useState(false);
 
     const tm = useMemo(() => order?.tech_measurements || {}, [order]);
-    const zones = useMemo(() => MEASURE_ZONES.filter(z => tm[z.id] && tm[z.id].aplica !== false), [tm]);
+    // Incluye las zonas anteriores (laterales por lado) si el técnico midió con ellas
+    const allZones = useMemo(() => zonesInMeasurements(tm), [tm]);
+    const zones = useMemo(() => allZones.filter(z => tm[z.id] && tm[z.id].aplica !== false), [allZones, tm]);
 
     useEffect(() => {
         if (!order) return;
         const init = {};
-        MEASURE_ZONES.forEach(z => {
+        zonesInMeasurements(tm).forEach(z => {
             const t = tm[z.id];
             if (t && t.aplica !== false) init[z.id] = [newLine(t.medida_cm || '')];
         });
@@ -116,7 +120,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         const missing = allLines.find(l => !l.material || !(parseFloat(l.cm) > 0));
         if (missing) {
             setActive(missing.zone);
-            toast.error(`Completa material y metros en ${MEASURE_ZONES.find(z => z.id === missing.zone).label}`);
+            toast.error(`Completa material y metros en ${allZones.find(z => z.id === missing.zone).label}`);
             return;
         }
         const rollErr = zones.find(z => zoneRollError(z.id));
@@ -315,7 +319,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
 
                         <div className="space-y-2">
                             {allLines.map(l => {
-                                const z = MEASURE_ZONES.find(x => x.id === l.zone);
+                                const z = allZones.find(x => x.id === l.zone);
                                 const roll = rollById(l.inventory_item_id);
                                 return (
                                     <label key={l.key} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer ${reuse[l.key] ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}`} data-testid={`cut-confirm-line-${l.zone}`}>

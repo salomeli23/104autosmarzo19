@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
-import { MEASURE_ZONES } from '../lib/measureZones';
+import { MEASURE_ZONES, zonesInMeasurements } from '../lib/measureZones';
 import { LinearMeasureInput, formatLinear } from './LinearMeasureInput';
 import { zoneOpacityText } from '../lib/opacity';
 
@@ -14,8 +14,8 @@ import { ordersAPI } from '../lib/api';
 import { toast } from 'sonner';
 import { Ruler, CheckCircle2, Clock } from 'lucide-react';
 
-const LEFT_PARTS = ['vidrio_piloto', 'vidrio_trasero_piloto', 'custodias'];
-const RIGHT_PARTS = ['vidrio_copiloto', 'vidrio_trasero_copiloto', 'custodias'];
+const FRONT_SIDE_PARTS = ['vidrio_piloto', 'vidrio_copiloto'];
+const REAR_SIDE_PARTS = ['vidrio_trasero_piloto', 'vidrio_trasero_copiloto', 'custodias'];
 const REAR_PARTS = ['luneta', 'trasero', 'vidrio_trasero'];
 
 // Qué zonas aplican según los servicios de la orden (si no hay partes, todas menos sunroof)
@@ -24,13 +24,13 @@ const defaultApplies = (order) => {
     const parts = new Set(services.flatMap(s => s.parts || []));
     const hasSunroof = parts.has('sunroof') || services.some(s => String(s.service || '').includes('sunroof'));
     if (parts.size === 0 || (parts.size === 1 && hasSunroof)) {
-        return { panoramico: true, trasero: true, laterales_izquierdo: true, laterales_derecho: true, sunroof: hasSunroof };
+        return { panoramico: true, trasero: true, laterales_delanteros: true, laterales_traseros: true, sunroof: hasSunroof };
     }
     return {
         panoramico: parts.has('panoramico'),
         trasero: REAR_PARTS.some(p => parts.has(p)),
-        laterales_izquierdo: LEFT_PARTS.some(p => parts.has(p)),
-        laterales_derecho: RIGHT_PARTS.some(p => parts.has(p)),
+        laterales_delanteros: FRONT_SIDE_PARTS.some(p => parts.has(p)),
+        laterales_traseros: REAR_SIDE_PARTS.some(p => parts.has(p)),
         sunroof: hasSunroof,
     };
 };
@@ -58,7 +58,7 @@ export const TechMeasurementsSummary = ({ order, compact = false }) => {
                 <Ruler className="w-3.5 h-3.5" /> Medidas del técnico · {m.confirmed_by_name}
             </p>
             <div className={compact ? 'flex flex-wrap gap-x-3 gap-y-0.5' : 'grid grid-cols-2 gap-x-3 gap-y-0.5'}>
-                {MEASURE_ZONES.filter(z => m[z.id]).map(z => (
+                {zonesInMeasurements(m).filter(z => m[z.id]).map(z => (
                     <span key={z.id} className={m[z.id]?.aplica === false ? 'text-muted-foreground' : ''}>
                         <b>{z.n}. {z.label}:</b> {zoneText(m[z.id])}
                     </span>

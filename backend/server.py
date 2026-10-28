@@ -3226,7 +3226,7 @@ async def release_bahia(
 
 # ==================== CUTTING MODULE ====================
 # ==================== MEDIDAS DEL TÉCNICO (antes de completar corte) ====================
-MEASURE_ZONES = ("panoramico", "trasero", "laterales_izquierdo", "laterales_derecho", "sunroof")
+MEASURE_ZONES = ("panoramico", "trasero", "laterales_delanteros", "laterales_traseros", "sunroof")
 
 
 class MeasureZone(BaseModel):
@@ -3238,8 +3238,8 @@ class MeasureZone(BaseModel):
 class TechMeasurements(BaseModel):
     panoramico: MeasureZone
     trasero: MeasureZone
-    laterales_izquierdo: MeasureZone  # lado del piloto
-    laterales_derecho: MeasureZone    # lado del copiloto
+    laterales_delanteros: MeasureZone  # vidrios de las puertas delanteras (piloto y copiloto)
+    laterales_traseros: MeasureZone    # vidrios de las puertas traseras y custodias
     sunroof: MeasureZone
     notes: Optional[str] = None
 
@@ -3405,13 +3405,17 @@ CuttingCompleteRequest.model_rebuild()
 ZONE_CUT_LIMITS = {
     "panoramico": (1, 1),
     "trasero": (1, 1),
+    "laterales_delanteros": (3, 2),
+    "laterales_traseros": (3, 2),
+    # Zonas anteriores (medidas tomadas antes del cambio a delanteros/traseros)
     "laterales_izquierdo": (3, 2),
     "laterales_derecho": (3, 2),
     "sunroof": (1, 1),
 }
 ZONE_LABELS = {
-    "panoramico": "Panorámico", "trasero": "Trasero / Luneta", "laterales_izquierdo": "Laterales lado izquierdo",
-    "laterales_derecho": "Laterales lado derecho", "sunroof": "Sunroof",
+    "panoramico": "Panorámico", "trasero": "Trasero / Luneta", "laterales_delanteros": "Laterales delanteros",
+    "laterales_traseros": "Laterales traseros", "sunroof": "Sunroof",
+    "laterales_izquierdo": "Laterales lado izquierdo", "laterales_derecho": "Laterales lado derecho",
 }
 
 

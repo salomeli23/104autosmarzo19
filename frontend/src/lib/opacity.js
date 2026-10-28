@@ -14,6 +14,9 @@ export const partsWithOpacity = (svc) => (svc?.parts || [])
 const ZONE_PARTS = {
     panoramico: ['panoramico'],
     trasero: ['luneta', 'trasero', 'vidrio_trasero'],
+    laterales_delanteros: ['vidrio_piloto', 'vidrio_copiloto'],
+    laterales_traseros: ['vidrio_trasero_piloto', 'vidrio_trasero_copiloto', 'custodias'],
+    // Zonas anteriores (por lado)
     laterales_izquierdo: ['vidrio_piloto', 'vidrio_trasero_piloto', 'custodias'],
     laterales_derecho: ['vidrio_copiloto', 'vidrio_trasero_copiloto', 'custodias'],
     sunroof: ['sunroof'],

@@ -16,8 +16,8 @@ const GLASS_BLACK = 0x15171b;
 const ZONE_VIEWS = {
     panoramico: [0.55, 0.55],
     trasero: [Math.PI - 0.55, 0.55],
-    laterales_izquierdo: [-Math.PI / 2 + 0.25, 0.3],
-    laterales_derecho: [Math.PI / 2 - 0.25, 0.3],
+    laterales_delanteros: [Math.PI / 2 - 0.55, 0.3],
+    laterales_traseros: [Math.PI / 2 + 0.55, 0.3],
     sunroof: [0.9, 1.15],
 };
 const CAMERA_DISTANCE = 7.2;
@@ -218,7 +218,7 @@ const buildCar = (zoneMeshes) => {
     const glassMat = () => new THREE.MeshStandardMaterial({
         color: ZONE_COLORS.pending, roughness: 0.15, metalness: 0.3, transparent: true, opacity: 0.92, side: THREE.DoubleSide,
     });
-    const addZone = (id, geos, badgePos) => {
+    const addZone = (id, geos, badgePositions) => {
         const mat = glassMat();
         geos.forEach(g => {
             const m = new THREE.Mesh(g, mat);
@@ -227,11 +227,15 @@ const buildCar = (zoneMeshes) => {
             zoneMeshes.meshes.push(m);
         });
         zoneMeshes.materials[id] = mat;
-        const badge = numberSprite(MEASURE_ZONES.find(z => z.id === id).n);
-        badge.position.set(...badgePos);
-        badge.userData.zone = id;
-        car.add(badge);
-        zoneMeshes.meshes.push(badge);
+        // Una o varias posiciones del número (p. ej. a cada lado del carro)
+        const list = Array.isArray(badgePositions[0]) ? badgePositions : [badgePositions];
+        list.forEach(pos => {
+            const badge = numberSprite(MEASURE_ZONES.find(z => z.id === id).n);
+            badge.position.set(...pos);
+            badge.userData.zone = id;
+            car.add(badge);
+            zoneMeshes.meshes.push(badge);
+        });
     };
 
     // Vidrios inclinados: un poco por fuera de la cabina; medio ancho abajo y arriba
@@ -242,19 +246,15 @@ const buildCar = (zoneMeshes) => {
     // Techo de vidrio (sunroof)
     addZone('sunroof', [quad([-0.4, 1.575, -0.38], [-0.4, 1.575, 0.38], [0.32, 1.578, 0.38], [0.32, 1.578, -0.38])], [-0.04, 1.65, 0]);
 
-    // Ventanas laterales: delantera, trasera (con la caída fastback)
-    const sideWindows = () => [
-        flatShape([[1.12, 1.03], [0.4, 1.42], [0.02, 1.43], [0.02, 1.03]]),
-        flatShape([[-0.06, 1.03], [-0.06, 1.43], [-0.5, 1.41], [-1.17, 1.07], [-1.24, 1.03]]),
-    ];
+    // Ventanas laterales: delanteras (puertas delanteras) y traseras (puertas traseras, con la caída fastback),
+    // a ambos lados del carro
+    const frontWindow = () => flatShape([[1.12, 1.03], [0.4, 1.42], [0.02, 1.43], [0.02, 1.03]]);
+    const rearWindow = () => flatShape([[-0.06, 1.03], [-0.06, 1.43], [-0.5, 1.41], [-1.17, 1.07], [-1.24, 1.03]]);
     const zSide = 0.765;
     const zBadge = (zSide + 0.08) * taper(1.24);
-    const right = sideWindows();
-    right.forEach(g => taperGeometry(g.translate(0, 0, zSide)));
-    addZone('laterales_derecho', right, [0.15, 1.24, zBadge]);
-    const left = sideWindows();
-    left.forEach(g => taperGeometry(g.translate(0, 0, -zSide)));
-    addZone('laterales_izquierdo', left, [0.15, 1.24, -zBadge]);
+    const bothSides = (make) => [zSide, -zSide].map(z => taperGeometry(make().translate(0, 0, z)));
+    addZone('laterales_delanteros', bothSides(frontWindow), [[0.5, 1.24, zBadge], [0.5, 1.24, -zBadge]]);
+    addZone('laterales_traseros', bothSides(rearWindow), [[-0.45, 1.22, zBadge], [-0.45, 1.22, -zBadge]]);
 
     car.position.y = 0.02;
     return car;
