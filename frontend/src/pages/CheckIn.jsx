@@ -16,6 +16,7 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { formatCurrency, VEHICLE_PARTS, PPF_PARTS, CHECKIN_NOTICES } from '../lib/utils';
 import { SUNROOF_ID, isSunroofExtra, isSunroofLine, findSunroof, stripSunroof, buildSunroofLine } from '../lib/sunroof';
 import { UltrasecureFilmPicker, SuggestedPriceHint } from '../components/UltrasecureFilmPicker';
+import { SunroofAddon, SUNROOF_CATEGORIES } from '../components/SunroofAddon';
 import { findCatalogService, defaultServicePrice, serviceDescription, stripFilmFromName } from '../lib/servicePricing';
 import { generateOrderPDF } from '../components/OrderPDFGenerator';
 import { Inspection360Inline } from '../components/Inspection360Inline';
@@ -372,6 +373,14 @@ export const CheckIn = () => {
     };
 
     const sunroofPrice = () => (sunroof.enabled ? (parseFloat(sunroof.price) || 0) : 0);
+
+    // Al activarlo se sugiere el precio del extra configurado en /settings
+    const updateSunroof = (next) => setSunroof(prev => ({
+        ...next,
+        price: next.enabled && !prev.enabled && next.price === '' ? defaultSunroofPrice() : next.price,
+    }));
+    const hasSunroofCategoryService = selectedServices.some(svc =>
+        SUNROOF_CATEGORIES.includes(findCatalogService(serviceCatalog, svc.serviceId).categoryKey));
 
     // Línea de servicio propia del sunroof para la orden, el PDF y el correo
     const sunroofLine = () => {
@@ -1406,7 +1415,7 @@ export const CheckIn = () => {
                                                 )}
                                                 {/* Ultrasecure: película y precio sugerido · Detailing: precio sugerido */}
                                                 {(() => {
-                                                    const { service: catSvc, category: catCat } = findCatalogService(serviceCatalog, svc.serviceId);
+                                                    const { service: catSvc, category: catCat, categoryKey } = findCatalogService(serviceCatalog, svc.serviceId);
                                                     if (!catSvc) return null;
                                                     return (
                                                         <>
@@ -1424,6 +1433,9 @@ export const CheckIn = () => {
                                                                 </p>
                                                             )}
                                                             <div className="mt-1 text-right"><SuggestedPriceHint service={catSvc} price={svc.price} /></div>
+                                                            {SUNROOF_CATEGORIES.includes(categoryKey) && (
+                                                                <SunroofAddon value={sunroof} onChange={updateSunroof} withPercentage testId={`sunroof-card-${svc.serviceId}`} className="mt-3" />
+                                                            )}
                                                         </>
                                                     );
                                                 })()}
@@ -1556,6 +1568,9 @@ export const CheckIn = () => {
                                                         );
                                                     })}
                                                 </div>
+                                                {SUNROOF_CATEGORIES.includes(categoryId) && (
+                                                    <SunroofAddon value={sunroof} onChange={updateSunroof} withPercentage testId={`sunroof-${categoryId}`} className="mt-2" />
+                                                )}
                                             </AccordionContent>
                                         </AccordionItem>
                                     ))}
@@ -1600,54 +1615,10 @@ export const CheckIn = () => {
                                 </div>
                             </div>
 
-                            {/* Sunroof: siempre adicional, nunca dentro de un servicio */}
-                            <div className={`p-3 rounded-lg border space-y-3 ${sunroof.enabled ? 'border-amber-500/50 bg-amber-500/10' : 'border-border bg-muted/30'}`} data-testid="sunroof-block">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={sunroof.enabled}
-                                        onChange={(e) => {
-                                            const on = e.target.checked;
-                                            setSunroof(prev => ({ ...prev, enabled: on, price: on && prev.price === '' ? defaultSunroofPrice() : prev.price }));
-                                        }}
-                                        className="w-4 h-4 accent-amber-500"
-                                        data-testid="sunroof-toggle"
-                                    />
-                                    <span className="text-sm font-medium">Sunroof (adicional)</span>
-                                    <span className="text-xs text-muted-foreground">· no está incluido en ningún servicio</span>
-                                </label>
-                                {sunroof.enabled && (
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div className="space-y-1">
-                                            <Label className="text-xs">Valor del sunroof *</Label>
-                                            <div className="flex items-center gap-1">
-                                                <span className="text-sm text-muted-foreground">$</span>
-                                                <Input
-                                                    type="number"
-                                                    min="0"
-                                                    value={sunroof.price}
-                                                    onChange={(e) => setSunroof(prev => ({ ...prev, price: e.target.value }))}
-                                                    placeholder="Valor"
-                                                    className="text-right font-mono"
-                                                    data-testid="sunroof-price"
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs">% de polarizado</Label>
-                                            <select
-                                                value={sunroof.percentage}
-                                                onChange={(e) => setSunroof(prev => ({ ...prev, percentage: e.target.value }))}
-                                                className="w-full h-9 text-sm px-2 rounded-md border border-input bg-background"
-                                                data-testid="sunroof-percentage"
-                                            >
-                                                <option value="">Sin indicar</option>
-                                                {TINT_PERCENTAGES.map(p => <option key={p} value={p}>{p}</option>)}
-                                            </select>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
+                            {/* Sunroof activo sin servicio de Polarizado/PPF/Ultrasecure: se muestra aparte para poder quitarlo */}
+                            {sunroof.enabled && !hasSunroofCategoryService && (
+                                <SunroofAddon value={sunroof} onChange={updateSunroof} withPercentage testId="sunroof-block" />
+                            )}
 
                             {/* Forma de pago + Factura electrónica */}
                             <div className="grid sm:grid-cols-2 gap-3">

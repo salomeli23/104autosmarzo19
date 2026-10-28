@@ -27,6 +27,7 @@ import { CheckinByTag } from '../components/CheckinByTag';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 import { UltrasecureFilmPicker, SuggestedPriceHint } from '../components/UltrasecureFilmPicker';
+import { SunroofAddon, SUNROOF_CATEGORIES } from '../components/SunroofAddon';
 import { findCatalogService, defaultServicePrice, serviceDescription } from '../lib/servicePricing';
 import { AppointmentNotifications } from '../components/AppointmentNotifications';
 
@@ -1460,6 +1461,9 @@ export const Appointments = () => {
                                                         );
                                                     })}
                                                 </div>
+                                                {SUNROOF_CATEGORIES.includes(categoryId) && (
+                                                    <SunroofAddon value={sunroof} onChange={setSunroof} testId={`sunroof-${categoryId}`} className="mt-2" />
+                                                )}
                                             </AccordionContent>
                                         </AccordionItem>
                                     ))}
@@ -1581,38 +1585,6 @@ export const Appointments = () => {
                                     </div>
                                 )}
                             </div>
-                            )}
-
-                            {/* Sunroof: siempre adicional, nunca dentro de un servicio */}
-                            {formData.appointment_type !== 'postventa' && (
-                                <div className={`p-3 rounded-lg border space-y-2 ${sunroof.enabled ? 'border-amber-500/50 bg-amber-500/10' : 'border-border bg-muted/30'}`} data-testid="appointment-sunroof-block">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={sunroof.enabled}
-                                            onChange={(e) => setSunroof(prev => ({ ...prev, enabled: e.target.checked }))}
-                                            className="w-4 h-4 accent-amber-500"
-                                            data-testid="appointment-sunroof-toggle"
-                                        />
-                                        <span className="text-sm font-medium">Sunroof (adicional)</span>
-                                        <span className="text-xs text-muted-foreground">· no está incluido en ningún servicio</span>
-                                    </label>
-                                    {sunroof.enabled && (
-                                        <div className="flex items-center gap-2">
-                                            <Label className="text-xs whitespace-nowrap">Valor *</Label>
-                                            <span className="text-sm text-muted-foreground">$</span>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                value={sunroof.price}
-                                                onChange={(e) => setSunroof(prev => ({ ...prev, price: e.target.value }))}
-                                                placeholder="Valor del sunroof"
-                                                className="h-9 max-w-[200px] text-right font-mono"
-                                                data-testid="appointment-sunroof-price"
-                                            />
-                                        </div>
-                                    )}
-                                </div>
                             )}
 
                             {/* Código de descuento */}
