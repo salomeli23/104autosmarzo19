@@ -212,6 +212,8 @@ export const Settings = () => {
             case 'asesor': return 'text-blue-500 bg-blue-500/10';
             case 'tecnico': return 'text-green-500 bg-green-500/10';
             case 'accesorios': return 'text-amber-500 bg-amber-500/10';
+            case 'calidad': return 'text-violet-500 bg-violet-500/10';
+            case 'seguridad': return 'text-sky-500 bg-sky-500/10';
             default: return 'text-gray-500 bg-gray-500/10';
         }
     };
@@ -386,6 +388,7 @@ export const Settings = () => {
                 <CardContent className="space-y-4">
                     <p className="text-sm text-muted-foreground">
                         El rol <b>Accesorios</b> recibe las solicitudes de accesorios de cada orden, las despacha del inventario y las entrega al técnico instalador.
+                        El rol <b>Calidad</b> revisa cada vehículo terminado con el cuestionario, fotos y video. El <b>Jefe de Seguridad</b> recibe los certificados de salida y registra la salida en portería.
                     </p>
                     <div className="grid sm:grid-cols-2 gap-3">
                         <div className="space-y-2">

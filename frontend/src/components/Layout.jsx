@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { alertsAPI } from '../lib/api';
-import { cn } from '../lib/utils';
+import { cn, ROLE_LABELS } from '../lib/utils';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
@@ -40,12 +40,13 @@ import {
     LogOut as LogOutIcon,
     FileSignature,
     PackageCheck,
+    BadgeCheck,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
 
 const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion', 'corte', 'accesorios'] },
+    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion', 'corte', 'accesorios', 'calidad', 'seguridad'] },
     { path: '/appointments', label: 'Agendamiento', icon: Calendar, roles: ['admin', 'asesor'] },
     { path: '/checkin', label: 'Check-in / Ingreso', icon: QrCode, roles: ['admin', 'asesor'] },
     { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'asesor', 'coordinador'] },
@@ -55,7 +56,8 @@ const navItems = [
     { path: '/billing', label: 'Facturación', icon: CreditCard, roles: ['admin', 'facturacion'] },
     { path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'asesor', 'facturacion', 'coordinador'] },
     { path: '/facturacion-electronica', label: 'Clientes por Facturar', icon: FileSignature, roles: ['admin', 'facturacion', 'asesor'] },
-    { path: '/autos-salida', label: 'Autorizar Salida', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador'] },
+    { path: '/calidad', label: 'Control de Calidad', icon: BadgeCheck, roles: ['admin', 'calidad', 'coordinador'] },
+    { path: '/autos-salida', label: 'Listo para Entrega', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador', 'calidad', 'seguridad'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin', 'asesor'] },
     { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'asesor', 'coordinador', 'facturacion'] },
     { path: '/postventa', label: 'Postventa / Garantías', icon: ShieldCheck, roles: ['admin', 'asesor', 'coordinador'] },
@@ -150,7 +152,7 @@ export const Layout = ({ children }) => {
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium truncate">{user?.name}</p>
-                                <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
+                                <p className="text-xs text-muted-foreground">{ROLE_LABELS[user?.role] || user?.role}</p>
                             </div>
                         </div>
                     </div>

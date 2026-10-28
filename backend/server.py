@@ -23,7 +23,7 @@ from io import BytesIO
 import asyncio
 import resend
 import re
-from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice
+from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate
 from cutting_catalog import CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, lookup_car_average
 from email_templates import (
     build_appointment_confirmation_html,
@@ -73,6 +73,8 @@ class UserRole(str, Enum):
     FACTURACION = "facturacion"
     CORTE = "corte"  # Nuevo rol para corte de piezas
     ACCESORIOS = "accesorios"  # Despacha accesorios del inventario al técnico instalador
+    CALIDAD = "calidad"  # Control de calidad después de la instalación
+    SEGURIDAD = "seguridad"  # Jefe de seguridad: recibe el certificado de salida y controla la portería
 
 class ServiceType(str, Enum):
     POLARIZADO = "polarizado"
@@ -87,6 +89,7 @@ class OrderStatus(str, Enum):
     EN_REVISION = "en_revision"
     ASIGNADO = "asignado"
     EN_PROCESO = "en_proceso"
+    EN_CALIDAD = "en_calidad"  # Instalación terminada, en control de calidad
     SERVICIO_COMPLETADO = "servicio_completado"
     TERMINADO_FALTA_PAGO = "terminado_falta_pago"
     TERMINADO_PAGADO = "terminado_pagado"
@@ -106,6 +109,10 @@ class AlertType(str, Enum):
     ACCESORIOS_ENTREGADOS = "accesorios_entregados"  # Accesorios entregados al técnico
     MEDIDAS_TECNICO = "medidas_tecnico"  # El técnico confirmó las medidas para corte
     MATERIAL_ENTREGADO = "material_entregado"  # Corte entregó el material al técnico
+    CONTROL_CALIDAD = "control_calidad"  # Vehículo listo para revisión de calidad
+    CALIDAD_RECHAZADA = "calidad_rechazada"  # Calidad devolvió el vehículo a instalación
+    LISTO_ENTREGA = "listo_entrega"  # Calidad aprobada: listo para entrega
+    CERTIFICADO_SALIDA = "certificado_salida"  # Certificado de salida emitido
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -173,6 +180,27 @@ async def create_alert(recipient_role: str, alert_type: AlertType, title: str, m
         }
         await db.alerts.insert_one(alert_doc)
 
+def _cop(value) -> str:
+    """Pesos colombianos con punto de miles: $500.000"""
+    return "$" + f"{float(value or 0):,.0f}".replace(",", ".")
+
+def _quality_entry_fields(now: str) -> dict:
+    """Campos al terminar la instalación: el vehículo pasa a control de calidad."""
+    return {
+        "status": OrderStatus.EN_CALIDAD.value,
+        "quality_required": True,
+        "quality_status": "pendiente",
+        "quality_sent_at": now,
+    }
+
+async def _notify_quality(order: dict):
+    """Avisa a Calidad y al coordinador que el vehículo está listo para revisión (con alerta si no ha pagado)."""
+    pay = _payment_status(order)
+    pay_txt = " · ⚠ El cliente NO ha pagado" if pay == "pending" else " · ⚠ Pago parcial" if pay == "partial" else ""
+    msg = f"Vehículo {order.get('plate')} - {order.get('client_name')} terminó instalación{pay_txt}"
+    for role in (UserRole.CALIDAD.value, UserRole.COORDINADOR.value):
+        await create_alert(role, AlertType.CONTROL_CALIDAD, "Vehículo listo para control de calidad", msg, order.get("id"))
+
 async def log_order_history(order_id: str, action: str, old_status: str, new_status: str, user_id: str, user_name: str, details: dict = None):
     """Log order status change for traceability"""
     history_doc = {
@@ -194,7 +222,8 @@ VALID_TRANSITIONS = {
     "ingresado": ["en_revision", "desistimiento"],
     "en_revision": ["asignado", "desistimiento"],
     "asignado": ["en_proceso", "desistimiento"],
-    "en_proceso": ["servicio_completado", "desistimiento"],
+    "en_proceso": ["en_calidad", "servicio_completado", "desistimiento"],
+    "en_calidad": ["servicio_completado", "terminado_pagado", "en_proceso", "desistimiento"],
     "servicio_completado": ["terminado_pagado", "terminado_falta_pago"],
     "terminado_pagado": ["entregado"],
     "terminado_falta_pago": ["terminado_pagado", "entregado"],
@@ -391,6 +420,20 @@ class OrderResponse(BaseModel):
     checkin_by_name: Optional[str] = None
     signed_order_pdf_url: Optional[str] = None
     accessory_status: Optional[str] = None  # pendiente | despachado | entregado
+    # Control de calidad y certificado de salida
+    quality_required: Optional[bool] = None
+    quality_status: Optional[str] = None  # pendiente | aprobado | rechazado
+    quality_sent_at: Optional[str] = None
+    quality_checked_at: Optional[str] = None
+    quality_by_name: Optional[str] = None
+    quality_notes: Optional[str] = None
+    quality_answers: Optional[List[Dict[str, Any]]] = None
+    quality_photos: Optional[List[str]] = None
+    quality_video_url: Optional[str] = None
+    quality_rejections: Optional[int] = None
+    exit_certificate: Optional[Dict[str, Any]] = None
+    security_exit_at: Optional[str] = None
+    security_exit_by_name: Optional[str] = None
     created_by_role: Optional[str] = None
     created_at: str
     updated_at: Optional[str] = None
@@ -975,9 +1018,15 @@ async def complete_route_slot(order_id: str, slot_id: str, data: Optional[Comple
     # Si todos completados, avanzar a "servicio_completado" (listo para Facturación)
     all_done = all(s["status"] == "completado" for s in slots) and bool(slots)
     if all_done:
-        update_fields["status"] = OrderStatus.SERVICIO_COMPLETADO.value
-        update_fields["service_completed_at"] = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        if order.get("is_postventa"):
+            update_fields["status"] = OrderStatus.SERVICIO_COMPLETADO.value
+        else:
+            update_fields.update(_quality_entry_fields(now))
+        update_fields["service_completed_at"] = now
     await db.orders.update_one({"id": order_id}, {"$set": update_fields})
+    if all_done and not order.get("is_postventa"):
+        await _notify_quality(order)
     return {"message": "Slot completado", "all_done": all_done}
 
 
@@ -1875,6 +1924,7 @@ async def checkin_order(data: CheckInRequest, current_user: dict = Depends(requi
             "en_corte": "En Corte de Piezas",
             "asignado": "Asignada a Técnico",
             "en_proceso": "Servicio en proceso",
+            "en_calidad": "En control de calidad",
             "servicio_completado": "Servicio Completado",
             "terminado_pagado": "Pagada",
             "entregado": "Entregada",
@@ -2442,13 +2492,15 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
         raise HTTPException(status_code=400, detail="La orden debe estar en estado EN_PROCESO")
     
     is_postventa = bool(order.get("is_postventa"))
-    new_status = OrderStatus.ENTREGADO.value if is_postventa else OrderStatus.SERVICIO_COMPLETADO.value
+    new_status = OrderStatus.ENTREGADO.value if is_postventa else OrderStatus.EN_CALIDAD.value
     
     photos = (data.completion_photos or [])[:10]
+    now = datetime.now(timezone.utc).isoformat()
     
     update_data = {
+        **({} if is_postventa else _quality_entry_fields(now)),
         "status": new_status,
-        "service_completed_at": datetime.now(timezone.utc).isoformat(),
+        "service_completed_at": now,
         "technician_notes": data.notes,
         "service_completion_notes": data.notes,
         "service_completion_photos": photos,
@@ -2477,14 +2529,9 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
     )
     
     if not is_postventa:
-        # Alert facturacion (solo para órdenes normales)
-        await create_alert(
-            "facturacion", AlertType.PENDIENTE_FACTURACION,
-            "Vehículo listo para facturación",
-            f"Vehículo {order['plate']} - {order['client_name']} completó servicio",
-            data.order_id
-        )
-        return {"message": "Servicio completado, enviado a facturación"}
+        # Pasa a control de calidad (solo órdenes normales)
+        await _notify_quality(order)
+        return {"message": "Instalación completada, enviada a control de calidad"}
     return {"message": "Postventa/Garantía completada y cerrada"}
 
 # Step 6: Payment (Facturacion)
@@ -2551,6 +2598,8 @@ async def confirm_delivery(data: DeliveryConfirmation, current_user: dict = Depe
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     if order["status"] not in [OrderStatus.TERMINADO_PAGADO.value, OrderStatus.TERMINADO_FALTA_PAGO.value]:
         raise HTTPException(status_code=400, detail="La orden debe estar en estado de facturación")
+    if order.get("quality_required") and not order.get("exit_certificate"):
+        raise HTTPException(status_code=400, detail="Genera el certificado de salida antes de entregar el vehículo")
     
     # Validate delivery photo
     if not data.delivery_photo_url:
@@ -2635,6 +2684,7 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         "en_revision": await db.orders.count_documents({"status": "en_revision"}),
         "asignados": await db.orders.count_documents({"status": "asignado"}),
         "en_proceso": await db.orders.count_documents({"status": "en_proceso"}),
+        "en_calidad": await db.orders.count_documents({"status": "en_calidad"}),
         "servicio_completado": await db.orders.count_documents({"status": "servicio_completado"}),
         "terminado_falta_pago": await db.orders.count_documents({"status": "terminado_falta_pago"}),
         "terminado_pagado": await db.orders.count_documents({"status": "terminado_pagado"}),
@@ -2988,6 +3038,8 @@ async def seed_test_users():
         {"email": "facturacion@polarizadosya.com", "name": "Ana Facturación", "role": "facturacion", "password": "factura123"},
         {"email": "corte@polarizadosya.com", "name": "Luis Corte", "role": "corte", "password": "corte123"},
         {"email": "accesorios@polarizadosya.com", "name": "Bodega Accesorios", "role": "accesorios", "password": "accesorios123"},
+        {"email": "calidad@polarizadosya.com", "name": "Sandra Calidad", "role": "calidad", "password": "calidad123"},
+        {"email": "seguridad@polarizadosya.com", "name": "Jorge Jefe de Seguridad", "role": "seguridad", "password": "seguridad123"},
     ]
     
     created = []
@@ -3115,9 +3167,10 @@ async def release_bahia(
         if current_order_id:
             current_order_for_postventa = await db.orders.find_one({"id": current_order_id}, {"_id": 0})
             is_postventa = bool(current_order_for_postventa.get("is_postventa")) if current_order_for_postventa else False
-            target_status = OrderStatus.ENTREGADO.value if is_postventa else OrderStatus.SERVICIO_COMPLETADO.value
+            target_status = OrderStatus.ENTREGADO.value if is_postventa else OrderStatus.EN_CALIDAD.value
             
             set_fields = {
+                **({} if is_postventa else _quality_entry_fields(datetime.now(timezone.utc).isoformat())),
                 "status": target_status,
                 "service_completed_at": datetime.now(timezone.utc).isoformat(),
                 "service_completion_notes": payload.notes,
@@ -3137,12 +3190,14 @@ async def release_bahia(
             try:
                 await log_order_history(
                     current_order_id, "SERVICIO_COMPLETADO_LIBERAR_BAHIA",
-                    order.get("status",""), OrderStatus.SERVICIO_COMPLETADO.value,
+                    OrderStatus.EN_PROCESO.value, target_status,
                     current_user["id"], current_user["name"],
                     {"bahia_id": bahia_id, "photos_count": len(photos)}
                 )
             except Exception:
                 pass
+            if not is_postventa:
+                await _notify_quality(order)
             
             # Best-effort email to client + coordinators (compressed)
             if photos and RESEND_API_KEY and order.get("client_email"):
@@ -3176,7 +3231,7 @@ async def release_bahia(
     <p><b>Vehículo:</b> {order.get('plate')} — {order.get('brand','')} {order.get('model','')}<br>
        <b>Orden:</b> {order.get('order_code','')}<br>
        <b>Observaciones:</b> {payload.notes or '-'}</p>
-    <p>El servicio quedó pendiente de validación de pago para entrega.</p>
+    <p>El vehículo pasa a control de calidad antes de la entrega.</p>
   </div>
 </div>
 """.strip()
@@ -4370,7 +4425,7 @@ async def orders_with_balance(
         "status": {"$in": [
             OrderStatus.INGRESADO.value, OrderStatus.EN_REVISION.value,
             OrderStatus.EN_CORTE.value, OrderStatus.ASIGNADO.value,
-            OrderStatus.EN_PROCESO.value, OrderStatus.SERVICIO_COMPLETADO.value,
+            OrderStatus.EN_PROCESO.value, OrderStatus.EN_CALIDAD.value, OrderStatus.SERVICIO_COMPLETADO.value,
             OrderStatus.TERMINADO_FALTA_PAGO.value, OrderStatus.TERMINADO_PAGADO.value,
         ]},
     }
@@ -4408,9 +4463,10 @@ async def orders_with_balance(
 
 @api_router.get("/orders-pending-release")
 async def orders_pending_release(
-    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.COORDINADOR])),
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.COORDINADOR,
+                                                UserRole.CALIDAD, UserRole.SEGURIDAD])),
 ):
-    """Autos por autorizar salida: servicio completado y aún no entregados."""
+    """Listo para entrega: calidad aprobada (o flujo anterior sin calidad) y aún no entregados."""
     cursor = db.orders.find(
         {"status": {"$in": [
             OrderStatus.SERVICIO_COMPLETADO.value,
@@ -4438,6 +4494,14 @@ async def orders_pending_release(
             "profile_photo_url": o.get("profile_photo_url"),
             "release_authorized_at": o.get("release_authorized_at"),
             "release_authorized_by": o.get("release_authorized_by_name"),
+            "quality_status": o.get("quality_status"),
+            "quality_checked_at": o.get("quality_checked_at"),
+            "quality_by_name": o.get("quality_by_name"),
+            "exit_certificate": o.get("exit_certificate"),
+            "security_exit_at": o.get("security_exit_at"),
+            "security_exit_by_name": o.get("security_exit_by_name"),
+            "certificate_blockers": _certificate_blockers(o) if not o.get("exit_certificate") else [],
+            "payment_status": _payment_status(o) if b["total"] > 0 else "paid",
             **b,
         })
     return out
@@ -4458,6 +4522,8 @@ async def authorize_release(
             status_code=400,
             detail=f"No se puede autorizar salida: falta pago de ${b['balance']:,.0f}",
         )
+    if order.get("quality_required") and order.get("quality_status") != "aprobado":
+        raise HTTPException(status_code=400, detail="No se puede autorizar salida: falta aprobar el control de calidad")
     now = datetime.now(timezone.utc).isoformat()
     await db.orders.update_one(
         {"id": order_id},
@@ -4476,6 +4542,455 @@ async def authorize_release(
         current_user["id"], current_user["name"], {},
     )
     return {"message": "Salida autorizada", "release_authorized_at": now}
+
+
+# ==================== CONTROL DE CALIDAD ====================
+# Cuestionario por tipo de servicio. Cada pregunta se responde: ok | no_ok | na
+QUALITY_CHECKLIST = {
+    "general": {
+        "label": "Revisión general",
+        "items": [
+            ("gen_limpieza_ext", "Vehículo limpio por fuera (sin huellas, residuos ni agua)"),
+            ("gen_limpieza_int", "Interior limpio: tapicería, tablero y pisos sin residuos"),
+            ("gen_sin_danos", "Sin rayones, golpes o daños nuevos frente a la Revisión 360°"),
+            ("gen_pertenencias", "Pertenencias y accesorios del cliente en su lugar"),
+            ("gen_electrico", "Luces, vidrios eléctricos y tablero funcionan sin testigos nuevos"),
+        ],
+    },
+    "polarizado": {
+        "label": "Polarizado",
+        "items": [
+            ("pol_burbujas", "Sin burbujas, pliegues ni contaminación (polvo, pelos)"),
+            ("pol_bordes", "Bordes uniformes, sin despegues ni luz en los filos"),
+            ("pol_tono", "Tono / % de opacidad igual al contratado en cada vidrio"),
+            ("pol_ventanas", "Ventanas suben y bajan sin rozar la película"),
+            ("pol_desempanador", "Desempañador trasero intacto y funcionando"),
+        ],
+    },
+    "ultrasecure": {
+        "label": "Ultrasecure",
+        "items": [
+            ("us_adhesion", "Película de seguridad bien adherida, sin burbujas ni ondas"),
+            ("us_bordes", "Bordes sellados y recortes limpios"),
+            ("us_vision", "Visibilidad nítida, sin distorsión"),
+            ("us_ventanas", "Ventanas suben y bajan correctamente"),
+        ],
+    },
+    "ppf": {
+        "label": "PPF",
+        "items": [
+            ("ppf_burbujas", "Sin burbujas, levantamientos ni marcas de agua atrapada"),
+            ("ppf_bordes", "Bordes envueltos o sellados, sin despegues"),
+            ("ppf_cortes", "Sin marcas de cuchilla en la pintura"),
+            ("ppf_partes", "Todas las partes contratadas están cubiertas"),
+            ("ppf_acabado", "Acabado uniforme (brillante / mate) según lo contratado"),
+        ],
+    },
+    "sunroof": {
+        "label": "Sunroof",
+        "items": [
+            ("sun_pelicula", "Película del sunroof sin burbujas y con bordes limpios"),
+            ("sun_funciona", "Sunroof y cortinilla abren y cierran sin rozar"),
+        ],
+    },
+    "accesorios": {
+        "label": "Accesorios",
+        "items": [
+            ("acc_instalados", "Todos los accesorios de la orden quedaron instalados"),
+            ("acc_funcionan", "Accesorios probados y funcionando (cámaras, luces, etc.)"),
+            ("acc_firmes", "Tuercas, pernos y piezas firmes y bien ajustadas"),
+        ],
+    },
+    "detailing": {
+        "label": "Detailing",
+        "items": [
+            ("det_superficie", "Superficies sin hologramas, manchas ni residuos de producto"),
+            ("det_aplicacion", "Cera / manto / recubrimiento aplicado de forma uniforme"),
+            ("det_rincones", "Rincones, emblemas y juntas sin restos de producto"),
+        ],
+    },
+    "latoneria_pintura": {
+        "label": "Latonería y pintura",
+        "items": [
+            ("lat_acabado", "Acabado y color iguales al resto de la carrocería"),
+            ("lat_ajuste", "Piezas alineadas y bien ajustadas"),
+        ],
+    },
+}
+
+
+def _service_category(svc: dict) -> Optional[str]:
+    svc_id = (svc.get("service") or "").lower()
+    desc = (svc.get("description") or "").lower()
+    if svc_id in ("sunroof_adicional", "sunroof"):
+        return "sunroof"
+    if svc_id.startswith("acc_"):
+        return "accesorios"
+    for cat_key, cat in SERVICES_CATALOG.items():
+        if any(x.get("id") == svc_id for x in (cat.get("services") or [])):
+            return cat_key
+        for g in (cat.get("groups") or []):
+            if any(o.get("id") == svc_id for o in (g.get("options") or [])):
+                return cat_key
+    if "ppf" in svc_id or "ppf" in desc:
+        return "ppf"
+    if "ultrasecure" in svc_id or "ultrasecure" in desc:
+        return "ultrasecure"
+    if "accesorio" in desc:
+        return "accesorios"
+    if any(k in svc_id or k in desc for k in ("polarizado", "optik", "ceramic", "mixto")):
+        return "polarizado"
+    return None
+
+
+def _quality_sections(order: dict) -> List[dict]:
+    """Secciones del cuestionario según los servicios de la orden (siempre incluye la revisión general)."""
+    cats = []
+    for svc in (order.get("services") or []):
+        if not isinstance(svc, dict):
+            continue
+        cat = _service_category(svc)
+        if cat and cat not in cats and cat in QUALITY_CHECKLIST:
+            cats.append(cat)
+        parts = [str(p).lower() for p in (svc.get("parts") or [])]
+        extras = " ".join(str(e.get("nombre") or e.get("id") or "") for e in (svc.get("extras") or []) if isinstance(e, dict)).lower()
+        if ("sunroof" in parts or "sunroof" in extras) and "sunroof" not in cats:
+            cats.append("sunroof")
+    order_keys = ["general", "polarizado", "ultrasecure", "ppf", "sunroof", "accesorios", "detailing", "latoneria_pintura"]
+    keys = ["general"] + [k for k in order_keys if k in cats]
+    return [
+        {"id": k, "label": QUALITY_CHECKLIST[k]["label"],
+         "items": [{"id": i, "label": label} for i, label in QUALITY_CHECKLIST[k]["items"]]}
+        for k in keys
+    ]
+
+
+def _quality_order_summary(o: dict) -> dict:
+    b = _order_balance(o)
+    return {
+        "id": o["id"],
+        "order_code": o.get("order_code"),
+        "plate": o.get("plate"),
+        "brand": o.get("brand"),
+        "model": o.get("model"),
+        "color": o.get("color"),
+        "client_name": o.get("client_name"),
+        "client_phone": o.get("client_phone"),
+        "status": o.get("status"),
+        "services": o.get("services") or [],
+        "profile_photo_url": o.get("profile_photo_url"),
+        "assigned_technician_name": o.get("assigned_technician_name"),
+        "assigned_technician_2_name": o.get("assigned_technician_2_name"),
+        "service_completed_at": o.get("service_completed_at"),
+        "quality_sent_at": o.get("quality_sent_at"),
+        "quality_status": o.get("quality_status"),
+        "quality_notes": o.get("quality_notes"),
+        "quality_rejections": o.get("quality_rejections") or 0,
+        "service_completion_notes": o.get("service_completion_notes"),
+        "is_postventa": bool(o.get("is_postventa")),
+        "payment_status": _payment_status(o) if b["total"] > 0 else "paid",
+        "sections": _quality_sections(o),
+        **b,
+    }
+
+
+QUALITY_ROLES = [UserRole.ADMIN, UserRole.CALIDAD, UserRole.COORDINADOR]
+
+
+@api_router.get("/quality/pending")
+async def quality_pending(current_user: dict = Depends(require_roles(QUALITY_ROLES))):
+    """Vehículos con instalación terminada esperando control de calidad."""
+    cursor = db.orders.find({"status": OrderStatus.EN_CALIDAD.value}, {"_id": 0}).sort("quality_sent_at", 1).limit(200)
+    return [_quality_order_summary(o) async for o in cursor]
+
+
+@api_router.post("/orders/{order_id}/quality-video")
+async def upload_quality_video(
+    order_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_roles(QUALITY_ROLES)),
+):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0, "id": 1, "status": 1})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") != OrderStatus.EN_CALIDAD.value:
+        raise HTTPException(status_code=400, detail="La orden no está en control de calidad")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="El video está vacío")
+    if len(data) > MAX_INSPECTION_VIDEO_BYTES:
+        raise HTTPException(status_code=413, detail="El video supera el tamaño máximo (15 MB)")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.quality_videos.update_one(
+        {"order_id": order_id},
+        {"$set": {
+            "order_id": order_id,
+            "data": BsonBinary(data),
+            "content_type": file.content_type or "video/webm",
+            "size": len(data),
+            "uploaded_by": current_user["id"],
+            "created_at": now,
+        }},
+        upsert=True,
+    )
+    video_url = f"/orders/{order_id}/quality-video"
+    await db.orders.update_one({"id": order_id}, {"$set": {"quality_video_url": video_url, "updated_at": now}})
+    return {"video_url": video_url, "size": len(data)}
+
+
+@api_router.get("/orders/{order_id}/quality-video")
+async def get_quality_video(order_id: str, current_user: dict = Depends(get_current_user)):
+    doc = await db.quality_videos.find_one({"order_id": order_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Esta orden no tiene video de calidad")
+    return FastAPIResponse(content=bytes(doc["data"]), media_type=doc.get("content_type") or "video/webm")
+
+
+class QualityAnswer(BaseModel):
+    id: str
+    result: str  # ok | no_ok | na
+    note: Optional[str] = None
+
+
+class QualityReview(BaseModel):
+    approved: bool
+    answers: List[QualityAnswer]
+    photos: List[str] = []
+    notes: Optional[str] = None
+
+
+QUALITY_MIN_PHOTOS = 2
+
+
+@api_router.post("/orders/{order_id}/quality")
+async def submit_quality(order_id: str, data: QualityReview, current_user: dict = Depends(require_roles(QUALITY_ROLES))):
+    """Guarda el cuestionario de calidad.
+    Aprobado → listo para entrega (pagado o pendiente de pago). Rechazado → vuelve a instalación."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") != OrderStatus.EN_CALIDAD.value:
+        raise HTTPException(status_code=400, detail="La orden no está en control de calidad")
+
+    sections = _quality_sections(order)
+    labels = {i["id"]: (sec["label"], i["label"]) for sec in sections for i in sec["items"]}
+    given = {a.id: a for a in data.answers}
+    missing = [labels[k][1] for k in labels if k not in given or given[k].result not in ("ok", "no_ok", "na")]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Faltan {len(missing)} preguntas del cuestionario por responder")
+    failed = [k for k in labels if given[k].result == "no_ok"]
+    notes = (data.notes or "").strip()
+
+    if data.approved:
+        if failed:
+            raise HTTPException(status_code=400, detail="No se puede aprobar con puntos 'No cumple'. Devuélvelo a instalación.")
+        photos = [p for p in (data.photos or []) if p][:10]
+        if len(photos) < QUALITY_MIN_PHOTOS:
+            raise HTTPException(status_code=400, detail=f"Toma al menos {QUALITY_MIN_PHOTOS} fotos del vehículo terminado")
+        if not order.get("quality_video_url"):
+            raise HTTPException(status_code=400, detail="Graba el video de calidad antes de aprobar")
+    else:
+        if not failed and not notes:
+            raise HTTPException(status_code=400, detail="Indica qué debe corregir el técnico (marca 'No cumple' o escribe una observación)")
+        photos = [p for p in (data.photos or []) if p][:10]
+
+    now = datetime.now(timezone.utc).isoformat()
+    answers = [
+        {"id": k, "section": labels[k][0], "label": labels[k][1], "result": given[k].result,
+         "note": (given[k].note or "").strip() or None}
+        for k in labels
+    ]
+    b = _order_balance(order)
+    paid = b["total"] <= 0 or b["balance"] <= 0.01
+    update = {
+        "quality_answers": answers,
+        "quality_photos": photos,
+        "quality_notes": notes or None,
+        "quality_checked_at": now,
+        "quality_by_id": current_user["id"],
+        "quality_by_name": current_user["name"],
+        "updated_at": now,
+    }
+    if data.approved:
+        new_status = OrderStatus.TERMINADO_PAGADO.value if paid and b["total"] > 0 else OrderStatus.SERVICIO_COMPLETADO.value
+        update.update({"status": new_status, "quality_status": "aprobado", "ready_for_delivery": paid})
+        action = "CALIDAD_APROBADA"
+    else:
+        new_status = OrderStatus.EN_PROCESO.value
+        update.update({
+            "status": new_status, "quality_status": "rechazado",
+            "quality_rejections": int(order.get("quality_rejections") or 0) + 1,
+            "service_started_at": now,
+        })
+        action = "CALIDAD_RECHAZADA"
+
+    await db.orders.update_one({"id": order_id}, {"$set": update})
+    await log_order_history(
+        order_id, action, OrderStatus.EN_CALIDAD.value, new_status,
+        current_user["id"], current_user["name"],
+        {"failed": [labels[k][1] for k in failed], "photos_count": len(photos), "notes": notes or None,
+         "balance": b["balance"]},
+    )
+
+    plate, client = order.get("plate"), order.get("client_name")
+    if data.approved:
+        pay_txt = "" if paid else f" · ⚠ Falta pago de {_cop(b['balance'])}"
+        await create_alert(UserRole.COORDINADOR.value, AlertType.LISTO_ENTREGA, "Vehículo listo para entrega",
+                           f"{plate} - {client} aprobó calidad{pay_txt}", order_id)
+        if not paid:
+            await create_alert(UserRole.FACTURACION.value, AlertType.PENDIENTE_FACTURACION, "Vehículo listo para facturación",
+                               f"{plate} - {client} aprobó calidad y tiene saldo pendiente de {_cop(b['balance'])}", order_id)
+        return {"message": "Calidad aprobada · listo para entrega", "new_status": new_status,
+                "paid": paid, "balance": b["balance"]}
+
+    detail = "; ".join(labels[k][1] for k in failed) or notes
+    for tech_id in [t for t in (order.get("assigned_technician_id"), order.get("assigned_technician_2_id")) if t]:
+        await db.alerts.insert_one({
+            "id": str(uuid.uuid4()), "recipient_id": tech_id,
+            "alert_type": AlertType.CALIDAD_RECHAZADA.value,
+            "title": "Calidad devolvió el vehículo",
+            "message": f"{plate}: corregir {detail}",
+            "order_id": order_id, "read": False, "created_at": now,
+        })
+    await create_alert(UserRole.COORDINADOR.value, AlertType.CALIDAD_RECHAZADA, "Calidad devolvió el vehículo",
+                       f"{plate} - {client}: {detail}", order_id)
+    return {"message": "Vehículo devuelto a instalación", "new_status": new_status}
+
+
+# ==================== LISTO PARA ENTREGA · CERTIFICADO DE SALIDA ====================
+DELIVERY_ROLES = [UserRole.ADMIN, UserRole.FACTURACION, UserRole.COORDINADOR, UserRole.CALIDAD, UserRole.SEGURIDAD]
+CERTIFICATE_ROLES = [UserRole.ADMIN, UserRole.FACTURACION, UserRole.COORDINADOR, UserRole.CALIDAD]
+
+
+def _certificate_blockers(order: dict) -> List[str]:
+    """Razones por las que no se puede emitir el certificado de salida."""
+    out = []
+    if order.get("status") not in (OrderStatus.SERVICIO_COMPLETADO.value, OrderStatus.TERMINADO_FALTA_PAGO.value,
+                                   OrderStatus.TERMINADO_PAGADO.value):
+        out.append("El vehículo no está listo para entrega")
+    if order.get("quality_required") and order.get("quality_status") != "aprobado":
+        out.append("Falta aprobar el control de calidad")
+    b = _order_balance(order)
+    if b["balance"] > 0.01:
+        out.append(f"El cliente no ha pagado: saldo pendiente de {_cop(b['balance'])}")
+    return out
+
+
+async def _next_certificate_number() -> str:
+    year = datetime.now(timezone.utc).strftime("%Y")
+    counter = await db.counters.find_one_and_update(
+        {"id": f"exit_certificate_{year}"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    return f"CS-{year}-{int(counter['seq']):05d}"
+
+
+@api_router.post("/orders/{order_id}/exit-certificate")
+async def issue_exit_certificate(order_id: str, current_user: dict = Depends(require_roles(CERTIFICATE_ROLES))):
+    """Emite el certificado de salida (solo pagado y con calidad aprobada) y lo envía al coordinador y al jefe de seguridad."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("exit_certificate"):
+        raise HTTPException(status_code=400, detail=f"Ya tiene certificado de salida {order['exit_certificate'].get('number')}")
+    blockers = _certificate_blockers(order)
+    if blockers:
+        raise HTTPException(status_code=400, detail="No se puede generar el certificado de salida: " + "; ".join(blockers))
+
+    now = datetime.now(timezone.utc).isoformat()
+    cert = {
+        "number": await _next_certificate_number(),
+        "issued_at": now,
+        "issued_by_id": current_user["id"],
+        "issued_by_name": current_user["name"],
+    }
+    update = {
+        "exit_certificate": cert,
+        "release_authorized": True,
+        "release_authorized_at": now,
+        "release_authorized_by": current_user["id"],
+        "release_authorized_by_name": current_user["name"],
+        "ready_for_delivery": True,
+        "updated_at": now,
+    }
+    if order.get("status") != OrderStatus.TERMINADO_PAGADO.value:
+        update["status"] = OrderStatus.TERMINADO_PAGADO.value
+    await db.orders.update_one({"id": order_id}, {"$set": update})
+    order.update(update)
+    await log_order_history(
+        order_id, "CERTIFICADO_SALIDA", order.get("status", ""), update.get("status", order.get("status", "")),
+        current_user["id"], current_user["name"], {"number": cert["number"]},
+    )
+
+    # Envío al coordinador y al jefe de seguridad (alerta + correo con el PDF)
+    msg = f"Certificado {cert['number']} · {order.get('plate')} - {order.get('client_name')} puede salir"
+    recipients = []
+    for role in (UserRole.COORDINADOR.value, UserRole.SEGURIDAD.value):
+        await create_alert(role, AlertType.CERTIFICADO_SALIDA, "Certificado de salida emitido", msg, order_id)
+        recipients += [u for u in await db.users.find({"role": role}, {"_id": 0, "email": 1, "name": 1, "role": 1}).to_list(50)
+                       if u.get("email")]
+    sent_to = []
+    if RESEND_API_KEY and recipients:
+        pdf_bytes = await asyncio.to_thread(build_exit_certificate, order)
+        html = f"""
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#222;">
+  <div style="background:#1e1e32;color:#fff;padding:16px 20px;"><h2 style="margin:0;">Certificado de salida {cert['number']}</h2></div>
+  <div style="padding:20px;">
+    <p>El vehículo está autorizado para salir: pagado y con control de calidad aprobado.</p>
+    <p><b>Placa:</b> {order.get('plate')}<br><b>Vehículo:</b> {order.get('brand','')} {order.get('model','')}<br>
+       <b>Cliente:</b> {order.get('client_name')}<br><b>Orden:</b> {order.get('order_code','')}<br>
+       <b>Emitido por:</b> {current_user['name']}</p>
+    <p>Adjuntamos el certificado en PDF.</p>
+  </div>
+</div>""".strip()
+        for u in recipients:
+            res = await _send_email_with_attachments(
+                u["email"], f"Certificado de salida {cert['number']} - {order.get('plate')}", html,
+                [_pdf_attachment(f"certificado_salida_{cert['number']}.pdf", pdf_bytes)],
+            )
+            if res:
+                sent_to.append(u["email"])
+    await db.orders.update_one({"id": order_id}, {"$set": {"exit_certificate.sent_to": sent_to}})
+    return {"message": "Certificado de salida emitido", "certificate": {**cert, "sent_to": sent_to},
+            "notified_roles": ["coordinador", "seguridad"]}
+
+
+@api_router.get("/orders/{order_id}/exit-certificate.pdf")
+async def download_exit_certificate(order_id: str, current_user: dict = Depends(require_roles(DELIVERY_ROLES))):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if not order.get("exit_certificate"):
+        raise HTTPException(status_code=404, detail="Esta orden no tiene certificado de salida")
+    pdf_bytes = await asyncio.to_thread(build_exit_certificate, order)
+    number = order["exit_certificate"].get("number", "certificado")
+    return FastAPIResponse(content=pdf_bytes, media_type="application/pdf",
+                           headers={"Content-Disposition": f'attachment; filename="certificado_salida_{number}.pdf"'})
+
+
+@api_router.post("/orders/{order_id}/security-exit")
+async def register_security_exit(
+    order_id: str,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.SEGURIDAD, UserRole.COORDINADOR])),
+):
+    """El jefe de seguridad confirma en portería la salida con certificado."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if not order.get("exit_certificate"):
+        raise HTTPException(status_code=400, detail="El vehículo no tiene certificado de salida: no puede salir")
+    if order.get("security_exit_at"):
+        raise HTTPException(status_code=400, detail="La salida ya fue registrada")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one({"id": order_id}, {"$set": {
+        "security_exit_at": now,
+        "security_exit_by_id": current_user["id"],
+        "security_exit_by_name": current_user["name"],
+        "updated_at": now,
+    }})
+    await log_order_history(order_id, "SALIDA_PORTERIA", order.get("status", ""), order.get("status", ""),
+                            current_user["id"], current_user["name"],
+                            {"certificate": order["exit_certificate"].get("number")})
+    return {"message": "Salida registrada en portería", "security_exit_at": now}
 
 
 @api_router.get("/orders-pending-invoice")

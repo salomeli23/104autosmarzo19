@@ -31,6 +31,7 @@ const STATUSES = [
     'en_corte',
     'asignado',
     'en_proceso',
+    'en_calidad',
     'servicio_completado',
     'entregado',
 ];

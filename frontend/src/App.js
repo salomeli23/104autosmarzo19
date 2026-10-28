@@ -25,6 +25,7 @@ import { Pagos } from './pages/Pagos';
 import { FacturacionElectronica } from './pages/FacturacionElectronica';
 import { AutosSalida } from './pages/AutosSalida';
 import { Accesorios } from './pages/Accesorios';
+import { Calidad } from './pages/Calidad';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -233,8 +234,16 @@ function AppRoutes() {
             <Route 
                 path="/autos-salida" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador']}>
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador', 'calidad', 'seguridad']}>
                         <AutosSalida />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/calidad" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'calidad', 'coordinador']}>
+                        <Calidad />
                     </ProtectedRoute>
                 } 
             />

@@ -227,6 +227,21 @@ export const inspectionsAPI = {
     getInspectedVehicles: () => api.get('/inspected-vehicles'),
 };
 
+export const qualityAPI = {
+    pending: () => api.get('/quality/pending'),
+    submit: (orderId, data) => api.post(`/orders/${orderId}/quality`, data),
+    uploadVideo: (orderId, blob) => {
+        const form = new FormData();
+        const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+        form.append('file', blob, `calidad.${ext}`);
+        return api.post(`/orders/${orderId}/quality-video`, form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 120000,
+        });
+    },
+    getVideo: (orderId) => api.get(`/orders/${orderId}/quality-video`, { responseType: 'blob', timeout: 120000 }),
+};
+
 export const quotesAPI = {
     getAll: () => api.get('/orders'),
     create: (data) => api.post('/orders', data),
@@ -300,6 +315,9 @@ export const paymentsAPI = {
     ordersWithBalance: (params) => api.get('/orders-with-balance', { params }),
     pendingRelease: () => api.get('/orders-pending-release'),
     authorizeRelease: (orderId) => api.post(`/orders/${orderId}/authorize-release`),
+    issueExitCertificate: (orderId) => api.post(`/orders/${orderId}/exit-certificate`),
+    downloadExitCertificate: (orderId) => api.get(`/orders/${orderId}/exit-certificate.pdf`, { responseType: 'blob' }),
+    registerSecurityExit: (orderId) => api.post(`/orders/${orderId}/security-exit`),
     pendingInvoice: (includeSent = false) => api.get('/orders-pending-invoice', { params: { include_sent: includeSent } }),
     sendInvoiceEmail: (orderId) => api.post(`/orders/${orderId}/send-invoice-email`),
     downloadInvoicePdf: (orderId) => api.get(`/orders/${orderId}/invoice-pdf`, { responseType: 'blob' }),

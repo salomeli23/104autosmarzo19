@@ -356,3 +356,87 @@ def build_mock_invoice(order: dict, invoice_number: str) -> bytes:
 
     doc.build(story)
     return buf.getvalue()
+
+
+def build_exit_certificate(order: dict) -> bytes:
+    """Certificado de salida: vehículo pagado y con control de calidad aprobado."""
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=LETTER,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+        topMargin=1.2 * cm, bottomMargin=1.2 * cm,
+    )
+    styles = getSampleStyleSheet()
+    cert = order.get("exit_certificate") or {}
+    story = []
+    _header(story, "Certificado de Salida",
+            f"N.º {cert.get('number', '-')} · Emitido {_fmt_dt(cert.get('issued_at'))} · Orden {order.get('order_code', '')}")
+
+    ok_style = ParagraphStyle("Ok", parent=styles["Normal"], textColor=colors.HexColor("#16a34a"), fontSize=12, leading=15)
+    story.append(Paragraph("<b>VEHÍCULO AUTORIZADO PARA SALIR</b> · pagado y con control de calidad aprobado", ok_style))
+    story.append(Spacer(1, 0.3 * cm))
+
+    story.append(_kv_table([
+        ["Placa", (order.get("plate") or "").upper()],
+        ["Vehículo", f"{order.get('brand', '')} {order.get('model', '')} {order.get('color') or ''}".strip() or "-"],
+        ["Cliente", order.get("client_name") or "-"],
+        ["Cédula", order.get("client_cedula") or "-"],
+        ["Teléfono", order.get("client_phone") or "-"],
+        ["Técnicos", " · ".join(t for t in (order.get("assigned_technician_name"), order.get("assigned_technician_2_name")) if t) or "-"],
+        ["Ingreso", _fmt_dt(order.get("ingreso_at"))],
+        ["Instalación terminada", _fmt_dt(order.get("service_completed_at"))],
+        ["Certificado emitido por", f"{cert.get('issued_by_name') or '-'} · enviado al Coordinador y al Jefe de Seguridad"],
+    ]))
+    story.append(Spacer(1, 0.25 * cm))
+
+    story.append(Paragraph("<b>Servicios realizados</b>", styles["Heading4"]))
+    svc_lines = [
+        f"• {s.get('description') or s.get('service')}"
+        for s in (order.get("services") or []) if isinstance(s, dict)
+    ]
+    story.append(Paragraph("<br/>".join(svc_lines) or "-", styles["Normal"]))
+    story.append(Spacer(1, 0.25 * cm))
+
+    answers = order.get("quality_answers") or []
+    ok_n = sum(1 for a in answers if a.get("result") == "ok")
+    na_n = sum(1 for a in answers if a.get("result") == "na")
+    story.append(Paragraph("<b>Control de calidad</b>", styles["Heading4"]))
+    if order.get("quality_status") == "aprobado":
+        story.append(_kv_table([
+            ["Resultado", "APROBADO"],
+            ["Revisado por", order.get("quality_by_name") or "-"],
+            ["Fecha", _fmt_dt(order.get("quality_checked_at"))],
+            ["Puntos revisados", f"{ok_n} cumplen · {na_n} no aplican · 0 con novedad"],
+            ["Observaciones", order.get("quality_notes") or "-"],
+        ]))
+    else:
+        story.append(Paragraph("<i>Orden anterior al control de calidad.</i>", styles["Italic"]))
+    photos = [p for p in (order.get("quality_photos") or []) if p][:4]
+    imgs = [img for img in (_b64_to_image(p, width_cm=3.6, height_cm=2.7) for p in photos) if img]
+    if imgs:
+        story.append(Spacer(1, 0.2 * cm))
+        tbl = Table([imgs], colWidths=[3.8 * cm] * len(imgs))
+        tbl.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        story.append(tbl)
+    story.append(Spacer(1, 0.25 * cm))
+
+    total = float(order.get("final_value") or order.get("negotiated_value") or 0)
+    paid = float(order.get("amount_paid") or 0)
+    story.append(Paragraph("<b>Pago</b>", styles["Heading4"]))
+    story.append(_totals_table(total, paid, max(total - paid, 0), payment_method=order.get("payment_method")))
+    story.append(Spacer(1, 0.25 * cm))
+
+    story.append(Spacer(1, 0.9 * cm))
+
+    sig = Table([["_______________________", "_______________________", "_______________________"],
+                 ["Coordinador", "Jefe de Seguridad", "Cliente"]],
+                colWidths=[5.8 * cm] * 3)
+    sig.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TEXTCOLOR", (0, 1), (-1, 1), MUTED_COLOR),
+    ]))
+    story.append(sig)
+
+    doc.build(story)
+    return buf.getvalue()

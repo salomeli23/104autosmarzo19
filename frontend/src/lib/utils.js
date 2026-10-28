@@ -92,6 +92,7 @@ export const ORDER_STATUS_LABELS = {
     en_corte: 'En Corte',
     asignado: 'Por Instalar',
     en_proceso: 'En Instalación',
+    en_calidad: 'Control de Calidad',
     servicio_completado: 'Servicio Completado',
     terminado_falta_pago: 'Falta Pago',
     terminado_pagado: 'Pagado',
@@ -106,6 +107,7 @@ export const ORDER_STATUS_COLORS = {
     en_corte: 'bg-pink-500/10 text-pink-500 border-pink-500/20',
     asignado: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
     en_proceso: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
+    en_calidad: 'bg-violet-500/10 text-violet-500 border-violet-500/20',
     servicio_completado: 'bg-teal-500/10 text-teal-500 border-teal-500/20',
     terminado_falta_pago: 'bg-red-500/10 text-red-500 border-red-500/20',
     terminado_pagado: 'bg-green-500/10 text-green-500 border-green-500/20',
@@ -121,6 +123,8 @@ export const ROLE_LABELS = {
     facturacion: 'Facturación',
     corte: 'Corte',
     accesorios: 'Accesorios',
+    calidad: 'Calidad',
+    seguridad: 'Jefe de Seguridad',
 };
 
 // Sistema de franjas horarias con cupos

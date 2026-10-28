@@ -248,6 +248,16 @@ const InstallCard = ({ order, userId, onStart, onFinish, onMeasure, processing }
 
                 <WorkflowSteps order={order} />
 
+                {inProgress && order.quality_status === 'rechazado' && (
+                    <div className="text-xs p-2 rounded border border-red-500/40 bg-red-500/10 text-red-300 space-y-1" data-testid={`quality-rework-${order.id}`}>
+                        <p className="font-semibold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Calidad devolvió el vehículo · corregir:</p>
+                        {(order.quality_answers || []).filter(a => a.result === 'no_ok').map(a => (
+                            <p key={a.id}>• {a.label}{a.note ? ` — ${a.note}` : ''}</p>
+                        ))}
+                        {order.quality_notes && <p className="italic">{order.quality_notes}</p>}
+                    </div>
+                )}
+
                 <div className="space-y-1">
                     {(order.services || []).filter(s => typeof s === 'object').map((s, i) => (
                         <div key={i} className="text-xs p-2 rounded bg-muted/40 space-y-1">
@@ -486,7 +496,7 @@ export const TechnicianView = () => {
                     notes: finishNotes.trim(),
                     completion_photos: finishPhotos,
                 });
-                toast.success('Instalación finalizada · enviada a facturación');
+                toast.success('Instalación finalizada · enviada a control de calidad');
             }
             closeFinish();
             fetchOrders();

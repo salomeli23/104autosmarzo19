@@ -1,12 +1,12 @@
 import React from 'react';
-import { ScanSearch, Users, Scissors, Wrench, Check, Ruler } from 'lucide-react';
+import { ScanSearch, Users, Scissors, Wrench, Check, Ruler, BadgeCheck } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { orderNeedsCutting } from '../lib/workflow';
 
-const ORDER = ['en_revision', 'en_corte', 'asignado', 'en_proceso', 'servicio_completado'];
+const ORDER = ['en_revision', 'en_corte', 'asignado', 'en_proceso', 'en_calidad', 'servicio_completado'];
 
 /**
- * Pasos del taller: 360° → Técnicos → Corte (si aplica) → Instalación.
+ * Pasos del taller: 360° → Técnicos → Corte (si aplica) → Instalación → Calidad.
  */
 export const WorkflowSteps = ({ order, className }) => {
     const needsCutting = orderNeedsCutting(order);
@@ -25,8 +25,14 @@ export const WorkflowSteps = ({ order, className }) => {
         }] : []),
         {
             key: 'inst', label: 'Instalación', icon: Wrench,
-            done: idx >= ORDER.indexOf('servicio_completado') || (idx === -1 && !!order?.service_completed_at),
+            done: idx >= ORDER.indexOf('en_calidad') || (idx === -1 && !!order?.service_completed_at),
             current: ['asignado', 'en_proceso'].includes(order?.status),
+        },
+        {
+            key: 'calidad', label: 'Calidad', icon: BadgeCheck,
+            done: order?.quality_status === 'aprobado' || idx >= ORDER.indexOf('servicio_completado')
+                || (idx === -1 && !!order?.service_completed_at && order?.quality_status !== 'rechazado'),
+            current: order?.status === 'en_calidad',
         },
     ];
     return (
