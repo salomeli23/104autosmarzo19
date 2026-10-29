@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { inventoryAPI, sedesAPI, sedeAssignmentAPI, cuttingCatalogAPI } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { MoveToCuttingStockDialog } from '../components/MoveToCuttingStockDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -10,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { formatCurrency, SERVICE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Package, AlertTriangle, Plus, Trash2, Boxes, Wrench, Layers, Edit, Tag, MapPin, Move, RefreshCw, Loader2 } from 'lucide-react';
+import { Package, AlertTriangle, Plus, Trash2, Boxes, Wrench, Layers, Edit, Tag, MapPin, Move, RefreshCw, Loader2, Scissors, Warehouse, Image as ImageIcon } from 'lucide-react';
 
 const CATEGORIES = [
     { value: 'polarizado', label: 'Polarizado' },
@@ -30,6 +31,8 @@ export const Inventory = () => {
     const [rollGroups, setRollGroups] = useState([]); // referencias oficiales de corte
     const [defaultRollMeters, setDefaultRollMeters] = useState(30.48);
     const [resetOpen, setResetOpen] = useState(false);
+    const [stockDialog, setStockDialog] = useState(null); // { item } o { item: null } para leer cualquier caja
+    const [stockFilter, setStockFilter] = useState('all'); // all | corte | bodega
     const [resetting, setResetting] = useState(false);
     const [items, setItems] = useState([]);
     const [alerts, setAlerts] = useState([]);
@@ -215,7 +218,19 @@ export const Inventory = () => {
     };
 
     const filteredItems = items.filter(i => filterCategoria === 'all' || i.categoria === filterCategoria);
-    const rollos = filteredItems.filter(i => i.tipo_articulo === 'rollo');
+    // en_stock_corte === false → en bodega; los rollos anteriores (sin el campo) cuentan como en corte
+    const inCutting = (i) => i.en_stock_corte !== false;
+    const allRollos = filteredItems.filter(i => i.tipo_articulo === 'rollo');
+    const rollos = allRollos.filter(i => stockFilter === 'all' || (stockFilter === 'corte' ? inCutting(i) : !inCutting(i)));
+
+    const openBoxPhoto = async (item) => {
+        try {
+            const res = await inventoryAPI.boxPhoto(item.id);
+            window.open(URL.createObjectURL(res.data), '_blank');
+        } catch {
+            toast.error('No se pudo abrir la foto de la caja');
+        }
+    };
     const otros = filteredItems.filter(i => i.tipo_articulo !== 'rollo');
 
     return (
@@ -234,6 +249,9 @@ export const Inventory = () => {
                             <RefreshCw className="w-4 h-4 mr-2" /> Cargar inventario de corte
                         </Button>
                     )}
+                    <Button variant="outline" onClick={() => setStockDialog({ item: null })} data-testid="move-to-cutting-stock-btn">
+                        <Scissors className="w-4 h-4 mr-2" /> Mover al stock de corte
+                    </Button>
                     <Button onClick={openNew} data-testid="new-inventory-btn">
                         <Plus className="w-4 h-4 mr-2" /> Nuevo Artículo
                     </Button>
@@ -305,6 +323,11 @@ export const Inventory = () => {
                         </div>
                     ) : (
                         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            <div className="md:col-span-2 lg:col-span-3 flex gap-1.5 flex-wrap" data-testid="stock-filter">
+                                {[['all', `Todos (${allRollos.length})`], ['corte', `En corte (${allRollos.filter(inCutting).length})`], ['bodega', `En bodega (${allRollos.filter(i => !inCutting(i)).length})`]].map(([v, l]) => (
+                                    <Button key={v} size="sm" variant={stockFilter === v ? 'default' : 'outline'} onClick={() => setStockFilter(v)} data-testid={`stock-filter-${v}`}>{l}</Button>
+                                ))}
+                            </div>
                             {rollos.map(item => {
                                 const pct = item.metros_iniciales > 0 ? (item.metros_restantes / item.metros_iniciales) * 100 : 0;
                                 const barColor = pct > 50 ? 'bg-green-500' : pct > 25 ? 'bg-yellow-500' : 'bg-red-500';
@@ -315,6 +338,15 @@ export const Inventory = () => {
                                                 <div className="flex-1">
                                                     <p className="font-mono text-xs text-muted-foreground">{item.codigo}</p>
                                                     <p className="font-bold">{item.nombre}</p>
+                                                    {inCutting(item) ? (
+                                                        <span className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 mt-1" data-testid={`stock-badge-${item.codigo}`}>
+                                                            <Scissors className="w-3 h-3" /> En stock de corte
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border mt-1" data-testid={`stock-badge-${item.codigo}`}>
+                                                            <Warehouse className="w-3 h-3" /> En bodega
+                                                        </span>
+                                                    )}
                                                     <p className="text-xs text-muted-foreground">
                                                         {item.grupo_corte || (rollGroups.find(g => g.items.includes(item.tipo_rollo))?.label) || item.tipo_rollo}
                                                         {' · '}{item.categoria}
@@ -356,7 +388,20 @@ export const Inventory = () => {
                                                         {SERVICE_LABELS?.[item.linked_service] || item.linked_service}
                                                     </p>
                                                 )}
+                                                {item.stock_corte_at && (
+                                                    <p>Activado en corte {new Date(item.stock_corte_at).toLocaleString('es-CO')} · {item.stock_corte_by_name}
+                                                        {item.lote ? ` · Lote ${item.lote}` : ''}</p>
+                                                )}
                                             </div>
+                                            {!inCutting(item) ? (
+                                                <Button size="sm" className="w-full" onClick={() => setStockDialog({ item })} data-testid={`move-stock-${item.codigo}`}>
+                                                    <Scissors className="w-4 h-4 mr-1.5" /> Mover al stock de corte
+                                                </Button>
+                                            ) : item.caja_foto_url ? (
+                                                <Button size="sm" variant="outline" className="w-full" onClick={() => openBoxPhoto(item)} data-testid={`box-photo-${item.codigo}`}>
+                                                    <ImageIcon className="w-4 h-4 mr-1.5" /> Ver foto de la caja
+                                                </Button>
+                                            ) : null}
                                         </CardContent>
                                     </Card>
                                 );
@@ -596,6 +641,18 @@ export const Inventory = () => {
                 </DialogContent>
             </Dialog>
 
+            {stockDialog && (
+                <MoveToCuttingStockDialog
+                    open
+                    item={stockDialog.item}
+                    items={items}
+                    rollGroups={rollGroups}
+                    defaultRollMeters={defaultRollMeters}
+                    onClose={() => setStockDialog(null)}
+                    onDone={() => { setStockDialog(null); fetchAll(); }}
+                />
+            )}
+
             {/* Reemplazar el inventario de corte por las referencias oficiales */}
             <Dialog open={resetOpen} onOpenChange={(v) => !resetting && setResetOpen(v)}>
                 <DialogContent data-testid="reset-cutting-rolls-dialog">
@@ -603,7 +660,7 @@ export const Inventory = () => {
                         <DialogTitle>Cargar inventario de corte</DialogTitle>
                         <DialogDescription>
                             Se retiran todos los rollos actuales y se carga <b>1 rollo de {defaultRollMeters} m</b> por cada una de las{' '}
-                            <b>{rollGroups.reduce((n, g) => n + g.items.length, 0)} referencias</b> oficiales. Los accesorios no cambian.
+                            <b>{rollGroups.reduce((n, g) => n + g.items.length, 0)} referencias</b> oficiales. Los rollos nuevos quedan <b>en bodega</b> hasta moverlos al stock de corte con la foto de su caja. Los accesorios no cambian.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="max-h-60 overflow-y-auto text-xs space-y-2 rounded border border-border p-2">

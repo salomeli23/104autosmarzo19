@@ -167,6 +167,9 @@ export const inventoryAPI = {
     seedTestAccessories: () => api.post('/inventory/test-accessories'),
     removeTestAccessories: () => api.post('/inventory/test-accessories/remove'),
     resetCuttingRolls: () => api.post('/inventory/cutting-rolls/reset'),
+    readRollBox: (photo) => api.post('/inventory/cutting-stock/read-box', { photo }, { timeout: 120000 }),
+    moveToCuttingStock: (data) => api.post('/inventory/cutting-stock', data),
+    boxPhoto: (id) => api.get(`/inventory/${id}/box-photo`, { responseType: 'blob' }),
 };
 
 // Solicitudes de accesorios: despacho desde inventario y entrega al técnico

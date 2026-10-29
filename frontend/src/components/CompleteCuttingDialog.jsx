@@ -77,7 +77,8 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         setPpfSerial(order.ppf_vehicle_serial || '');
         setPpfModel(order.ppf_vehicle_model || '');
         inventoryAPI.list({ tipo_articulo: 'rollo' })
-            .then(res => setRolls((res.data || []).filter(r => (r.metros_restantes ?? 0) > 0)))
+            // Solo rollos activos en el stock de corte (los de bodega se activan desde Inventario)
+            .then(res => setRolls((res.data || []).filter(r => (r.metros_restantes ?? 0) > 0 && r.en_stock_corte !== false)))
             .catch(() => setRolls([]));
         if (!catalog) cuttingCatalogAPI.getMaterials().then(res => setCatalog(res.data)).catch(() => {});
         cuttingCatalogAPI.getCarAverage(order.brand || '', order.model || '')

@@ -5,6 +5,7 @@ from bson import Binary as BsonBinary
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+import json
 import os
 import logging
 from pathlib import Path
@@ -3540,6 +3541,9 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, 
         roll = await db.inventory.find_one({"id": inv_id, "active": True}, {"_id": 0})
         if not roll or roll.get("tipo_articulo") != "rollo":
             raise HTTPException(status_code=400, detail="Rollo no válido")
+        if roll.get("en_stock_corte") is False:
+            raise HTTPException(status_code=400,
+                                detail=f"El rollo {roll.get('codigo')} está en bodega: muévelo al stock de corte desde Inventario")
         if (roll.get("metros_restantes") or 0) + 1e-6 < meters:
             raise HTTPException(status_code=400,
                                 detail=f"El rollo {roll.get('codigo')} ({roll.get('nombre')}) solo tiene {roll.get('metros_restantes') or 0} m y se necesitan {meters} m")
@@ -4016,6 +4020,8 @@ async def create_inventory_item(
         "notes": item.notes,
         "stock_minimo": item.stock_minimo,
         "active": True,
+        # Los rollos nuevos quedan en bodega hasta moverlos al stock de corte con la foto de la caja
+        **({"en_stock_corte": False} if item.tipo_articulo == "rollo" else {}),
         "created_by": current_user["id"],
         "created_at": now_iso,
         "updated_at": now_iso,
@@ -4143,6 +4149,7 @@ async def reset_cutting_rolls(current_user: dict = Depends(require_roles([UserRo
                 "notes": "Inventario de corte inicial · 1 rollo por referencia",
                 "stock_minimo": None,
                 "active": True,
+                "en_stock_corte": False,  # en bodega hasta que se lea su caja
                 "created_by": current_user["id"],
                 "created_at": now,
                 "updated_at": now,
@@ -4151,6 +4158,186 @@ async def reset_cutting_rolls(current_user: dict = Depends(require_roles([UserRo
         await db.inventory.insert_many(docs)
     return {"message": f"Inventario de corte cargado: {len(docs)} rollos", "deactivated": old.modified_count,
             "created": len(docs), "meters_per_roll": DEFAULT_ROLL_METERS}
+
+
+# ==================== STOCK DE CORTE · activar rollos leyendo la caja ====================
+# Un rollo nuevo queda en bodega (en_stock_corte=False) hasta que se toma la foto de su caja
+# y se mueve al stock de corte. Los rollos anteriores a esta función (sin el campo) siguen disponibles.
+CUTTING_STOCK_ROLES = [UserRole.ADMIN, UserRole.COORDINADOR, UserRole.CORTE]
+ROLL_BOX_MODEL = "claude-opus-5-5"
+
+ROLL_BOX_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "referencia": {"type": ["string", "null"], "description": "Referencia exacta de la lista que corresponde a la caja, o null si ninguna coincide"},
+        "marca": {"type": ["string", "null"]},
+        "producto": {"type": ["string", "null"], "description": "Nombre del producto tal como aparece en la caja"},
+        "porcentaje": {"type": ["string", "null"], "description": "Porcentaje de transmisión de luz (VLT), p. ej. 20%"},
+        "ancho": {"type": ["string", "null"], "description": "Ancho del rollo con su unidad, p. ej. 40 in o 1.52 m"},
+        "largo": {"type": ["string", "null"], "description": "Largo del rollo con su unidad, p. ej. 100 ft o 30 m"},
+        "metros": {"type": ["number", "null"], "description": "Largo del rollo convertido a metros"},
+        "lote": {"type": ["string", "null"], "description": "Número de lote (LOT / batch)"},
+        "serial": {"type": ["string", "null"], "description": "Número de serie o código del rollo"},
+        "fecha": {"type": ["string", "null"], "description": "Fecha de fabricación o vencimiento impresa en la caja"},
+        "texto_leido": {"type": "string", "description": "Texto relevante leído en la etiqueta"},
+        "confianza": {"type": "string", "enum": ["alta", "media", "baja"]},
+    },
+    "required": ["referencia", "marca", "producto", "porcentaje", "ancho", "largo", "metros", "lote", "serial",
+                 "fecha", "texto_leido", "confianza"],
+    "additionalProperties": False,
+}
+
+
+def _roll_box_prompt() -> str:
+    refs = "\n".join(f"- {g['label']}: " + " | ".join(g["items"]) for g in CUTTING_REFERENCE_GROUPS)
+    return (
+        "Esta es la foto de la caja (o la etiqueta) de un rollo de película para vehículos: polarizado, "
+        "película de seguridad o PPF. Lee los datos impresos y devuélvelos en el formato pedido.\n\n"
+        "En `referencia` escribe exactamente una de estas referencias del inventario si la caja corresponde a ella "
+        "(compara marca, línea de producto, porcentaje y medida del rollo, p. ej. 40X100 = 40 pulgadas x 100 pies). "
+        "Si ninguna coincide con seguridad, deja `referencia` en null; no inventes una.\n"
+        f"{refs}\n\n"
+        "Convierte el largo a metros en `metros` (100 ft = 30.48 m). Deja en null lo que no se pueda leer. "
+        "En `confianza` indica qué tan seguro estás de la referencia."
+    )
+
+
+async def _read_roll_box(photo: str) -> dict:
+    """Lee la foto de la caja con Claude y devuelve los datos estructurados."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise HTTPException(status_code=503, detail="La lectura automática de la caja no está configurada. Escribe los datos a mano.")
+    jpeg = await asyncio.to_thread(_compress_data_url_image, photo, 1568, 85)
+    if not jpeg:
+        raise HTTPException(status_code=400, detail="La foto de la caja no es válida")
+    import anthropic
+    client = anthropic.AsyncAnthropic()
+    try:
+        response = await client.beta.messages.create(
+            model=ROLL_BOX_MODEL,
+            max_tokens=4096,
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+            output_config={"format": {"type": "json_schema", "schema": ROLL_BOX_SCHEMA}},
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                             "data": base64.b64encode(jpeg).decode("ascii")}},
+                {"type": "text", "text": _roll_box_prompt()},
+            ]}],
+        )
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="El lector de cajas está ocupado. Intenta en un momento.")
+    except anthropic.APIStatusError as e:
+        logger.error(f"[roll-box] Claude API error {e.status_code}: {e.message}")
+        raise HTTPException(status_code=502, detail="No se pudo leer la caja. Escribe los datos a mano.")
+    except anthropic.APIConnectionError:
+        raise HTTPException(status_code=502, detail="No hay conexión con el lector de cajas. Escribe los datos a mano.")
+    if response.stop_reason == "refusal":
+        raise HTTPException(status_code=422, detail="No se pudo leer esta foto. Escribe los datos a mano.")
+    text = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        data = json.loads(text)
+    except Exception:
+        raise HTTPException(status_code=502, detail="No se pudo interpretar la lectura de la caja")
+    if data.get("referencia") not in ROLLS_LIST:
+        data["referencia"] = None
+    return data
+
+
+class RollBoxRead(BaseModel):
+    photo: str  # data URL de la foto de la caja
+
+
+@api_router.post("/inventory/cutting-stock/read-box")
+async def read_roll_box(data: RollBoxRead, current_user: dict = Depends(require_roles(CUTTING_STOCK_ROLES))):
+    """Lee la caja del rollo y sugiere el rollo en bodega que corresponde."""
+    box = await _read_roll_box(data.photo)
+    candidates = []
+    if box.get("referencia"):
+        candidates = await db.inventory.find(
+            {"active": True, "tipo_articulo": "rollo", "tipo_rollo": box["referencia"], "en_stock_corte": False},
+            {"_id": 0, "id": 1, "codigo": 1, "nombre": 1, "metros_restantes": 1},
+        ).sort("seq", 1).to_list(20)
+    return {"box": box, "candidates": candidates}
+
+
+class CuttingStockMove(BaseModel):
+    item_id: Optional[str] = None  # rollo en bodega; si falta se crea uno nuevo con la referencia
+    referencia: str
+    photo: str
+    metros: Optional[float] = None
+    box: Optional[Dict[str, Any]] = None  # datos leídos / corregidos de la caja
+
+
+@api_router.post("/inventory/cutting-stock")
+async def move_to_cutting_stock(data: CuttingStockMove, current_user: dict = Depends(require_roles(CUTTING_STOCK_ROLES))):
+    """Mueve un rollo al stock de corte con la foto de su caja: queda activo para usar en Corte."""
+    if data.referencia not in ROLLS_LIST:
+        raise HTTPException(status_code=400, detail="Elige una referencia del inventario de corte")
+    jpeg = await asyncio.to_thread(_compress_data_url_image, data.photo, 1280, 75)
+    if not jpeg:
+        raise HTTPException(status_code=400, detail="Toma la foto de la caja del rollo")
+    metros = round(float(data.metros), 2) if data.metros else None
+    if metros is not None and metros <= 0:
+        raise HTTPException(status_code=400, detail="Los metros del rollo deben ser mayores a 0")
+    now = datetime.now(timezone.utc).isoformat()
+    group = next(g for g in CUTTING_REFERENCE_GROUPS if data.referencia in g["items"])
+    box = {k: v for k, v in (data.box or {}).items() if k in ROLL_BOX_SCHEMA["properties"]}
+
+    if data.item_id:
+        item = await db.inventory.find_one({"id": data.item_id, "active": True}, {"_id": 0})
+        if not item or item.get("tipo_articulo") != "rollo":
+            raise HTTPException(status_code=404, detail="Rollo no encontrado")
+        if item.get("en_stock_corte") is not False:
+            raise HTTPException(status_code=400, detail=f"El rollo {item.get('codigo')} ya está en el stock de corte")
+        if item.get("tipo_rollo") != data.referencia:
+            raise HTTPException(status_code=400, detail=f"La caja es {data.referencia} pero el rollo {item.get('codigo')} es {item.get('tipo_rollo')}")
+    else:
+        last = await db.inventory.find_one({}, {"_id": 0, "seq": 1}, sort=[("seq", -1)])
+        seq = int((last or {}).get("seq") or 0) + 1
+        item = {
+            "id": str(uuid.uuid4()), "seq": seq, "codigo": f"INV-{seq:05d}",
+            "nombre": data.referencia, "categoria": group["categoria"], "grupo_corte": group["label"],
+            "tipo_articulo": "rollo", "tipo_rollo": data.referencia, "factura_compra": None,
+            "metros_iniciales": metros or DEFAULT_ROLL_METERS, "metros_restantes": metros or DEFAULT_ROLL_METERS,
+            "cantidad_inicial": None, "cantidad_restante": None, "costo": 0.0, "linked_service": None,
+            "sede_id": None, "sede_nombre": None, "fecha_ingreso": now, "notes": "Creado al mover al stock de corte",
+            "stock_minimo": None, "active": True, "en_stock_corte": False,
+            "created_by": current_user["id"], "created_at": now, "updated_at": now,
+        }
+        await db.inventory.insert_one(dict(item))
+
+    await db.roll_box_photos.update_one(
+        {"item_id": item["id"]},
+        {"$set": {"item_id": item["id"], "data": BsonBinary(jpeg), "content_type": "image/jpeg",
+                  "uploaded_by": current_user["id"], "created_at": now}},
+        upsert=True,
+    )
+    update = {
+        "en_stock_corte": True,
+        "stock_corte_at": now,
+        "stock_corte_by_id": current_user["id"],
+        "stock_corte_by_name": current_user["name"],
+        "datos_caja": box or None,
+        "lote": box.get("lote") or item.get("lote"),
+        "serial": box.get("serial") or item.get("serial"),
+        "caja_foto_url": f"/inventory/{item['id']}/box-photo",
+        "updated_at": now,
+    }
+    # Metros reales de la caja, solo si el rollo aún no se ha usado
+    if metros and data.item_id and (item.get("metros_restantes") or 0) >= (item.get("metros_iniciales") or 0) - 1e-6:
+        update.update({"metros_iniciales": metros, "metros_restantes": metros})
+    await db.inventory.update_one({"id": item["id"]}, {"$set": update})
+    item.update(update)
+    item.pop("_id", None)
+    return {"message": f"Rollo {item['codigo']} activo en el stock de corte", "item": item}
+
+
+@api_router.get("/inventory/{item_id}/box-photo")
+async def get_roll_box_photo(item_id: str, current_user: dict = Depends(get_current_user)):
+    doc = await db.roll_box_photos.find_one({"item_id": item_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Este rollo no tiene foto de la caja")
+    return FastAPIResponse(content=bytes(doc["data"]), media_type=doc.get("content_type") or "image/jpeg")
 
 
 @api_router.post("/inventory/{item_id}/deduct")
