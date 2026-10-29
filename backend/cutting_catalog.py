@@ -190,105 +190,83 @@ CAR_AVERAGES = [
 ]
 
 # ============================================================
-# MATERIALES · 3 categorías operativas
+# REFERENCIAS DE CORTE · inventario de rollos (lista oficial)
+# Cada grupo lleva la categoría de inventario de sus rollos.
 # ============================================================
+CUTTING_REFERENCE_GROUPS = [
+    {"id": "black_ceramic", "label": "Black Ceramic", "categoria": "polarizado", "items": [
+        "BLACK CERAMIC 15% 36X100", "BLACK CERAMIC 20% 40X100", "BLACK CERAMIC 20% 36X100",
+        "BLACK CERAMIC 30% 40X100", "BLACK CERAMIC 30% 36X100",
+    ]},
+    {"id": "ceramic_i3_plus", "label": "Ceramic i3 Plus", "categoria": "polarizado", "items": [
+        "CERAMIC I3 PLUS 5% 60X100", "CERAMIC I3 PLUS 40% 40X100", "CERAMIC I3 PLUS 30% 40X100",
+    ]},
+    {"id": "air", "label": "Air", "categoria": "polarizado", "items": [
+        "AIR CERAMIC 70% CORTO", "AIR CERAMIC 70% LARGO",
+    ]},
+    {"id": "3m", "label": "3M", "categoria": "polarizado", "items": [
+        "3M CERAMIC IR 5%", "3M CERAMIC IR 15%", "3M CERAMIC IR 25%",
+    ]},
+    {"id": "ceramic_i3", "label": "Ceramic i3", "categoria": "polarizado", "items": [
+        "CERAMIC I3 5% 40X100", "CERAMIC I3 5% 60X100", "CERAMIC I3 15% 40X100", "CERAMIC I3 15% 60X100",
+        "CERAMIC I3 22% 40X100", "CERAMIC I3 33% 40X100", "CERAMIC I3 56% 40X100",
+    ]},
+    {"id": "ultraoptik", "label": "Ultraoptik", "categoria": "polarizado", "items": [
+        "ULTRAOPTIK HUPEROPTIK XTREME 20% 60X100", "ULTRAOPTIK HUPEROPTIK XTREME 20% 40X100",
+        "ULTRAOPTIK HUPEROPTIK XTREME 30% 40X100", "ULTRAOPTIK HUPEROPTIK XTREME 5% 60X100",
+        "ULTRAOPTIK HUPEROPTIK XTREME 5% EDGE SPECTRA HP 60X100",
+        "ULTRAOPTIK HUPEROPTIK XTREME 15% EDGE SPECTRA HP 60X100",
+    ]},
+    {"id": "huperoptik", "label": "Huperoptik", "categoria": "polarizado", "items": [
+        "HUPEROPTIK METALIZADO 20% 60X100", "HUPEROPTIK METALIZADO 30% 36X100",
+    ]},
+    {"id": "asfw", "label": "ASWF", "categoria": "polarizado", "items": [
+        "ASWF CHARCOAL 7%", "ASWF CHARCOAL 12%", "ASWF CHARCOAL 35%", "ASWF NANO S IR 15%", "ASWF CLEAR PLEX",
+    ]},
+    {"id": "nano_spectra", "label": "Nano Spectra", "categoria": "polarizado", "items": [
+        "NANOCERAMICA SPECTRA 5% ULTRACARBON", "NANOCERAMICA SPECTRA 20% ULTRACARBON",
+        "NANOCERAMICA SPECTRA 35% ULTRACARBON", "NANOCERAMICA SPECTRA 50% NANOCERAMICA",
+        "NANOCERAMICA SPECTRA 35% NANOCERAMICA",
+    ]},
+    {"id": "nicrome", "label": "Nicrome HD Spectra", "categoria": "polarizado", "items": [
+        "NICROME HD 10% LARGO", "NICROME HD 20% CORTO", "NICROME HD 20% LARGO",
+        "NICROME HD 35% CORTO", "NICROME HD 35% LARGO",
+    ]},
+    {"id": "nano_seguridad", "label": "Nano Seguridad", "categoria": "ultrasecure", "items": [
+        "NANOSEGURIDAD SPECTRA 5%", "NANOSEGURIDAD SPECTRA 15%", "NANOSEGURIDAD SPECTRA 35%",
+    ]},
+    {"id": "ultrasecure", "label": "Ultrasecure", "categoria": "ultrasecure", "items": [
+        "ULTRASECURE 4 MIL", "ULTRASECURE 7 MIL", "ULTRASECURE 12 MIL", "ULTRASECURE 21 MIL", "ULTRASECURE 24 MIL",
+    ]},
+    {"id": "steck_smart", "label": "Steck Smart", "categoria": "ultrasecure", "items": [
+        "STECK SMART 0,05", "STECK SMART 0,15", "STECK SMART 0,35",
+    ]},
+    {"id": "ppf", "label": "PPF", "categoria": "ppf", "items": [
+        "PPF AUTOBAHN STARKE", "PPF AUTOBAHN ROAD GUARD", "PPF AUTOBAHN INCOGNITO X", "PPF AUTOBAHN HALT",
+        "PPF AUTOBAHN MATTE EDGE", "PPF WINDSHIELD 20% BLACK",
+        "PPF XPEL GLOSS", "PPF XPEL ULTIMATE", "PPF XPEL STEALTH",
+        "PPF STEK", "PPF SPECTRA NEXUS", "PPF SPECTRA MATTE SUPREME",
+        "PPF TERMINAX SANTI BLACK", "PPF TERMINAX ULTRANAX NANO", "PPF TERMINAX RACING ORANGE",
+        "PPF TERMINAX DRAGON BLOOD RED",
+    ]},
+]
+
+# Metros de un rollo nuevo (100 pies)
+DEFAULT_ROLL_METERS = 30.48
+
+# Materiales para el corte, en 3 categorías operativas (se arman desde las referencias)
+_MATERIAL_CATEGORIES = [
+    ("material_1", "Polarizados", "polarizado"),
+    ("material_2", "Seguridad / Ultrasecure", "ultrasecure"),
+    ("material_3", "PPF · Paint Protection", "ppf"),
+]
 MATERIALS_CATALOG = {
-    "material_1": {
-        "label": "Polarizados",
-        "items": [
-            "ULTRACARBON 5%", "ULTRACARBON 20%", "ULTRACARBON 35%",
-            "NANOCERAMICA 50%",
-            "BLACK CERAMIC 15%", "BLACK CERAMIC 20%", "BLACK CERAMIC 30%",
-            "XTREME CERAMIC 20% HUPEROPTIK 40X100",
-            "XTREME CERAMIC 30% HUPEROPTIK 40X100",
-            "XTREME CERAMIC 5% HUPEROPTIK 60X100",
-            "XTREME CERAMIC 20% HUPEROPTIK 60X100",
-            "CERAMIC I3 56% 40X100", "CERAMIC I3 33% 40X100",
-            "CERAMIC I3 22% 40X100", "CERAMIC I3 15% 60X100",
-            "CERAMIC I3 5% 60X100",
-            "CERAMIC I3+ 5% 60X100", "CERAMIC I3+ 15% 40X100",
-            "CERAMIC 20% 40X100", "CERAMIC 20% 60X100",
-            "CERAMIC XR EDGE 5%", "CERAMIC XR EDGE 15%",
-            "CERAMIC IR 3M 5%", "CERAMIC IR 3M 15%",
-            "CERAMIC IR 3M 25%", "CERAMIC IR 3M 30%",
-            "ULTRAOPTIK 5% LATERALES", "ULTRAOPTIK 20% LATERALES",
-            "ULTRAOPTIK 20% PANORAMICOS", "ULTRAOPTIK 30% PANORAMICOS",
-        ],
-    },
-    "material_2": {
-        "label": "Seguridad / Ultrasecure",
-        "items": [
-            "NANOSEGURIDAD 4MIL 5%",
-            "NANOSEGURIDAD 4MIL 35%",
-            "ASWF 4 MIL IR 12%",
-            "CLEAR 4 MIL 60 SPECTRA",
-            "CLEAR 7 MIL SPECTRA · ULTRASECURE 300 MICRAS",
-            "CLEAR 12 MIL SPECTRA · ULTRASECURE 500 MICRAS",
-            "ULTRASECURE 700 MICRAS",
-            "ULTRASECURE 1500 MICRAS",
-            "WINDSHIELD TPU · CLEARPLEX",
-        ],
-    },
-    "material_3": {
-        "label": "PPF · Paint Protection",
-        "items": [
-            "PPF AUTOBAHN HALT",
-            "PPF AUTOBAHN INCOGNITO",
-            "PPF AUTOBAHN ROAD GUARD",
-            "PPF AUTOBAHN STARKE",
-            "PPF AUTOBAHN MATTE",
-            "PPF AUTOBAHN EDGE",
-            "WINDSHIELD TPU 20% · PPF TECHO 20%",
-            "AIR CERAMIC 70%",
-            "PPF XPEL ULTIMATE",
-            "PPF XPEL GLOSS",
-            "PPF XPEL STEALTH",
-            "PPF AVERY MATTE",
-            "PPF AVERY BRILLANTE",
-            "PPF SPECTRA NEXUS",
-            "PPF SPECTRA SUPREME",
-            "PPF SPECTRA GARWARE",
-        ],
-    },
+    key: {"label": label, "items": [it for g in CUTTING_REFERENCE_GROUPS if g["categoria"] == cat for it in g["items"]]}
+    for key, label, cat in _MATERIAL_CATEGORIES
 }
 
-# Rollos físicos (ROLLOS del xlsx) - se cargan al inventario
-ROLLS_LIST = [
-    "ULTRACARBON 5%", "ULTRACARBON 20%",
-    "ULTRACARBON 35% (ROLLO PARTIDO)", "ULTRACARBON 35%",
-    "NANOCERAMICA 50%",
-    "NANOSEGURIDAD 4MIL 5%", "NANOSEGURIDAD 4MIL 35%",
-    "ASWF 4 MIL IR 12%",
-    "CLEAR 4 MIL 60 SPECTRA",
-    "BLACK CERAMIC 15%", "BLACK CERAMIC 20%", "BLACK CERAMIC 30%",
-    "XTREME CERAMIC 20% HUPEROPTIK 40X100",
-    "XTREME CERAMIC 30% HUPEROPTIK 40X100",
-    "XTREME CERAMIC 5% HUPEROPTIK 60X100",
-    "XTREME CERAMIC 20% HUPEROPTIK 60X100",
-    "CERAMIC I3 56% 40X100", "CERAMIC I3 33% 40X100",
-    "CERAMIC I3 22% 40X100", "CERAMIC I3 15% 60X100",
-    "CERAMIC I3 5% 60X100",
-    "CERAMIC I3+ 5% 60X100", "CERAMIC I3+ 15% 40X100",
-    "CERAMIC 20% 60X100", "CERAMIC 20% 40X100",
-    "WINDSHIELD TPU",
-    "CLEAR 7 MIL SPECTRA",
-    "CLEAR 12 MIL SPECTRA",
-    "ULTRASECURE 1500 MICRAS",
-    "PPF AUTOBAHN HALT",
-    "PPF AUTOBAHN INCOGNITO",
-    "PPF AUTOBAHN ROAD GUARD",
-    "WINDSHIELD TPU 20%",
-    "PPF AUTOBAHN STARKE",
-    "PPF AUTOBAHN MATTE",
-    "AIR CERAMIC 70%",
-    "PPF XPEL ULTIMATE", "PPF XPEL GLOSS", "PPF XPEL STEALTH",
-    "PPF AUTOBAHN EDGE",
-    "PPF AVERY MATTE", "PPF AVERY BRILLANTE",
-    "PPF SPECTRA NEXUS", "PPF SPECTRA SUPREME", "PPF SPECTRA GARWARE",
-    "CERAMIC XR EDGE 5%", "CERAMIC XR EDGE 15%",
-    "CERAMIC IR 3M 5%", "CERAMIC IR 3M 15%",
-    "CERAMIC IR 3M 25%", "CERAMIC IR 3M 30%",
-]
+# Rollos físicos: un rollo por referencia
+ROLLS_LIST = [it for g in CUTTING_REFERENCE_GROUPS for it in g["items"]]
 
 
 def normalize(s: str) -> str:

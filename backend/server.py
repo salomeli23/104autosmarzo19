@@ -24,7 +24,8 @@ import asyncio
 import resend
 import re
 from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate
-from cutting_catalog import CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, lookup_car_average
+from cutting_catalog import (CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, CUTTING_REFERENCE_GROUPS,
+                             DEFAULT_ROLL_METERS, lookup_car_average)
 from email_templates import (
     build_appointment_confirmation_html,
     build_ingreso_html,
@@ -3922,41 +3923,6 @@ async def lookup_existing_client(
 
 
 # ==================== INVENTORY MODULE ====================
-ROLLO_ALERT_THRESHOLDS = {
-    # Polarizado / Ultrasecure
-    "spectra": 5,
-    "black_ceramic": 5,
-    "ceramic_i3": 3,
-    "upper_hoptik": 3,
-    "edge": 3,
-    "clear_4mil": 5,
-    "clear_7mil": 2,
-    "clear_12mil": 2,
-    "clear_1500_micras": 4,
-    # PPF
-    "xpel_gloss": 4,
-    "ppf_xpel_ultimate": 2,
-    "ppf_autoban": 4,
-    "ppf_techo": 3,
-}
-
-ROLLO_TYPE_LABELS = {
-    "spectra": "Spectra",
-    "black_ceramic": "Black Ceramic",
-    "ceramic_i3": "Ceramic i3",
-    "upper_hoptik": "Upper Hoptik",
-    "edge": "Edge",
-    "clear_4mil": "Clear 4mil",
-    "clear_7mil": "Clear 7mil",
-    "clear_12mil": "Clear 12mil",
-    "clear_1500_micras": "Clear 1500 micras",
-    "xpel_gloss": "Xpel Gloss",
-    "ppf_xpel_ultimate": "PPF Xpel Ultimate",
-    "ppf_autoban": "PPF Autoban",
-    "ppf_techo": "PPF Techo",
-}
-
-
 class InventoryItemCreate(BaseModel):
     nombre: str  # nombre legible del articulo
     categoria: str  # 'polarizado', 'ultrasecure', 'ppf', 'accesorio', 'material'
@@ -4110,9 +4076,12 @@ async def delete_inventory_item(
     return {"message": "Artículo eliminado"}
 
 
+ROLL_LOW_METERS = 5  # alerta cuando a una referencia le quedan menos metros que esto
+
+
 @api_router.get("/inventory/alerts")
 async def get_inventory_alerts(current_user: dict = Depends(get_current_user)):
-    """Devolver alertas de bajo stock por tipo de rollo según umbrales fijos."""
+    """Alertas de bajo stock por referencia de corte: sin rollos (crítica) o con pocos metros."""
     pipeline = [
         {"$match": {"active": True, "tipo_articulo": "rollo", "tipo_rollo": {"$ne": None}, "metros_restantes": {"$gt": 0}}},
         {"$group": {"_id": "$tipo_rollo", "count": {"$sum": 1}, "total_metros": {"$sum": "$metros_restantes"}}},
@@ -4120,20 +4089,68 @@ async def get_inventory_alerts(current_user: dict = Depends(get_current_user)):
     counts = {}
     async for row in db.inventory.aggregate(pipeline):
         counts[row["_id"]] = {"count": row["count"], "total_metros": row["total_metros"]}
-    
+
     alerts = []
-    for tipo, threshold in ROLLO_ALERT_THRESHOLDS.items():
-        info = counts.get(tipo, {"count": 0, "total_metros": 0})
-        if info["count"] <= threshold:
+    for ref in ROLLS_LIST:
+        info = counts.get(ref, {"count": 0, "total_metros": 0})
+        if info["count"] == 0 or info["total_metros"] < ROLL_LOW_METERS:
             alerts.append({
-                "tipo_rollo": tipo,
-                "label": ROLLO_TYPE_LABELS.get(tipo, tipo),
+                "tipo_rollo": ref,
+                "label": ref,
                 "current_count": info["count"],
-                "threshold": threshold,
+                "threshold": 1,
                 "total_metros_restantes": round(info["total_metros"], 2),
-                "severity": "critical" if info["count"] == 0 else ("high" if info["count"] <= max(1, threshold // 2) else "medium"),
+                "severity": "critical" if info["count"] == 0 else "high",
             })
-    return {"alerts": alerts, "counts_by_type": counts, "thresholds": ROLLO_ALERT_THRESHOLDS}
+    return {"alerts": alerts, "counts_by_type": counts, "low_meters": ROLL_LOW_METERS}
+
+
+@api_router.post("/inventory/cutting-rolls/reset")
+async def reset_cutting_rolls(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Deja solo las referencias oficiales de corte: desactiva los rollos anteriores
+    (quedan en el historial) y carga 1 rollo nuevo por referencia."""
+    now = datetime.now(timezone.utc).isoformat()
+    old = await db.inventory.update_many(
+        {"$or": [{"tipo_articulo": "rollo"}, {"type": "rollo"}], "active": {"$ne": False}},
+        {"$set": {"active": False, "deactivated_at": now, "deactivated_reason": "Reemplazado por el inventario de corte oficial",
+                  "updated_at": now}},
+    )
+    last = await db.inventory.find_one({}, {"_id": 0, "seq": 1}, sort=[("seq", -1)])
+    seq = int((last or {}).get("seq") or 0)
+    docs = []
+    for group in CUTTING_REFERENCE_GROUPS:
+        for ref in group["items"]:
+            seq += 1
+            docs.append({
+                "id": str(uuid.uuid4()),
+                "seq": seq,
+                "codigo": f"INV-{seq:05d}",
+                "nombre": ref,
+                "categoria": group["categoria"],
+                "grupo_corte": group["label"],
+                "tipo_articulo": "rollo",
+                "tipo_rollo": ref,
+                "factura_compra": None,
+                "metros_iniciales": DEFAULT_ROLL_METERS,
+                "metros_restantes": DEFAULT_ROLL_METERS,
+                "cantidad_inicial": None,
+                "cantidad_restante": None,
+                "costo": 0.0,
+                "linked_service": None,
+                "sede_id": None,
+                "sede_nombre": None,
+                "fecha_ingreso": now,
+                "notes": "Inventario de corte inicial · 1 rollo por referencia",
+                "stock_minimo": None,
+                "active": True,
+                "created_by": current_user["id"],
+                "created_at": now,
+                "updated_at": now,
+            })
+    if docs:
+        await db.inventory.insert_many(docs)
+    return {"message": f"Inventario de corte cargado: {len(docs)} rollos", "deactivated": old.modified_count,
+            "created": len(docs), "meters_per_roll": DEFAULT_ROLL_METERS}
 
 
 @api_router.post("/inventory/{item_id}/deduct")
@@ -6204,6 +6221,8 @@ async def get_materials_catalog(current_user: dict = Depends(get_current_user)):
         "material_2": MATERIALS_CATALOG["material_2"],
         "material_3": MATERIALS_CATALOG["material_3"],
         "rolls": ROLLS_LIST,
+        "groups": CUTTING_REFERENCE_GROUPS,
+        "default_roll_meters": DEFAULT_ROLL_METERS,
     }
 
 

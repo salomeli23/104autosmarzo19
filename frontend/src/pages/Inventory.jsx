@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { inventoryAPI, sedesAPI, sedeAssignmentAPI } from '../lib/api';
+import { inventoryAPI, sedesAPI, sedeAssignmentAPI, cuttingCatalogAPI } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -9,23 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { formatCurrency, SERVICE_LABELS } from '../lib/utils';
 import { toast } from 'sonner';
-import { Package, AlertTriangle, Plus, Trash2, Boxes, Wrench, Layers, Edit, Tag, MapPin, Move } from 'lucide-react';
-
-const ROLLO_TYPES = [
-    { value: 'spectra', label: 'Spectra' },
-    { value: 'black_ceramic', label: 'Black Ceramic' },
-    { value: 'ceramic_i3', label: 'Ceramic i3' },
-    { value: 'upper_hoptik', label: 'Upper Hoptik' },
-    { value: 'edge', label: 'Edge' },
-    { value: 'clear_4mil', label: 'Clear 4mil' },
-    { value: 'clear_7mil', label: 'Clear 7mil' },
-    { value: 'clear_12mil', label: 'Clear 12mil' },
-    { value: 'clear_1500_micras', label: 'Clear 1500 micras' },
-    { value: 'xpel_gloss', label: 'Xpel Gloss' },
-    { value: 'ppf_xpel_ultimate', label: 'PPF Xpel Ultimate' },
-    { value: 'ppf_autoban', label: 'PPF Autoban' },
-    { value: 'ppf_techo', label: 'PPF Techo' },
-];
+import { Package, AlertTriangle, Plus, Trash2, Boxes, Wrench, Layers, Edit, Tag, MapPin, Move, RefreshCw, Loader2 } from 'lucide-react';
 
 const CATEGORIES = [
     { value: 'polarizado', label: 'Polarizado' },
@@ -41,6 +26,11 @@ const severityClass = (s) => s === 'critical' ? 'border-red-500 bg-red-500/10' :
 const severityTextClass = (s) => s === 'critical' ? 'text-red-400' : s === 'high' ? 'text-orange-400' : 'text-yellow-400';
 
 export const Inventory = () => {
+    const { isAdmin } = useAuth();
+    const [rollGroups, setRollGroups] = useState([]); // referencias oficiales de corte
+    const [defaultRollMeters, setDefaultRollMeters] = useState(30.48);
+    const [resetOpen, setResetOpen] = useState(false);
+    const [resetting, setResetting] = useState(false);
     const [items, setItems] = useState([]);
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -53,7 +43,7 @@ export const Inventory = () => {
         nombre: '',
         categoria: 'polarizado',
         tipo_articulo: 'rollo',
-        tipo_rollo: 'spectra',
+        tipo_rollo: '',
         factura_compra: '',
         metros_iniciales: '',
         cantidad_inicial: '',
@@ -87,6 +77,41 @@ export const Inventory = () => {
     }, []);
 
     useEffect(() => { fetchAll(); }, [fetchAll]);
+
+    useEffect(() => {
+        cuttingCatalogAPI.getMaterials()
+            .then(res => {
+                setRollGroups(res.data?.groups || []);
+                if (res.data?.default_roll_meters) setDefaultRollMeters(res.data.default_roll_meters);
+            })
+            .catch(() => setRollGroups([]));
+    }, []);
+
+    // Al elegir la referencia se completan nombre, categoría y metros del rollo
+    const pickReference = (ref) => {
+        const group = rollGroups.find(g => g.items.includes(ref));
+        setForm(f => ({
+            ...f,
+            tipo_rollo: ref,
+            nombre: f.nombre && f.nombre !== f.tipo_rollo ? f.nombre : ref,
+            categoria: group?.categoria || f.categoria,
+            metros_iniciales: f.metros_iniciales || String(defaultRollMeters),
+        }));
+    };
+
+    const handleResetRolls = async () => {
+        setResetting(true);
+        try {
+            const res = await inventoryAPI.resetCuttingRolls();
+            toast.success(`${res.data.message} · ${res.data.deactivated} rollos anteriores retirados`);
+            setResetOpen(false);
+            fetchAll();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'No se pudo cargar el inventario de corte');
+        } finally {
+            setResetting(false);
+        }
+    };
 
     const openTransfer = (item) => {
         setTransferDialog({ item });
@@ -134,6 +159,10 @@ export const Inventory = () => {
     const handleSave = async () => {
         if (!form.nombre.trim()) {
             toast.error('El nombre es requerido');
+            return;
+        }
+        if (!editingId && form.tipo_articulo === 'rollo' && !form.tipo_rollo) {
+            toast.error('Elige la referencia del rollo');
             return;
         }
         try {
@@ -199,9 +228,16 @@ export const Inventory = () => {
                     </h1>
                     <p className="text-muted-foreground">Gestión de rollos, accesorios y materiales</p>
                 </div>
-                <Button onClick={openNew} data-testid="new-inventory-btn">
-                    <Plus className="w-4 h-4 mr-2" /> Nuevo Artículo
-                </Button>
+                <div className="flex gap-2 flex-wrap">
+                    {isAdmin && (
+                        <Button variant="outline" onClick={() => setResetOpen(true)} data-testid="reset-cutting-rolls-btn">
+                            <RefreshCw className="w-4 h-4 mr-2" /> Cargar inventario de corte
+                        </Button>
+                    )}
+                    <Button onClick={openNew} data-testid="new-inventory-btn">
+                        <Plus className="w-4 h-4 mr-2" /> Nuevo Artículo
+                    </Button>
+                </div>
             </div>
 
             {/* Alerts */}
@@ -221,7 +257,7 @@ export const Inventory = () => {
                                         <div>
                                             <p className="font-medium">{a.label}</p>
                                             <p className={`text-2xl font-mono font-bold ${severityTextClass(a.severity)}`}>{a.current_count}</p>
-                                            <p className="text-xs text-muted-foreground">/ {a.threshold} rollos</p>
+                                            <p className="text-xs text-muted-foreground">{a.current_count === 1 ? 'rollo' : 'rollos'}</p>
                                         </div>
                                         <div className="text-right">
                                             <p className="text-xs text-muted-foreground">Restante</p>
@@ -280,7 +316,7 @@ export const Inventory = () => {
                                                     <p className="font-mono text-xs text-muted-foreground">{item.codigo}</p>
                                                     <p className="font-bold">{item.nombre}</p>
                                                     <p className="text-xs text-muted-foreground">
-                                                        {ROLLO_TYPES.find(t => t.value === item.tipo_rollo)?.label || item.tipo_rollo}
+                                                        {item.grupo_corte || (rollGroups.find(g => g.items.includes(item.tipo_rollo))?.label) || item.tipo_rollo}
                                                         {' · '}{item.categoria}
                                                     </p>
                                                 </div>
@@ -430,13 +466,20 @@ export const Inventory = () => {
                                 {form.tipo_articulo === 'rollo' && (
                                     <div className="grid sm:grid-cols-2 gap-3">
                                         <div className="space-y-1">
-                                            <Label>Marca / Tipo de rollo *</Label>
-                                            <Select value={form.tipo_rollo} onValueChange={(v) => setForm(f => ({ ...f, tipo_rollo: v }))}>
-                                                <SelectTrigger data-testid="form-tipo-rollo"><SelectValue /></SelectTrigger>
-                                                <SelectContent>
-                                                    {ROLLO_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                                                </SelectContent>
-                                            </Select>
+                                            <Label>Referencia del rollo *</Label>
+                                            <select
+                                                value={form.tipo_rollo}
+                                                onChange={(e) => pickReference(e.target.value)}
+                                                className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+                                                data-testid="form-tipo-rollo"
+                                            >
+                                                <option value="">Elige la referencia…</option>
+                                                {rollGroups.map(g => (
+                                                    <optgroup key={g.id} label={g.label}>
+                                                        {g.items.map(ref => <option key={ref} value={ref}>{ref}</option>)}
+                                                    </optgroup>
+                                                ))}
+                                            </select>
                                         </div>
                                         <div className="space-y-1">
                                             <Label>Metros iniciales *</Label>
@@ -548,6 +591,34 @@ export const Inventory = () => {
                         <Button variant="outline" onClick={() => setTransferDialog(null)}>Cancelar</Button>
                         <Button onClick={handleTransfer} disabled={!transferTargetSede} data-testid="confirm-transfer-btn">
                             <Move className="w-4 h-4 mr-1" /> Transferir
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Reemplazar el inventario de corte por las referencias oficiales */}
+            <Dialog open={resetOpen} onOpenChange={(v) => !resetting && setResetOpen(v)}>
+                <DialogContent data-testid="reset-cutting-rolls-dialog">
+                    <DialogHeader>
+                        <DialogTitle>Cargar inventario de corte</DialogTitle>
+                        <DialogDescription>
+                            Se retiran todos los rollos actuales y se carga <b>1 rollo de {defaultRollMeters} m</b> por cada una de las{' '}
+                            <b>{rollGroups.reduce((n, g) => n + g.items.length, 0)} referencias</b> oficiales. Los accesorios no cambian.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-60 overflow-y-auto text-xs space-y-2 rounded border border-border p-2">
+                        {rollGroups.map(g => (
+                            <div key={g.id}>
+                                <p className="font-semibold text-primary">{g.label} ({g.items.length})</p>
+                                <p className="text-muted-foreground">{g.items.join(' · ')}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setResetOpen(false)} disabled={resetting}>Cancelar</Button>
+                        <Button onClick={handleResetRolls} disabled={resetting || rollGroups.length === 0} data-testid="confirm-reset-cutting-rolls">
+                            {resetting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                            Reemplazar inventario de corte
                         </Button>
                     </DialogFooter>
                 </DialogContent>

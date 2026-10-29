@@ -166,6 +166,7 @@ export const inventoryAPI = {
     restock: (id, data) => api.post(`/inventory/${id}/restock`, data),
     seedTestAccessories: () => api.post('/inventory/test-accessories'),
     removeTestAccessories: () => api.post('/inventory/test-accessories/remove'),
+    resetCuttingRolls: () => api.post('/inventory/cutting-rolls/reset'),
 };
 
 // Solicitudes de accesorios: despacho desde inventario y entrega al técnico

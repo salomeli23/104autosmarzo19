@@ -183,7 +183,10 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         }
     };
 
-    const materialGroups = catalog ? ['material_1', 'material_2', 'material_3'].filter(k => catalog[k]).map(k => catalog[k]) : [];
+    // Referencias de corte por grupo (Black Ceramic, Ceramic i3, PPF…)
+    const materialGroups = catalog?.groups?.length
+        ? catalog.groups
+        : catalog ? ['material_1', 'material_2', 'material_3'].filter(k => catalog[k]).map(k => catalog[k]) : [];
 
     return (
         <Dialog open={!!order} onOpenChange={(v) => !v && !saving && onClose?.()}>
@@ -255,7 +258,11 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             <div key={l.key} className="grid grid-cols-1 sm:grid-cols-[1.3fr_1.3fr_1fr_auto] gap-2 items-end" data-testid={`cut-line-${z.id}-${idx}`}>
                                                 <div className="space-y-1">
                                                     <Label className="text-[11px]">Material {ls.length > 1 ? idx + 1 : ''}</Label>
-                                                    <select value={l.material} onChange={(e) => updateLine(z.id, l.key, { material: e.target.value })} className={selectClass} data-testid={`cut-material-${z.id}-${idx}`}>
+                                                    <select value={l.material} onChange={(e) => updateLine(z.id, l.key, {
+                                                        material: e.target.value,
+                                                        // Cada referencia tiene su rollo: se selecciona solo si la línea no tenía uno
+                                                        inventory_item_id: l.inventory_item_id || rolls.find(r => r.tipo_rollo === e.target.value)?.id || '',
+                                                    })} className={selectClass} data-testid={`cut-material-${z.id}-${idx}`}>
                                                         <option value="">Seleccionar material…</option>
                                                         {materialGroups.map(g => (
                                                             <optgroup key={g.label} label={g.label}>
