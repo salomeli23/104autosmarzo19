@@ -75,6 +75,7 @@ class UserRole(str, Enum):
     ACCESORIOS = "accesorios"  # Despacha accesorios del inventario al técnico instalador
     CALIDAD = "calidad"  # Control de calidad después de la instalación
     SEGURIDAD = "seguridad"  # Jefe de seguridad: recibe el certificado de salida y controla la portería
+    LIQUIDACIONES = "liquidaciones"  # Coordinador de liquidaciones: aprueba y paga los cobros de los técnicos
 
 class ServiceType(str, Enum):
     POLARIZADO = "polarizado"
@@ -113,6 +114,8 @@ class AlertType(str, Enum):
     CALIDAD_RECHAZADA = "calidad_rechazada"  # Calidad devolvió el vehículo a instalación
     LISTO_ENTREGA = "listo_entrega"  # Calidad aprobada: listo para entrega
     CERTIFICADO_SALIDA = "certificado_salida"  # Certificado de salida emitido
+    COBRO_TECNICO = "cobro_tecnico"  # Un técnico pidió el cobro de un servicio terminado
+    COBRO_REVISADO = "cobro_revisado"  # Liquidaciones aprobó, rechazó o pagó el cobro
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -431,6 +434,10 @@ class OrderResponse(BaseModel):
     quality_photos: Optional[List[str]] = None
     quality_video_url: Optional[str] = None
     quality_rejections: Optional[int] = None
+    quality_rating: Optional[int] = None  # calificación de calidad 1-5
+    quality_reviews: Optional[List[Dict[str, Any]]] = None  # historial de revisiones de calidad
+    installed_services: Optional[List[Dict[str, Any]]] = None  # servicios que el técnico marcó como instalados
+    installed_by_name: Optional[str] = None
     exit_certificate: Optional[Dict[str, Any]] = None
     security_exit_at: Optional[str] = None
     security_exit_by_name: Optional[str] = None
@@ -473,7 +480,15 @@ class AssignTechnicians(BaseModel):
 class TechnicianReport(BaseModel):
     order_id: str
     notes: str
-    completion_photos: Optional[List[str]] = None  # base64 data URLs, max 10
+    completion_photos: Optional[List[str]] = None  # base64 data URLs, mín. 5 y máx. 10
+    installed_services: Optional[List[int]] = None  # posiciones de order.services que el técnico instaló
+
+MIN_COMPLETION_PHOTOS = 5
+
+def _service_label(svc) -> str:
+    if isinstance(svc, dict):
+        return svc.get("description") or svc.get("service") or "Servicio"
+    return str(svc)
 
 class PaymentApproval(BaseModel):
     order_id: str
@@ -972,7 +987,7 @@ class StartRouteSlot(BaseModel):
 
 class CompleteRouteSlot(BaseModel):
     notes: Optional[str] = None
-    completion_photos: Optional[List[str]] = None  # base64 data URLs, max 10
+    completion_photos: Optional[List[str]] = None  # base64 data URLs, mín. 5 y máx. 10
 
 
 @api_router.post("/orders/{order_id}/route/slots/{slot_id}/start")
@@ -1007,6 +1022,8 @@ async def complete_route_slot(order_id: str, slot_id: str, data: Optional[Comple
     idx = next((i for i, s in enumerate(slots) if s["id"] == slot_id), None)
     if idx is None:
         raise HTTPException(status_code=404, detail="Slot no encontrado")
+    if len([p for p in ((data.completion_photos if data else None) or []) if p]) < MIN_COMPLETION_PHOTOS:
+        raise HTTPException(status_code=400, detail=f"Adjunta mínimo {MIN_COMPLETION_PHOTOS} fotos del servicio terminado")
     slots[idx]["status"] = "completado"
     slots[idx]["completed_at"] = datetime.now(timezone.utc).isoformat()
     if data:
@@ -2491,14 +2508,28 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
     if order["status"] != OrderStatus.EN_PROCESO.value:
         raise HTTPException(status_code=400, detail="La orden debe estar en estado EN_PROCESO")
     
+    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in (
+            order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+        raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
+    
     is_postventa = bool(order.get("is_postventa"))
     new_status = OrderStatus.ENTREGADO.value if is_postventa else OrderStatus.EN_CALIDAD.value
     
-    photos = (data.completion_photos or [])[:10]
+    photos = [p for p in (data.completion_photos or []) if p][:10]
+    if len(photos) < MIN_COMPLETION_PHOTOS:
+        raise HTTPException(status_code=400, detail=f"Adjunta mínimo {MIN_COMPLETION_PHOTOS} fotos del servicio terminado")
+    services = order.get("services") or []
+    picked = sorted({i for i in (data.installed_services or []) if isinstance(i, int) and 0 <= i < len(services)})
+    if services and not picked:
+        raise HTTPException(status_code=400, detail="Marca qué servicios instalaste")
+    installed = [{"index": i, "name": _service_label(services[i])} for i in picked]
     now = datetime.now(timezone.utc).isoformat()
     
     update_data = {
         **({} if is_postventa else _quality_entry_fields(now)),
+        "installed_services": installed,
+        "installed_by_id": current_user["id"],
+        "installed_by_name": current_user["name"],
         "status": new_status,
         "service_completed_at": now,
         "technician_notes": data.notes,
@@ -2525,7 +2556,8 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
         data.order_id, "SERVICIO_COMPLETADO_POSTVENTA" if is_postventa else "SERVICIO_COMPLETADO_TECNICO",
         OrderStatus.EN_PROCESO.value, new_status,
         current_user["id"], current_user["name"],
-        {"technician_notes": data.notes, "is_postventa": is_postventa, "photos_count": len(photos), "bahia_released": bahia_id}
+        {"technician_notes": data.notes, "is_postventa": is_postventa, "photos_count": len(photos), "bahia_released": bahia_id,
+         "installed_services": [x["name"] for x in installed]}
     )
     
     if not is_postventa:
@@ -3040,6 +3072,7 @@ async def seed_test_users():
         {"email": "accesorios@polarizadosya.com", "name": "Bodega Accesorios", "role": "accesorios", "password": "accesorios123"},
         {"email": "calidad@polarizadosya.com", "name": "Sandra Calidad", "role": "calidad", "password": "calidad123"},
         {"email": "seguridad@polarizadosya.com", "name": "Jorge Jefe de Seguridad", "role": "seguridad", "password": "seguridad123"},
+        {"email": "liquidaciones@polarizadosya.com", "name": "Laura Liquidaciones", "role": "liquidaciones", "password": "liquida123"},
     ]
     
     created = []
@@ -4757,6 +4790,7 @@ class QualityReview(BaseModel):
     answers: List[QualityAnswer]
     photos: List[str] = []
     notes: Optional[str] = None
+    rating: Optional[int] = None  # calificación 1-5 estrellas
 
 
 QUALITY_MIN_PHOTOS = 2
@@ -4780,6 +4814,9 @@ async def submit_quality(order_id: str, data: QualityReview, current_user: dict 
         raise HTTPException(status_code=400, detail=f"Faltan {len(missing)} preguntas del cuestionario por responder")
     failed = [k for k in labels if given[k].result == "no_ok"]
     notes = (data.notes or "").strip()
+    if data.rating is None or not 1 <= int(data.rating) <= 5:
+        raise HTTPException(status_code=400, detail="Califica la calidad del servicio de 1 a 5 estrellas")
+    rating = int(data.rating)
 
     if data.approved:
         if failed:
@@ -4802,10 +4839,20 @@ async def submit_quality(order_id: str, data: QualityReview, current_user: dict 
     ]
     b = _order_balance(order)
     paid = b["total"] <= 0 or b["balance"] <= 0.01
+    review = {
+        "result": "aprobado" if data.approved else "rechazado",
+        "rating": rating,
+        "notes": notes or None,
+        "failed": [{"label": labels[k][1], "note": (given[k].note or "").strip() or None} for k in failed],
+        "by_name": current_user["name"],
+        "at": now,
+    }
     update = {
         "quality_answers": answers,
         "quality_photos": photos,
         "quality_notes": notes or None,
+        "quality_rating": rating,
+        "quality_reviews": (order.get("quality_reviews") or []) + [review],
         "quality_checked_at": now,
         "quality_by_id": current_user["id"],
         "quality_by_name": current_user["name"],
@@ -4991,6 +5038,212 @@ async def register_security_exit(
                             current_user["id"], current_user["name"],
                             {"certificate": order["exit_certificate"].get("number")})
     return {"message": "Salida registrada en portería", "security_exit_at": now}
+
+
+# ==================== HISTORIAL DEL TÉCNICO · COBROS (LIQUIDACIONES) ====================
+FINISHED_FOR_TECH = [
+    OrderStatus.EN_CALIDAD.value, OrderStatus.SERVICIO_COMPLETADO.value,
+    OrderStatus.TERMINADO_FALTA_PAGO.value, OrderStatus.TERMINADO_PAGADO.value, OrderStatus.ENTREGADO.value,
+]
+CHARGE_STATUSES = ["pendiente", "aprobado", "rechazado", "pagado"]
+
+
+def _quality_summary(o: dict) -> dict:
+    """Etiqueta de calidad del servicio: pendiente | aprobado | rechazado | sin_revision (órdenes anteriores)."""
+    status = o.get("quality_status")
+    if o.get("status") == OrderStatus.EN_CALIDAD.value:
+        status = "pendiente"
+    elif not status:
+        status = "sin_revision"
+    return {
+        "quality_status": status,
+        "quality_rating": o.get("quality_rating"),
+        "quality_notes": o.get("quality_notes"),
+        "quality_by_name": o.get("quality_by_name"),
+        "quality_checked_at": o.get("quality_checked_at"),
+        "quality_reviews": o.get("quality_reviews") or [],
+    }
+
+
+def _tech_service_names(o: dict) -> List[str]:
+    installed = o.get("installed_services") or []
+    if installed:
+        return [x.get("name") for x in installed if x.get("name")]
+    return [_service_label(s) for s in (o.get("services") or [])]
+
+
+@api_router.get("/technician/history")
+async def technician_history(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.TECNICO]))):
+    """Servicios terminados del técnico, con su etiqueta de calidad y el estado del cobro."""
+    uid = current_user["id"]
+    cursor = db.orders.find(
+        {"status": {"$in": FINISHED_FOR_TECH},
+         "$or": [{"assigned_technician_id": uid}, {"assigned_technician_2_id": uid}]},
+        {"_id": 0, "quality_photos": 0, "service_completion_photos": 0, "inspection_photos": 0, "signature_url": 0},
+    ).sort("service_completed_at", -1).limit(200)
+    orders = [o async for o in cursor]
+    charges = {c["order_id"]: c async for c in db.technician_charges.find(
+        {"technician_id": uid, "order_id": {"$in": [o["id"] for o in orders]}}, {"_id": 0})}
+    return [{
+        "id": o["id"],
+        "order_code": o.get("order_code"),
+        "plate": o.get("plate"),
+        "brand": o.get("brand"),
+        "model": o.get("model"),
+        "client_name": o.get("client_name"),
+        "status": o.get("status"),
+        "profile_photo_url": o.get("profile_photo_url"),
+        "service_started_at": o.get("service_started_at"),
+        "service_completed_at": o.get("service_completed_at"),
+        "installed_services": _tech_service_names(o),
+        "role": "principal" if o.get("assigned_technician_id") == uid else "apoyo",
+        "partner_name": o.get("assigned_technician_2_name") if o.get("assigned_technician_id") == uid else o.get("assigned_technician_name"),
+        "charge": charges.get(o["id"]),
+        **_quality_summary(o),
+    } for o in orders]
+
+
+class TechnicianChargeCreate(BaseModel):
+    order_id: str
+    amount: float
+    notes: Optional[str] = None
+
+
+@api_router.post("/technician-charges")
+async def create_technician_charge(data: TechnicianChargeCreate, current_user: dict = Depends(require_roles([UserRole.TECNICO]))):
+    """El técnico cobra un servicio terminado: queda pendiente de aprobación por Liquidaciones."""
+    order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    uid = current_user["id"]
+    if uid not in (order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+        raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
+    if order.get("status") not in FINISHED_FOR_TECH:
+        raise HTTPException(status_code=400, detail="Solo puedes cobrar servicios terminados")
+    amount = round(float(data.amount or 0), 2)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Escribe el valor a cobrar")
+    existing = await db.technician_charges.find_one({"order_id": order["id"], "technician_id": uid}, {"_id": 0})
+    if existing and existing.get("status") != "rechazado":
+        raise HTTPException(status_code=400, detail="Ya enviaste el cobro de este servicio")
+
+    now = datetime.now(timezone.utc).isoformat()
+    charge = {
+        "id": existing["id"] if existing else str(uuid.uuid4()),
+        "order_id": order["id"],
+        "order_code": order.get("order_code"),
+        "plate": order.get("plate"),
+        "brand": order.get("brand"),
+        "model": order.get("model"),
+        "client_name": order.get("client_name"),
+        "technician_id": uid,
+        "technician_name": current_user["name"],
+        "technician_role": "principal" if order.get("assigned_technician_id") == uid else "apoyo",
+        "services": _tech_service_names(order),
+        "amount": amount,
+        "notes": (data.notes or "").strip() or None,
+        "status": "pendiente",
+        "created_at": now,
+        "previous_rejection": ({"notes": existing.get("review_notes"), "by_name": existing.get("reviewed_by_name")}
+                               if existing else None),
+        "reviewed_at": None, "reviewed_by_name": None, "review_notes": None, "approved_amount": None,
+        "paid_at": None, "paid_by_name": None, "payment_reference": None,
+    }
+    await db.technician_charges.replace_one({"id": charge["id"]}, charge, upsert=True)
+    await create_alert(UserRole.LIQUIDACIONES.value, AlertType.COBRO_TECNICO, "Nuevo cobro de técnico",
+                       f"{current_user['name']} cobra {_cop(amount)} por {order.get('plate')}", order["id"])
+    charge.pop("_id", None)
+    return {"message": "Cobro enviado a liquidaciones", "charge": charge}
+
+
+LIQUIDATION_ROLES = [UserRole.ADMIN, UserRole.LIQUIDACIONES]
+
+
+@api_router.get("/technician-charges")
+async def list_technician_charges(
+    status: Optional[str] = None,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.LIQUIDACIONES, UserRole.TECNICO])),
+):
+    query: Dict[str, Any] = {}
+    if status in CHARGE_STATUSES:
+        query["status"] = status
+    if current_user["role"] == UserRole.TECNICO.value:
+        query["technician_id"] = current_user["id"]
+    charges = await db.technician_charges.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # Etiqueta de calidad actual de cada orden
+    orders = {o["id"]: o async for o in db.orders.find(
+        {"id": {"$in": list({c["order_id"] for c in charges})}},
+        {"_id": 0, "id": 1, "status": 1, "quality_status": 1, "quality_rating": 1, "quality_notes": 1,
+         "quality_by_name": 1, "quality_checked_at": 1, "quality_reviews": 1, "service_completed_at": 1,
+         "profile_photo_url": 1})}
+    out = []
+    for c in charges:
+        o = orders.get(c["order_id"]) or {}
+        out.append({**c, "order_status": o.get("status"), "service_completed_at": o.get("service_completed_at"),
+                    "profile_photo_url": o.get("profile_photo_url"), **(_quality_summary(o) if o else {})})
+    return out
+
+
+class TechnicianChargeReview(BaseModel):
+    approved: bool
+    amount: Optional[float] = None  # valor aprobado (si cambia el pedido)
+    notes: Optional[str] = None
+
+
+async def _alert_technician(charge: dict, title: str, message: str):
+    await db.alerts.insert_one({
+        "id": str(uuid.uuid4()), "recipient_id": charge["technician_id"],
+        "alert_type": AlertType.COBRO_REVISADO.value, "title": title, "message": message,
+        "order_id": charge["order_id"], "read": False, "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@api_router.put("/technician-charges/{charge_id}/review")
+async def review_technician_charge(charge_id: str, data: TechnicianChargeReview,
+                                   current_user: dict = Depends(require_roles(LIQUIDATION_ROLES))):
+    charge = await db.technician_charges.find_one({"id": charge_id}, {"_id": 0})
+    if not charge:
+        raise HTTPException(status_code=404, detail="Cobro no encontrado")
+    if charge["status"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Este cobro ya fue revisado")
+    notes = (data.notes or "").strip() or None
+    now = datetime.now(timezone.utc).isoformat()
+    if data.approved:
+        amount = round(float(data.amount if data.amount is not None else charge["amount"]), 2)
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="El valor aprobado debe ser mayor a 0")
+        upd = {"status": "aprobado", "approved_amount": amount}
+        msg = f"{charge['plate']}: cobro aprobado por {_cop(amount)}" + (f" · {notes}" if notes else "")
+    else:
+        if not notes:
+            raise HTTPException(status_code=400, detail="Escribe el motivo del rechazo")
+        upd = {"status": "rechazado", "approved_amount": None}
+        msg = f"{charge['plate']}: cobro rechazado · {notes}"
+    upd.update({"reviewed_at": now, "reviewed_by_id": current_user["id"], "reviewed_by_name": current_user["name"],
+                "review_notes": notes})
+    await db.technician_charges.update_one({"id": charge_id}, {"$set": upd})
+    await _alert_technician(charge, "Cobro aprobado" if data.approved else "Cobro rechazado", msg)
+    return {"message": "Cobro aprobado" if data.approved else "Cobro rechazado", "charge": {**charge, **upd}}
+
+
+class TechnicianChargePay(BaseModel):
+    reference: Optional[str] = None
+
+
+@api_router.put("/technician-charges/{charge_id}/pay")
+async def pay_technician_charge(charge_id: str, data: TechnicianChargePay,
+                                current_user: dict = Depends(require_roles(LIQUIDATION_ROLES))):
+    charge = await db.technician_charges.find_one({"id": charge_id}, {"_id": 0})
+    if not charge:
+        raise HTTPException(status_code=404, detail="Cobro no encontrado")
+    if charge["status"] != "aprobado":
+        raise HTTPException(status_code=400, detail="Solo se pagan cobros aprobados")
+    now = datetime.now(timezone.utc).isoformat()
+    upd = {"status": "pagado", "paid_at": now, "paid_by_id": current_user["id"], "paid_by_name": current_user["name"],
+           "payment_reference": (data.reference or "").strip() or None}
+    await db.technician_charges.update_one({"id": charge_id}, {"$set": upd})
+    await _alert_technician(charge, "Cobro pagado", f"{charge['plate']}: te pagaron {_cop(charge.get('approved_amount'))}")
+    return {"message": "Cobro marcado como pagado", "charge": {**charge, **upd}}
 
 
 @api_router.get("/orders-pending-invoice")

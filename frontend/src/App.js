@@ -26,6 +26,7 @@ import { FacturacionElectronica } from './pages/FacturacionElectronica';
 import { AutosSalida } from './pages/AutosSalida';
 import { Accesorios } from './pages/Accesorios';
 import { Calidad } from './pages/Calidad';
+import { Liquidaciones } from './pages/Liquidaciones';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -244,6 +245,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'calidad', 'coordinador']}>
                         <Calidad />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/liquidaciones" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'liquidaciones']}>
+                        <Liquidaciones />
                     </ProtectedRoute>
                 } 
             />

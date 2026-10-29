@@ -11,6 +11,7 @@ import { PlateBadge } from '../components/PlateBadge';
 import { CarAvatar } from '../components/CarAvatar';
 import { CameraCapture } from '../components/CameraCapture';
 import { VideoCapture } from '../components/VideoCapture';
+import { Stars } from '../components/QualityTag';
 import { cn, formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
 import {
@@ -117,6 +118,7 @@ const QualityReviewDialog = ({ order, onClose, onDone }) => {
     const [photos, setPhotos] = useState([]);
     const [video, setVideo] = useState(null);
     const [notes, setNotes] = useState('');
+    const [rating, setRating] = useState(0);
     const [saving, setSaving] = useState(null); // 'approve' | 'reject'
 
     const items = useMemo(() => (order?.sections || []).flatMap(s => s.items), [order]);
@@ -142,10 +144,12 @@ const QualityReviewDialog = ({ order, onClose, onDone }) => {
         failed.length > 0 && 'Hay puntos que no cumplen',
         photos.length < MIN_PHOTOS && `Toma al menos ${MIN_PHOTOS} fotos`,
         !video && 'Graba el video de calidad',
+        !rating && 'Califica la calidad del servicio',
     ].filter(Boolean);
 
     const submit = async (approved) => {
         if (!complete) { toast.error('Responde todas las preguntas del cuestionario'); return; }
+        if (!rating) { toast.error('Califica la calidad del servicio de 1 a 5 estrellas'); return; }
         if (!approved && failed.length === 0 && !notes.trim()) {
             toast.error('Marca qué no cumple o escribe qué debe corregir el técnico');
             return;
@@ -158,6 +162,7 @@ const QualityReviewDialog = ({ order, onClose, onDone }) => {
                 answers: items.map(i => ({ id: i.id, result: answers[i.id].result, note: answers[i.id].note || null })),
                 photos,
                 notes: notes.trim() || null,
+                rating,
             });
             if (approved) {
                 toast.success(data.paid
@@ -262,13 +267,21 @@ const QualityReviewDialog = ({ order, onClose, onDone }) => {
                         <VideoCapture video={video} onVideoChange={setVideo} durationSeconds={20} />
                     </div>
 
+                    <div className="space-y-1">
+                        <Label>Calificación de calidad *</Label>
+                        <div className="flex items-center gap-3">
+                            <Stars value={rating} onChange={setRating} size="lg" testId="quality-rating" />
+                            <span className="text-sm text-muted-foreground">{rating ? `${rating} de 5` : 'Sin calificar'}</span>
+                        </div>
+                    </div>
+
                     <div className="space-y-2">
-                        <Label htmlFor="quality-notes">Observaciones</Label>
+                        <Label htmlFor="quality-notes">Comentarios de calidad</Label>
                         <Textarea
                             id="quality-notes"
                             value={notes}
                             onChange={(e) => setNotes(e.target.value)}
-                            placeholder="Observaciones generales de la revisión"
+                            placeholder="Comentarios para el técnico sobre la calidad del trabajo"
                             rows={2}
                             data-testid="quality-notes"
                         />
@@ -285,7 +298,7 @@ const QualityReviewDialog = ({ order, onClose, onDone }) => {
                             variant="outline"
                             className="flex-1 border-red-500/50 text-red-400 hover:bg-red-500/10 hover:text-red-300"
                             onClick={() => submit(false)}
-                            disabled={!!saving || !complete}
+                            disabled={!!saving || !complete || !rating}
                             data-testid="quality-reject-btn"
                         >
                             {saving === 'reject' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Undo2 className="w-4 h-4 mr-2" />}

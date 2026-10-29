@@ -41,12 +41,13 @@ import {
     FileSignature,
     PackageCheck,
     BadgeCheck,
+    HandCoins,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
 
 const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion', 'corte', 'accesorios', 'calidad', 'seguridad'] },
+    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'asesor', 'coordinador', 'tecnico', 'facturacion', 'corte', 'accesorios', 'calidad', 'seguridad', 'liquidaciones'] },
     { path: '/appointments', label: 'Agendamiento', icon: Calendar, roles: ['admin', 'asesor'] },
     { path: '/checkin', label: 'Check-in / Ingreso', icon: QrCode, roles: ['admin', 'asesor'] },
     { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'asesor', 'coordinador'] },
@@ -57,6 +58,7 @@ const navItems = [
     { path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'asesor', 'facturacion', 'coordinador'] },
     { path: '/facturacion-electronica', label: 'Clientes por Facturar', icon: FileSignature, roles: ['admin', 'facturacion', 'asesor'] },
     { path: '/calidad', label: 'Control de Calidad', icon: BadgeCheck, roles: ['admin', 'calidad', 'coordinador'] },
+    { path: '/liquidaciones', label: 'Liquidaciones', icon: HandCoins, roles: ['admin', 'liquidaciones'] },
     { path: '/autos-salida', label: 'Listo para Entrega', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador', 'calidad', 'seguridad'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin', 'asesor'] },
     { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'asesor', 'coordinador', 'facturacion'] },

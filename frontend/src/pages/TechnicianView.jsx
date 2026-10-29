@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ordersAPI, orderRouteAPI } from '../lib/api';
+import { ordersAPI, orderRouteAPI, technicianChargesAPI } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -16,11 +16,18 @@ import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
 import { WorkflowSteps } from '../components/WorkflowSteps';
 import { TechMeasurementsDialog, TechMeasurementsSummary } from '../components/TechMeasurements';
 import { orderTechnicians } from '../lib/workflow';
+import { CameraCapture } from '../components/CameraCapture';
+import { ConfirmTwiceDialog } from '../components/ConfirmTwiceDialog';
+import { TechnicianHistory } from '../components/TechnicianHistory';
 import {
     Wrench, Play, CheckCircle, Clock, User, Phone,
     AlertTriangle, Timer, FileText, Scissors, Sparkles,
-    Package, PaintBucket, Hammer, LogIn, Users, Route as RouteIcon, Ruler,
+    Package, PaintBucket, Hammer, LogIn, Users, Route as RouteIcon, Ruler, History, CheckSquare, Square,
 } from 'lucide-react';
+
+const MIN_FINISH_PHOTOS = 5;
+const MAX_FINISH_PHOTOS = 10;
+const serviceLabel = (s) => (typeof s === 'object' ? (s.description || s.service) : s);
 
 const PART_LABELS = {
     panoramico: 'Panorámico', vidrio_copiloto: 'Vidrio Copiloto', vidrio_piloto: 'Vidrio Piloto',
@@ -348,7 +355,19 @@ export const TechnicianView = () => {
     const [finishing, setFinishing] = useState(null); // { order, slot }
     const [finishNotes, setFinishNotes] = useState('');
     const [finishPhotos, setFinishPhotos] = useState([]);
+    const [finishServices, setFinishServices] = useState([]); // posiciones de order.services instaladas
+    const [confirmOpen, setConfirmOpen] = useState(false);
     const [measuring, setMeasuring] = useState(null);
+    const [history, setHistory] = useState([]);
+
+    const fetchHistory = useCallback(async () => {
+        try {
+            const res = await technicianChargesAPI.history();
+            setHistory(res.data || []);
+        } catch (e) {
+            console.error('fetch history error', e);
+        }
+    }, []);
 
     const fetchOrders = useCallback(async () => {
         try {
@@ -368,9 +387,10 @@ export const TechnicianView = () => {
 
     useEffect(() => {
         fetchOrders();
-        const t = setInterval(fetchOrders, 30000);
+        fetchHistory();
+        const t = setInterval(() => { fetchOrders(); fetchHistory(); }, 30000);
         return () => clearInterval(t);
-    }, [fetchOrders]);
+    }, [fetchOrders, fetchHistory]);
 
     // tick for live timers every 30s
     useEffect(() => {
@@ -454,14 +474,15 @@ export const TechnicianView = () => {
         setFinishing({ order, slot });
         setFinishNotes('');
         setFinishPhotos([]);
+        setFinishServices([]);
     };
 
     const closeFinish = () => setFinishing(null);
 
     const handlePhotoInput = (e) => {
         const files = Array.from(e.target.files || []);
-        if (finishPhotos.length + files.length > 10) {
-            toast.error('Máximo 10 fotos');
+        if (finishPhotos.length + files.length > MAX_FINISH_PHOTOS) {
+            toast.error(`Máximo ${MAX_FINISH_PHOTOS} fotos`);
             return;
         }
         files.forEach(f => {
@@ -471,15 +492,24 @@ export const TechnicianView = () => {
         });
     };
 
-    const submitFinish = async () => {
-        if (!finishNotes.trim()) {
-            toast.error('Agrega el reporte del servicio');
+    const finishServiceList = finishing && !finishing.slot ? (finishing.order.services || []) : [];
+    const toggleFinishService = (i) => setFinishServices(prev => (prev.includes(i) ? prev.filter(x => x !== i) : [...prev, i]));
+    const finishMissing = [
+        !finishNotes.trim() && 'Escribe el reporte del servicio',
+        finishPhotos.length < MIN_FINISH_PHOTOS && `Adjunta mínimo ${MIN_FINISH_PHOTOS} fotos (${finishPhotos.length}/${MIN_FINISH_PHOTOS})`,
+        finishServiceList.length > 0 && finishServices.length === 0 && 'Marca qué servicios instalaste',
+    ].filter(Boolean);
+
+    // Primero valida; luego pregunta dos veces antes de enviar
+    const submitFinish = () => {
+        if (finishMissing.length) {
+            toast.error(finishMissing[0]);
             return;
         }
-        if (finishPhotos.length === 0) {
-            toast.error('Sube al menos una foto del servicio terminado');
-            return;
-        }
+        setConfirmOpen(true);
+    };
+
+    const doFinish = async () => {
         setProcessing(true);
         try {
             if (finishing.slot) {
@@ -495,11 +525,13 @@ export const TechnicianView = () => {
                     order_id: finishing.order.id,
                     notes: finishNotes.trim(),
                     completion_photos: finishPhotos,
+                    installed_services: [...finishServices].sort((a, b) => a - b),
                 });
                 toast.success('Instalación finalizada · enviada a control de calidad');
             }
             closeFinish();
             fetchOrders();
+            fetchHistory();
         } catch (e) {
             toast.error(e.response?.data?.detail || 'Error al finalizar');
         } finally {
@@ -533,7 +565,7 @@ export const TechnicianView = () => {
                 <div className="flex justify-center py-12">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
                 </div>
-            ) : orders.length === 0 ? (
+            ) : orders.length === 0 && history.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                     <Wrench className="w-16 h-16 mb-4 opacity-50" />
                     <p className="text-lg">No tienes servicios asignados</p>
@@ -555,6 +587,11 @@ export const TechnicianView = () => {
                                 </TabsTrigger>
                             );
                         })}
+                        <TabsTrigger value="terminados" className="flex items-center gap-1.5 py-2" data-testid="tab-terminados">
+                            <History className="w-4 h-4" />
+                            <span className="text-xs md:text-sm">Terminados</span>
+                            {history.length > 0 && <Badge variant="outline" className="ml-1 h-5 px-1 text-[10px]">{history.length}</Badge>}
+                        </TabsTrigger>
                         {hasLegacy && (
                             <TabsTrigger value="legacy" className="flex items-center gap-1.5 py-2" data-testid="tab-legacy">
                                 <RouteIcon className="w-4 h-4" />
@@ -590,6 +627,10 @@ export const TechnicianView = () => {
                         </TabsContent>
                     ))}
 
+                    <TabsContent value="terminados" className="mt-4" data-testid="panel-terminados">
+                        <TechnicianHistory items={history} onChanged={fetchHistory} />
+                    </TabsContent>
+
                     {hasLegacy && (
                         <TabsContent value="legacy" className="mt-4 space-y-6" data-testid="panel-legacy">
                             {SECTIONS.filter(sec => bySection[sec.id].length > 0).map(sec => (
@@ -618,7 +659,7 @@ export const TechnicianView = () => {
 
             {/* Finish Dialog */}
             <Dialog open={!!finishing} onOpenChange={(v) => !v && closeFinish()}>
-                <DialogContent>
+                <DialogContent className="max-h-[92vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Finalizar Servicio</DialogTitle>
                         <DialogDescription asChild>
@@ -644,6 +685,30 @@ export const TechnicianView = () => {
                                 </CardContent>
                             </Card>
                         )}
+                        {finishServiceList.length > 0 && (
+                            <div className="space-y-2" data-testid="finish-services">
+                                <label className="text-sm font-medium flex items-center gap-2">
+                                    <CheckSquare className="w-4 h-4" /> ¿Qué servicios instalaste? *
+                                </label>
+                                <div className="space-y-1.5">
+                                    {finishServiceList.map((s, i) => {
+                                        const on = finishServices.includes(i);
+                                        return (
+                                            <button
+                                                key={i}
+                                                type="button"
+                                                onClick={() => toggleFinishService(i)}
+                                                className={`w-full flex items-center gap-2 p-2.5 rounded-lg border text-left text-sm transition-colors ${on ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-input hover:bg-muted/50'}`}
+                                                data-testid={`finish-service-${i}`}
+                                            >
+                                                {on ? <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0" /> : <Square className="w-4 h-4 text-muted-foreground shrink-0" />}
+                                                {serviceLabel(s)}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
                         <div className="space-y-2">
                             <label className="text-sm font-medium flex items-center gap-2">
                                 <FileText className="w-4 h-4" /> Reporte del servicio *
@@ -658,40 +723,37 @@ export const TechnicianView = () => {
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium flex items-center gap-2">
-                                <FileText className="w-4 h-4" /> Fotos del servicio terminado * ({finishPhotos.length}/10)
+                                <FileText className="w-4 h-4" /> Fotos del servicio terminado * (mínimo {MIN_FINISH_PHOTOS})
+                                <span className={`ml-auto text-xs ${finishPhotos.length >= MIN_FINISH_PHOTOS ? 'text-emerald-400' : 'text-amber-400'}`} data-testid="finish-photos-count">
+                                    {finishPhotos.length}/{MIN_FINISH_PHOTOS}
+                                </span>
                             </label>
-                            <input
-                                type="file"
-                                accept="image/*"
-                                multiple
-                                onChange={handlePhotoInput}
-                                disabled={finishPhotos.length >= 10}
-                                className="w-full text-sm"
-                                data-testid="finish-photos-input"
-                            />
-                            {finishPhotos.length > 0 && (
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                    {finishPhotos.map((p, i) => (
-                                        <div key={i} className="relative w-16 h-16 rounded overflow-hidden border">
-                                            <img src={p} alt="" className="w-full h-full object-cover" />
-                                            <button
-                                                type="button"
-                                                onClick={() => setFinishPhotos(prev => prev.filter((_, idx) => idx !== i))}
-                                                className="absolute top-0 right-0 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-bl"
-                                                data-testid={`remove-photo-${i}`}
-                                            >×</button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
+                            <CameraCapture photos={finishPhotos} onPhotosChange={setFinishPhotos} maxPhotos={MAX_FINISH_PHOTOS} />
+                            <label className="block text-xs text-muted-foreground">
+                                o súbelas desde la galería:
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    onChange={handlePhotoInput}
+                                    disabled={finishPhotos.length >= MAX_FINISH_PHOTOS}
+                                    className="w-full text-sm mt-1"
+                                    data-testid="finish-photos-input"
+                                />
+                            </label>
                             <p className="text-xs text-muted-foreground">
-                                Al confirmar, el servicio queda listo para entrega y aparece en Autorizar Salida.
+                                Al confirmar, el vehículo pasa a control de calidad.
                             </p>
                         </div>
+                        {finishMissing.length > 0 && (
+                            <ul className="text-xs text-muted-foreground list-disc pl-5 space-y-0.5" data-testid="finish-missing">
+                                {finishMissing.map(m => <li key={m}>{m}</li>)}
+                            </ul>
+                        )}
                         <Button
                             onClick={submitFinish}
                             className="w-full brand-glow"
-                            disabled={processing || !finishNotes.trim() || finishPhotos.length === 0}
+                            disabled={processing || finishMissing.length > 0}
                             data-testid="confirm-finish-btn"
                         >
                             <CheckCircle className="w-4 h-4 mr-2" />
@@ -700,6 +762,36 @@ export const TechnicianView = () => {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            <ConfirmTwiceDialog
+                open={confirmOpen}
+                onOpenChange={setConfirmOpen}
+                onConfirm={doFinish}
+                cancelLabel="No, seguir trabajando"
+                steps={[
+                    {
+                        title: '¿El servicio está terminado?',
+                        description: (
+                            <div className="space-y-2 text-sm text-muted-foreground">
+                                <p>Confirma que terminaste {finishing?.order?.plate ? <b>{finishing.order.plate}</b> : 'el vehículo'} con estos servicios instalados:</p>
+                                <ul className="list-disc pl-5">
+                                    {(finishServiceList.length
+                                        ? [...finishServices].sort((a, b) => a - b).map(i => serviceLabel(finishServiceList[i]))
+                                        : [finishing?.slot?.label || 'Instalación']
+                                    ).map(n => <li key={n}>{n}</li>)}
+                                </ul>
+                                <p>{finishPhotos.length} fotos adjuntas.</p>
+                            </div>
+                        ),
+                        confirm: 'Sí, está terminado',
+                    },
+                    {
+                        title: 'Confirma de nuevo',
+                        description: '¿Seguro que el servicio quedó terminado? El vehículo pasará a control de calidad y ya no podrás editar el reporte.',
+                        confirm: 'Sí, entregar servicio',
+                    },
+                ]}
+            />
         </div>
     );
 };

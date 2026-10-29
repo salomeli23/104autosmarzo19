@@ -125,6 +125,7 @@ export const ROLE_LABELS = {
     accesorios: 'Accesorios',
     calidad: 'Calidad',
     seguridad: 'Jefe de Seguridad',
+    liquidaciones: 'Coordinador de Liquidaciones',
 };
 
 // Sistema de franjas horarias con cupos

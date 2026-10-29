@@ -227,6 +227,14 @@ export const inspectionsAPI = {
     getInspectedVehicles: () => api.get('/inspected-vehicles'),
 };
 
+export const technicianChargesAPI = {
+    history: () => api.get('/technician/history'),
+    create: (data) => api.post('/technician-charges', data),
+    list: (status) => api.get('/technician-charges', { params: status ? { status } : {} }),
+    review: (id, data) => api.put(`/technician-charges/${id}/review`, data),
+    pay: (id, data) => api.put(`/technician-charges/${id}/pay`, data),
+};
+
 export const qualityAPI = {
     pending: () => api.get('/quality/pending'),
     submit: (orderId, data) => api.post(`/orders/${orderId}/quality`, data),
