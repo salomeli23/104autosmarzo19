@@ -583,6 +583,16 @@ def _compute_discount_amount(subtotal: float, dtype: str, dvalue: float) -> floa
         return round(min(subtotal * dvalue / 100.0, subtotal), 2)
     return round(min(dvalue, subtotal), 2)
 
+
+def _price_with_discount_and_iva(base: float, dtype: Optional[str], dvalue: Optional[float], with_iva: bool) -> Dict[str, float]:
+    """Valor de la orden: el descuento se aplica sobre la base (sin IVA) y el IVA 19% sobre lo que queda.
+    Es el mismo cálculo que muestran el check-in y el PDF de la orden. Redondeo al peso."""
+    base = float(base or 0)
+    discount = _round_peso(_compute_discount_amount(base, dtype, dvalue)) if dtype else 0
+    tax_base = max(base - discount, 0)
+    iva = _round_peso(tax_base * IVA_RATE) if with_iva else 0
+    return {"base": base, "discount": discount, "tax_base": tax_base, "iva": iva, "total": tax_base + iva}
+
 async def _resolve_discount_code(code: str) -> Optional[dict]:
     """Busca un código activo y vigente. Devuelve el documento o None."""
     norm = _normalize_code(code)
@@ -919,7 +929,12 @@ def _round_peso(value: float) -> int:
 def _retention_base(order: dict) -> Dict[str, float]:
     """Las retenciones se liquidan sobre la base gravable (valor antes de IVA), no sobre el total."""
     total = float(order.get("final_value") or order.get("negotiated_value") or 0)
-    base = _round_peso(total / (1 + IVA_RATE)) if order.get("requires_invoice") else total
+    if order.get("requires_invoice"):
+        # tax_base: base gravable guardada en el check-in (ya con el descuento); órdenes anteriores: total / 1,19
+        base = order.get("tax_base")
+        base = _round_peso(total / (1 + IVA_RATE)) if base is None else base
+    else:
+        base = total
     return {"base": base, "iva": round(total - base, 2), "total": total}
 
 
@@ -2060,13 +2075,20 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
             final_value_raw, order.get("discount_type"), order.get("discount_value")
         )
     
-    # final_value neto (después de aplicar descuento, si corresponde)
-    net_final_value = round(max(final_value_raw - disc_amount_ci, 0), 2)
+    # final_value neto: descuento sobre la base sin IVA y luego IVA 19% (igual que el check-in y el PDF)
+    disc_src = disc_doc_ci or (order if existing_disc else {})
+    raw_base = _round_peso(final_value_raw / (1 + IVA_RATE)) if data.requires_invoice else final_value_raw
+    price = _price_with_discount_and_iva(raw_base, disc_src.get("discount_type"), disc_src.get("discount_value"),
+                                         bool(data.requires_invoice))
+    disc_amount_ci = price["discount"]
+    net_final_value = round(price["total"], 2) if (disc_doc_ci or existing_disc) else final_value_raw
     
     update_data = {
         "services": [s.model_dump() for s in data.services],
         "final_value": net_final_value,
         "final_value_before_discount": final_value_raw if (disc_doc_ci or existing_disc) else order.get("final_value_before_discount"),
+        "tax_base": price["tax_base"],
+        "iva_amount": price["iva"],
         "signature_url": data.signature_url,
         "client_cedula": data.cedula_number,
         "risk_agreement_accepted": data.risk_agreement_accepted,
@@ -5806,12 +5828,13 @@ async def update_order_services(
     gross = _services_gross(data.services)
     now = datetime.now(timezone.utc).isoformat()
     checked_in = order.get("final_value") is not None
-    if checked_in and order.get("requires_invoice"):
-        gross = round(gross * 1.19)
-    disc_amount = 0.0
-    if order.get("discount_type"):
-        disc_amount = _compute_discount_amount(gross, order.get("discount_type"), order.get("discount_value"))
-    net = round(max(gross - disc_amount, 0), 2)
+    with_iva = bool(checked_in and order.get("requires_invoice"))
+    # Descuento sobre la base sin IVA y luego IVA 19% (igual que el check-in y el PDF)
+    price = _price_with_discount_and_iva(gross, order.get("discount_type"), order.get("discount_value"), with_iva)
+    disc_amount = price["discount"]
+    net = round(price["total"], 2)
+    if with_iva:
+        gross = gross + _round_peso(gross * IVA_RATE)  # valor antes del descuento, con IVA
 
     update_data = {
         "services": [s.model_dump() for s in data.services],
@@ -5825,6 +5848,8 @@ async def update_order_services(
     if checked_in:
         update_data["final_value"] = net
         update_data["final_value_before_discount"] = gross if order.get("discount_type") else order.get("final_value_before_discount")
+        update_data["tax_base"] = price["tax_base"]
+        update_data["iva_amount"] = price["iva"]
     else:
         update_data["negotiated_value"] = net
         update_data["negotiated_value_before_discount"] = gross

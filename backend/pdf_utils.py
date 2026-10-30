@@ -334,7 +334,8 @@ def build_mock_invoice(order: dict, invoice_number: str) -> bytes:
     total = float(order.get("final_value") or order.get("negotiated_value") or 0)
     # Estimated breakdown assuming +19% IVA already in total when requires_invoice=True
     if order.get("requires_invoice"):
-        base = round(total / 1.19, 0)
+        # Base gravable guardada en el check-in (ya con el descuento); órdenes anteriores: total / 1,19
+        base = float(order["tax_base"]) if order.get("tax_base") is not None else round(total / 1.19, 0)
         iva = total - base
     else:
         base = total
