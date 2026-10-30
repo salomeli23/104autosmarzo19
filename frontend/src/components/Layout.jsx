@@ -31,7 +31,6 @@ import {
     ChevronRight,
     UserPlus,
     QrCode,
-    CreditCard,
     Scissors,
     Boxes,
     ShieldCheck,
@@ -55,7 +54,7 @@ const navItems = [
     { path: '/auto-asignar', label: 'Autos por Asignar', icon: UserPlus, roles: ['admin', 'coordinador'] },
     { path: '/cutting', label: 'Corte de Piezas', icon: Scissors, roles: ['admin', 'corte', 'coordinador'] },
     { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
-    { path: '/billing', label: 'Facturación', icon: CreditCard, roles: ['admin', 'facturacion'] },
+    // Facturación (/billing) oculta del menú; la ruta sigue disponible
     { path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'asesor', 'facturacion', 'coordinador'] },
     { path: '/facturacion-electronica', label: 'Clientes por Facturar', icon: FileSignature, roles: ['admin', 'facturacion', 'asesor', 'coordinador'] },
     { path: '/retenciones', label: 'Retenciones', icon: Landmark, roles: ['admin', 'facturacion', 'asesor', 'coordinador'] },
