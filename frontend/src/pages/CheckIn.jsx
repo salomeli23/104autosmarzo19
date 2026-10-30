@@ -1076,6 +1076,7 @@ export const CheckIn = () => {
                                                 <Input
                                                     value={orderCode}
                                                     onChange={(e) => setOrderCode(e.target.value.toUpperCase())}
+                                                    onKeyDown={(e) => { if (e.key === 'Enter' && !loading) searchOrder(orderCode); }}
                                                     placeholder="Ej: ABC12345  o  XYZ123"
                                                     className="font-mono text-lg"
                                                     data-testid="order-code-input"

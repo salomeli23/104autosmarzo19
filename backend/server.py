@@ -1962,20 +1962,30 @@ def validate_checkin_time(order_date: str, scheduled_time: str):
 async def checkin_order(data: CheckInRequest, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR]))):
     """Check-in with QR code, order code or plate - validates scheduled time"""
     query_value = data.order_code.strip().upper()
-    
+    # Sin espacios, guiones ni puntos: "ABC 123" / "abc-123" encuentran la placa ABC123
+    compact = re.sub(r"[^A-Z0-9]", "", query_value)
+    if not compact:
+        raise HTTPException(status_code=400, detail="Ingresa un código de cita o una placa")
+
     # Try order_code first, then plate (allows asesor to look up vehicles by plate at the door)
-    order = await db.orders.find_one({"order_code": query_value}, {"_id": 0})
+    order = await db.orders.find_one({"order_code": {"$in": list({query_value, compact})}}, {"_id": 0})
     if not order:
-        # Search by plate – try AGENDADO first to prefer valid bookings,
-        # then fall back to ANY order so we can show a clear status message.
-        order = await db.orders.find_one(
-            {"plate": query_value, "status": OrderStatus.AGENDADO.value},
-            {"_id": 0}
-        )
-        if not order:
+        # La placa guardada puede tener espacios o guiones: se compara ignorándolos
+        plate_rx = {"$regex": "^[\\s.-]*" + "[\\s.-]*".join(re.escape(c) for c in compact) + "[\\s.-]*$", "$options": "i"}
+        # Entre las citas AGENDADAS de la placa se prefiere la de hoy, luego la próxima y por último la más reciente;
+        # si no hay ninguna agendada se toma la última orden para mostrar en qué estado está.
+        agendadas = await db.orders.find(
+            {"plate": plate_rx, "status": OrderStatus.AGENDADO.value}, {"_id": 0}
+        ).to_list(50)
+        if agendadas:
+            today = get_colombia_time().strftime("%Y-%m-%d")
+            upcoming = sorted((o for o in agendadas if (o.get("date") or "") >= today), key=lambda o: (o.get("date") or "", o.get("scheduled_time") or ""))
+            past = sorted((o for o in agendadas if (o.get("date") or "") < today), key=lambda o: o.get("date") or "", reverse=True)
+            order = (upcoming or past)[0]
+        else:
             order = await db.orders.find_one(
-                {"plate": query_value, "status": {"$ne": OrderStatus.DESISTIMIENTO.value}},
-                {"_id": 0}
+                {"plate": plate_rx, "status": {"$ne": OrderStatus.DESISTIMIENTO.value}},
+                {"_id": 0}, sort=[("created_at", -1)]
             )
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada (revisa el código o la placa)")
