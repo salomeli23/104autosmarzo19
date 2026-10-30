@@ -5,7 +5,8 @@ Generates:
 - Estado de Cuenta tras registrar un pago
 - Factura Electronica MOCK (numeración DIAN simulada)
 """
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import List, Optional
 
@@ -25,6 +26,7 @@ from reportlab.platypus import (
     PageBreak,
 )
 
+COLOMBIA_TZ = timezone(timedelta(hours=-5))
 BRAND_COLOR = colors.HexColor("#00e0d1")
 DARK_COLOR = colors.HexColor("#0f172a")
 MUTED_COLOR = colors.HexColor("#64748b")
@@ -301,72 +303,276 @@ def build_payment_statement(order: dict, payments: List[dict]) -> bytes:
     return buf.getvalue()
 
 
+# Datos de la empresa para la factura electrónica (formato Siigo de AUTOS 104 SAS)
+INVOICE_COMPANY = {
+    "name": "AUTOS 104 SAS",
+    "nit": "900.497.413-6",
+    "address": "CALLE 127 B # 45 13",
+    "phone": "Tel: (57) 3115318401",
+    "city": "Bogotá - Colombia",
+    "email": "autos_104@hotmail.com",
+    "logo": os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo_autos104.png"),
+    "legal": (
+        "A esta factura de venta aplican las normas relativas a la letra de cambio (artículo 5 Ley 1231 de 2008). "
+        "Con esta el Comprador declara haber recibido real y materialmente las mercancías o prestación de servicios "
+        "descritos en este título - Valor. <b>Número Autorización Electrónica 18764109192361 aprobado en 20260430 "
+        "prefijo FE desde el número 3001 al 5000 Vigencia: 24 Meses</b>"
+    ),
+    "activity": "Responsable de IVA - Actividad Económica 4512  Comercio de vehículos automotores usados Tarifa 6.9 X 1.000",
+}
+
+PAYMENT_METHOD_LABELS = {
+    "efectivo": "Efectivo", "tarjeta": "Tarjeta", "transferencia": "Transferencia",
+    "nequi": "Nequi", "daviplata": "Daviplata", "otro": "Otro",
+}
+
+_UNITS = ["", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez",
+          "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve",
+          "veinte", "veintiún", "veintidós", "veintitrés", "veinticuatro", "veinticinco", "veintiséis",
+          "veintisiete", "veintiocho", "veintinueve"]
+_TENS = ["", "", "", "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa"]
+_HUNDREDS = ["", "ciento", "doscientos", "trescientos", "cuatrocientos", "quinientos", "seiscientos",
+             "setecientos", "ochocientos", "novecientos"]
+
+
+def _words_999(n: int) -> str:
+    if n == 100:
+        return "cien"
+    h, r = divmod(n, 100)
+    parts = [_HUNDREDS[h]] if h else []
+    if r < 30:
+        if r:
+            parts.append(_UNITS[r])
+    else:
+        t, u = divmod(r, 10)
+        parts.append(_TENS[t] + (f" y {_UNITS[u]}" if u else ""))
+    return " ".join(parts)
+
+
+def _amount_in_words(value: float) -> str:
+    """Valor en letras al estilo de la factura: 'Un millón seiscientos mil pesos m/cte con un cent.'"""
+    cents = int(round(value * 100)) % 100
+    n = int(round(value * 100)) // 100
+    if n == 0:
+        words = "cero"
+    else:
+        millions, rest = divmod(n, 1_000_000)
+        thousands, units = divmod(rest, 1000)
+        parts = []
+        if millions:
+            parts.append("un millón" if millions == 1 else f"{_amount_in_words_int(millions)} millones")
+        if thousands:
+            parts.append("mil" if thousands == 1 else f"{_words_999(thousands)} mil")
+        if units:
+            parts.append(_words_999(units))
+        words = " ".join(parts)
+    de = " de" if n and n % 1_000_000 == 0 else ""
+    text = f"{words}{de} pesos m/cte"
+    if cents:
+        text += f" con {_words_999(cents)} cent."
+    return text[0].upper() + text[1:]
+
+
+def _amount_in_words_int(n: int) -> str:
+    thousands, units = divmod(n, 1000)
+    parts = []
+    if thousands:
+        parts.append("mil" if thousands == 1 else f"{_words_999(thousands)} mil")
+    if units:
+        parts.append(_words_999(units))
+    return " ".join(parts)
+
+
+def _num(v) -> str:
+    """Formato de la factura: 1,344,537.82"""
+    return f"{float(v or 0):,.2f}"
+
+
 def build_mock_invoice(order: dict, invoice_number: str) -> bytes:
-    """PDF factura electrónica MOCK (numeración simulada DIAN)."""
+    """Factura electrónica de venta con el formato de AUTOS 104 SAS (Siigo).
+    La numeración es la del sistema (simulada) hasta la integración con Siigo: no lleva CUFE real."""
+    import qrcode as _qrcode
+
     buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=LETTER,
-        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
-        topMargin=1.5 * cm, bottomMargin=1.5 * cm,
-    )
-    story = []
-    subtitle = (
-        f"Factura Electrónica DIAN (MOCK) · {invoice_number} · "
-        f"{_fmt_dt(datetime.now(timezone.utc).isoformat())}"
-    )
-    _header(story, "Factura Electrónica (MOCK)", subtitle)
-
-    story.append(_kv_table([
-        ["Cliente", order.get("client_name") or "-"],
-        ["Cédula / NIT", order.get("client_cedula") or "-"],
-        ["Teléfono", order.get("client_phone") or "-"],
-        ["Correo", order.get("client_email") or "-"],
-        ["Placa", (order.get("plate") or "").upper()],
-        ["Vehículo", f"{order.get('brand', '')} {order.get('model', '')}".strip() or "-"],
-        ["CUFE (simulado)", invoice_number.replace("MOCK-", "").ljust(40, "0")[:40]],
-    ]))
-    story.append(Spacer(1, 0.4 * cm))
-
-    story.append(Paragraph("<b>Detalle de la factura</b>", getSampleStyleSheet()["Heading4"]))
-    story.append(_services_table(order.get("services") or []))
-    story.append(Spacer(1, 0.4 * cm))
+    page_w, page_h = LETTER
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, leftMargin=1 * cm, rightMargin=1 * cm,
+                            topMargin=0.8 * cm, bottomMargin=0.8 * cm)
+    width = page_w - 2 * cm
+    styles = getSampleStyleSheet()
+    normal = ParagraphStyle("FeN", parent=styles["Normal"], fontName="Helvetica", fontSize=8, leading=10)
+    center = ParagraphStyle("FeC", parent=normal, alignment=1)
+    small_center = ParagraphStyle("FeSC", parent=normal, fontSize=7, leading=8.5, alignment=1)
+    heading = ParagraphStyle("FeH", parent=normal, fontName="Helvetica-Bold", fontSize=11, leading=13)
+    grid = colors.HexColor("#c8c8c8")
+    co = INVOICE_COMPANY
 
     total = float(order.get("final_value") or order.get("negotiated_value") or 0)
-    # Estimated breakdown assuming +19% IVA already in total when requires_invoice=True
-    if order.get("requires_invoice"):
-        # Base gravable guardada en el check-in (ya con el descuento); órdenes anteriores: total / 1,19
-        base = float(order["tax_base"]) if order.get("tax_base") is not None else round(total / 1.19, 0)
-        iva = total - base
+    with_iva = bool(order.get("requires_invoice"))
+    if with_iva:
+        tax_base = float(order["tax_base"]) if order.get("tax_base") is not None else round(total / 1.19, 2)
     else:
-        base = total
-        iva = 0
+        tax_base = total
+    iva = round(total - tax_base, 2)
+    discount = float(order.get("discount_amount") or 0)
+    gross = tax_base + discount  # Total bruto antes del descuento (sin IVA)
+    disc_pct = round(discount / gross * 100, 2) if gross and discount else 0
+    issued = order.get("invoice_sent_at") or datetime.now(timezone.utc).isoformat()
+    try:
+        issued_dt = datetime.fromisoformat(issued.replace("Z", "+00:00")).astimezone(COLOMBIA_TZ)
+    except Exception:
+        issued_dt = datetime.now(COLOMBIA_TZ)
+    issued_str = issued_dt.strftime("%d/%m/%Y, %H:%M")
 
-    rows = [
-        ["Base gravable", _fmt_money(base)],
-        ["IVA 19%", _fmt_money(iva)],
-        ["TOTAL", _fmt_money(total)],
-    ]
-    tbl = Table(rows, colWidths=[6 * cm, 4 * cm])
-    tbl.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("TEXTCOLOR", (0, 0), (0, -1), MUTED_COLOR),
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LINEABOVE", (0, -1), (-1, -1), 1, DARK_COLOR),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+    story = []
+
+    # ===== Encabezado: logo · empresa · QR · número de factura =====
+    logo = Image(co["logo"], width=3.1 * cm, height=2.55 * cm) if os.path.exists(co["logo"]) else Paragraph("", normal)
+    company = Paragraph(
+        f"<b>{co['name']}</b><br/>NIT {co['nit']}<br/>{co['address']}<br/>{co['phone']}<br/>{co['city']}<br/>{co['email']}",
+        ParagraphStyle("FeCo", parent=center, fontSize=9, leading=11),
+    )
+    qr_img = _qrcode.make(
+        f"NumFac: {invoice_number}\nFecFac: {issued_dt.strftime('%Y-%m-%d')}\nNitFac: {co['nit']}\n"
+        f"DocAdq: {order.get('client_cedula') or ''}\nValFac: {tax_base:.2f}\nValIva: {iva:.2f}\nValTolFac: {total:.2f}"
+    )
+    qr_buf = BytesIO()
+    qr_img.save(qr_buf, format="PNG")
+    qr_buf.seek(0)
+    qr = Image(qr_buf, width=3.2 * cm, height=3.2 * cm)
+    number_box = Table([[Paragraph("Factura electrónica de venta", ParagraphStyle("FeT", parent=center, fontSize=11, leading=13))],
+                        [Paragraph(f"<b>No. {invoice_number}</b>", ParagraphStyle("FeNo", parent=center, fontSize=10, leading=12))]],
+                       colWidths=[6.2 * cm])
+    number_box.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, grid), ("TOPPADDING", (0, 0), (-1, 0), 10),
+                                    ("BOTTOMPADDING", (0, -1), (-1, -1), 10)]))
+    header = Table([[logo, company, qr, number_box]], colWidths=[3.6 * cm, 5.2 * cm, 3.8 * cm, width - 12.6 * cm])
+    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (0, 0), (2, 0), "CENTER"),
+                                ("ALIGN", (3, 0), (3, 0), "RIGHT")]))
+    story.append(header)
+    story.append(Spacer(1, 0.3 * cm))
+
+    # ===== Cliente · fechas =====
+    bold = ParagraphStyle("FeB", parent=normal, fontName="Helvetica-Bold", fontSize=8.5)
+    val = ParagraphStyle("FeV", parent=normal, fontSize=8.5)
+    snap = order.get("retention_snapshot") or {}
+    client = Table([
+        [Paragraph("Señores", bold), Paragraph(order.get("client_razon_social") or order.get("client_name") or "-", val), "", ""],
+        [Paragraph("NIT", bold), Paragraph(order.get("client_cedula") or "-", val),
+         Paragraph("Teléfono", bold), Paragraph(order.get("client_phone") or "-", val)],
+        [Paragraph("Dirección", bold), Paragraph(order.get("client_address") or "", val),
+         Paragraph("Ciudad", bold), Paragraph(snap.get("city") or "-", val)],
+    ], colWidths=[2.6 * cm, 4.6 * cm, 2.6 * cm, 3.0 * cm])
+    client.setStyle(TableStyle([("SPAN", (1, 0), (3, 0)), ("BOX", (0, 0), (-1, -1), 0.8, grid),
+                                ("LINEBELOW", (0, 0), (-1, 1), 0.5, grid), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    dates = Table([
+        [Paragraph("<b>Fecha y hora Factura</b>", center), ""],
+        [Paragraph("<b>Generación</b>", center), Paragraph(issued_str, center)],
+        [Paragraph("<b>Expedición</b>", center), Paragraph(issued_str, center)],
+        [Paragraph("<b>Vencimiento</b>", ParagraphStyle("FeV7", parent=center, fontSize=7)), Paragraph(issued_dt.strftime("%d/%m/%Y"), center)],
+    ], colWidths=[2.6 * cm, 3.6 * cm])
+    dates.setStyle(TableStyle([("SPAN", (0, 0), (1, 0)), ("BOX", (0, 0), (-1, -1), 0.8, grid),
+                               ("INNERGRID", (0, 0), (-1, -1), 0.5, grid), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    top = Table([[client, "", dates]], colWidths=[12.8 * cm, width - 19 * cm, 6.2 * cm])
+    top.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                             ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    story.append(top)
+    story.append(Spacer(1, 0.45 * cm))
+
+    # ===== Ítems: un renglón por servicio (placa + vehículo + servicio) =====
+    services = [s for s in (order.get("services") or []) if isinstance(s, dict)]
+    vehicle = " ".join(x for x in ((order.get("plate") or "").upper(), (order.get("brand") or "").upper(),
+                                   (order.get("model") or "").upper()) if x)
+    lines = []
+    for s in services:
+        price = float(s.get("price") or 0) + sum(float((e or {}).get("price") or 0) for e in (s.get("extras") or []))
+        if price <= 0:
+            continue
+        lines.append([f"{vehicle} {(s.get('description') or s.get('service') or '').upper()}".strip(), price])
+    if not lines:
+        lines = [[f"{vehicle} SERVICIO".strip(), gross]]
+    lines_sum = sum(p for _, p in lines) or 1
+    data = [["Ítem", "Descripción", "Cantidad", "Impto. Cargo", "Vr. Bruto", "Vr. Total", "% Desc."]]
+    acc_total = 0.0
+    for i, (desc, price) in enumerate(lines, 1):
+        bruto = round(gross * price / lines_sum, 2)  # reparte el bruto según el valor de cada servicio
+        if i == len(lines):
+            line_total = round(total - acc_total, 2)  # el último cuadra el total exacto
+        else:
+            line_total = round(bruto * (1 - disc_pct / 100) * (1.19 if with_iva else 1), 2)
+            acc_total += line_total
+        data.append([str(i), Paragraph(desc, normal), "1.00", "19 %" if with_iva else "0 %",
+                     _num(bruto), _num(line_total), f"{disc_pct:g} %"])
+    col_w = [1.1 * cm, 7.2 * cm, 1.9 * cm, 2.4 * cm, 2.6 * cm, 2.6 * cm]
+    col_w.append(width - sum(col_w))
+    items = Table(data, colWidths=col_w, repeatRows=1)
+    items.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"), ("ALIGN", (0, 1), (0, -1), "CENTER"), ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+        ("BOX", (0, 0), (-1, -1), 0.8, grid), ("INNERGRID", (0, 0), (-1, -1), 0.5, grid),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
-    story.append(tbl)
-    story.append(Spacer(1, 0.6 * cm))
+    filler_h = max(9.5 * cm - 0.75 * cm * len(lines), 1.5 * cm)
+    filler = Table([[""]], colWidths=[width], rowHeights=[filler_h])
+    filler.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, grid)]))
+    story.append(items)
+    story.append(filler)
+    story.append(Spacer(1, 0.3 * cm))
 
-    story.append(Paragraph(
-        "<font size=8 color='#64748b'><b>DOCUMENTO DE PRUEBA (MOCK)</b>. "
-        "Esta factura NO tiene validez fiscal. Cuando se conecte el proveedor real (Siigo) "
-        "se generará la factura con numeración y CUFE oficial.</font>",
-        getSampleStyleSheet()["Normal"],
-    ))
+    # ===== Pie: valor en letras, forma/medio de pago · totales =====
+    method = PAYMENT_METHOD_LABELS.get((order.get("payment_method") or "").lower(), (order.get("payment_method") or "Contado").capitalize())
+    left = [
+        Paragraph(f"<b>Total items:</b> {len(lines)}", heading), Spacer(1, 6),
+        Paragraph("<b>Valor en Letras:</b>", heading), Paragraph(_amount_in_words(total), ParagraphStyle("FeIn", parent=normal, fontSize=9, leftIndent=8)), Spacer(1, 6),
+        Paragraph("<b>Forma de pago:</b>", heading), Paragraph("Contado", ParagraphStyle("FeIn2", parent=normal, fontSize=10, leftIndent=8)), Spacer(1, 6),
+        Paragraph("<b>Medio de pago:</b>", heading),
+        Table([[Paragraph(method, ParagraphStyle("FeIn3", parent=normal, fontSize=9)), "$", _num(total)]],
+              colWidths=[6.5 * cm, 0.8 * cm, 3 * cm],
+              style=TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9), ("ALIGN", (2, 0), (2, 0), "RIGHT"), ("LEFTPADDING", (0, 0), (0, 0), 8)])),
+    ]
+    tot_rows = [[Paragraph("<b>Total Bruto</b>", val), _num(gross)]]
+    if discount:
+        tot_rows.append([Paragraph("Descuento", val), f"-{_num(discount)}"])
+        tot_rows.append([Paragraph("Subtotal", val), _num(tax_base)])
+    if with_iva:
+        tot_rows.append([Paragraph("IVA 19%", val), _num(iva)])
+    tot_rows.append([Paragraph("<b>Total a Pagar</b>", val), _num(total)])
+    totals = Table(tot_rows, colWidths=[3.6 * cm, 3.6 * cm])
+    totals.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, grid), ("INNERGRID", (0, 0), (-1, -1), 0.5, grid),
+                                ("ALIGN", (1, 0), (1, -1), "RIGHT"), ("FONTSIZE", (0, 0), (-1, -1), 9),
+                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 6),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    foot = Table([[left, totals]], colWidths=[width - 7.4 * cm, 7.4 * cm])
+    foot.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, 0), 6),
+                              ("LEFTPADDING", (1, 0), (1, 0), 0),
+                              ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    story.append(foot)
+    story.append(Spacer(1, 0.4 * cm))
 
-    doc.build(story)
+    # ===== Observaciones: orden y retenciones practicadas =====
+    story.append(Paragraph("<b>Observaciones:</b>", heading))
+    obs = [f"Orden {order.get('order_code', '')} · Placa {(order.get('plate') or '').upper()}"]
+    if snap and not snap.get("no_aplica") and float(snap.get("total_retention") or 0) > 0:
+        rate_ica = f"{snap.get('reteica_rate')}/1000" if snap.get("reteica_unit") == "por_mil" else f"{snap.get('reteica_rate')}%"
+        bits = []
+        if float(snap.get("retefuente_amount") or 0):
+            bits.append(f"Retefuente {snap.get('retefuente_rate')}%: {_num(snap['retefuente_amount'])}")
+        if float(snap.get("reteica_amount") or 0):
+            bits.append(f"ICA {rate_ica}: {_num(snap['reteica_amount'])}")
+        obs.append("Retenciones practicadas: " + " · ".join(bits) +
+                   f" · Valor a pagar cliente: {_num(total - float(snap.get('total_retention') or 0))}")
+    story.append(Paragraph("<br/>".join(obs), ParagraphStyle("FeObs", parent=normal, fontSize=8.5, leftIndent=8)))
+
+    # ===== Texto legal al pie de la página =====
+    def _footer(canv, _doc):
+        canv.saveState()
+        legal = Paragraph(f"{co['legal']}<br/>{co['activity']}<br/><b>CUFE:</b> {order.get('invoice_cufe') or 'pendiente de validación ante la DIAN'}",
+                          small_center)
+        _, h = legal.wrap(width - 1 * cm, 4 * cm)
+        legal.drawOn(canv, doc.leftMargin + 0.5 * cm, 0.9 * cm)
+        canv.setStrokeColor(grid)
+        canv.roundRect(0.5 * cm, 0.5 * cm, page_w - 1 * cm, page_h - 1 * cm, 6, stroke=1, fill=0)
+        canv.restoreState()
+
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buf.getvalue()
 
 
