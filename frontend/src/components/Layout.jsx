@@ -42,6 +42,7 @@ import {
     BadgeCheck,
     HandCoins,
     Landmark,
+    BadgeDollarSign,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
@@ -60,6 +61,7 @@ const navItems = [
     { path: '/retenciones', label: 'Retenciones', icon: Landmark, roles: ['admin', 'facturacion', 'asesor', 'coordinador'] },
     { path: '/calidad', label: 'Control de Calidad', icon: BadgeCheck, roles: ['admin', 'calidad', 'coordinador'] },
     { path: '/liquidaciones', label: 'Liquidaciones', icon: HandCoins, roles: ['admin', 'liquidaciones'] },
+    { path: '/mis-comisiones', label: 'Mis Comisiones', icon: BadgeDollarSign, roles: ['asesor'] },
     { path: '/autos-salida', label: 'Listo para Entrega', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador', 'calidad', 'seguridad'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin', 'asesor'] },
     { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'asesor', 'coordinador', 'facturacion'] },

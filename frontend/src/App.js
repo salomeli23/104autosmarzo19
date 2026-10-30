@@ -28,6 +28,7 @@ import { Accesorios } from './pages/Accesorios';
 import { Calidad } from './pages/Calidad';
 import { Liquidaciones } from './pages/Liquidaciones';
 import { Retenciones } from './pages/Retenciones';
+import { MisComisiones } from './pages/MisComisiones';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -230,6 +231,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'facturacion', 'asesor', 'coordinador']}>
                         <FacturacionElectronica />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/mis-comisiones" 
+                element={
+                    <ProtectedRoute allowedRoles={['asesor', 'admin']}>
+                        <MisComisiones />
                     </ProtectedRoute>
                 } 
             />

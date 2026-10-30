@@ -243,6 +243,8 @@ export const technicianChargesAPI = {
 
 export const advisorCommissionsAPI = {
     list: (status) => api.get('/advisor-commissions', { params: status ? { status } : {} }),
+    mine: () => api.get('/advisor-commissions/mine'),
+    request: (orderId) => api.post(`/advisor-commissions/${orderId}/request`),
     review: (orderId, data) => api.put(`/advisor-commissions/${orderId}/review`, data),
     reopen: (orderId) => api.put(`/advisor-commissions/${orderId}/reopen`),
     pay: (orderId, data) => api.put(`/advisor-commissions/${orderId}/pay`, data),

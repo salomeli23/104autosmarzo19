@@ -320,6 +320,12 @@ export const Liquidaciones = () => {
                 })}
             </div>
 
+            {kind === 'asesores' && tab !== 'tarifas' && commissions.some(c => c.status === 'por_cobrar') && (
+                <p className="text-xs text-muted-foreground" data-testid="adv-unrequested">
+                    {commissions.filter(c => c.status === 'por_cobrar').length} comisiones aún no las cobran los asesores (aparecen aquí cuando el asesor las cobra desde Mis Comisiones).
+                </p>
+            )}
+
             {toPay.length > 0 && tab !== 'tarifas' && (
                 <Card>
                     <CardContent className="p-4">

@@ -119,6 +119,7 @@ class AlertType(str, Enum):
     CERTIFICADO_SALIDA = "certificado_salida"  # Certificado de salida emitido
     COBRO_TECNICO = "cobro_tecnico"  # Un técnico pidió el cobro de un servicio terminado
     COBRO_REVISADO = "cobro_revisado"  # Liquidaciones aprobó, rechazó o pagó el cobro
+    COMISION_ASESOR = "comision_asesor"  # Un asesor pidió el cobro de su comisión
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -5596,7 +5597,7 @@ def _advisor_commission_row(o: dict, rec: Optional[dict]) -> dict:
     """La comisión del asesor por una orden: calculada en vivo mientras está por revisar; congelada al aprobarla."""
     live = compute_advisor_commission(o)
     rec = rec or {}
-    status = rec.get("status") or "pendiente"
+    status = rec.get("status") or "por_cobrar"  # el asesor aún no la ha cobrado
     commission = rec.get("commission") if status in ("aprobado", "pagado") and rec.get("commission") else live
     return {
         "id": o["id"],
@@ -5622,7 +5623,18 @@ def _advisor_commission_row(o: dict, rec: Optional[dict]) -> dict:
         "review_notes": rec.get("review_notes"),
         "paid_at": rec.get("paid_at"), "paid_by_name": rec.get("paid_by_name"),
         "payment_reference": rec.get("payment_reference"),
+        "requested_at": rec.get("requested_at"),
     }
+
+
+async def _alert_advisor(order_id: str, advisor_id: Optional[str], title: str, message: str):
+    if not advisor_id:
+        return
+    await db.alerts.insert_one({
+        "id": str(uuid.uuid4()), "recipient_id": advisor_id, "alert_type": AlertType.COBRO_REVISADO.value,
+        "title": title, "message": message, "order_id": order_id, "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 @api_router.get("/advisor-commissions")
@@ -5644,6 +5656,46 @@ async def list_advisor_commissions(
     return rows
 
 
+@api_router.get("/advisor-commissions/mine")
+async def my_advisor_commissions(current_user: dict = Depends(require_roles([UserRole.ASESOR, UserRole.ADMIN]))):
+    """Comisiones del asesor por los check-in que hizo."""
+    orders = await db.orders.find(
+        {"checkin_by_id": current_user["id"], "is_postventa": {"$ne": True}, "status": {"$nin": ADVISOR_ORDER_EXCLUDED}},
+        {"_id": 0, "inspection_photos": 0, "service_completion_photos": 0, "quality_photos": 0, "signature_url": 0},
+    ).sort("ingreso_at", -1).to_list(500)
+    recs = {r["order_id"]: r async for r in db.advisor_commissions.find(
+        {"order_id": {"$in": [o["id"] for o in orders]}}, {"_id": 0})}
+    return [_advisor_commission_row(o, recs.get(o["id"])) for o in orders]
+
+
+@api_router.post("/advisor-commissions/{order_id}/request")
+async def request_advisor_commission(order_id: str, current_user: dict = Depends(require_roles([UserRole.ASESOR, UserRole.ADMIN]))):
+    """El asesor cobra la comisión de un check-in suyo: pasa a 'Por revisar' en Liquidaciones."""
+    o = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not o or o.get("checkin_by_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Este check-in no lo hiciste tú")
+    if o.get("is_postventa") or o.get("status") in ADVISOR_ORDER_EXCLUDED:
+        raise HTTPException(status_code=400, detail="Esta orden no genera comisión")
+    rec = await db.advisor_commissions.find_one({"order_id": order_id}, {"_id": 0})
+    if rec and rec.get("status") not in (None, "por_cobrar", "rechazado"):
+        raise HTTPException(status_code=400, detail="Ya cobraste esta comisión")
+    commission = compute_advisor_commission(o)
+    if commission["total"] <= 0:
+        raise HTTPException(status_code=400, detail="Esta venta no tiene comisión en la tabla de asesores")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.advisor_commissions.update_one({"order_id": order_id}, {"$set": {
+        "order_id": order_id, "advisor_id": current_user["id"], "advisor_name": current_user["name"],
+        "status": "pendiente", "requested_at": now, "requested_amount": commission["total"],
+        "approved_amount": None, "commission": None,
+        "previous_rejection": ({"notes": rec.get("review_notes"), "by_name": rec.get("reviewed_by_name")}
+                               if rec and rec.get("status") == "rechazado" else None),
+        "review_notes": None, "reviewed_at": None, "reviewed_by_name": None,
+    }}, upsert=True)
+    await create_alert(UserRole.LIQUIDACIONES.value, AlertType.COMISION_ASESOR, "Nueva comisión de asesor",
+                       f"{current_user['name']} cobra {_cop(commission['total'])} por {o.get('plate')}", order_id)
+    return {"message": "Comisión enviada a liquidaciones", "amount": commission["total"]}
+
+
 class AdvisorCommissionReview(BaseModel):
     approved: bool
     amount: Optional[float] = None
@@ -5662,8 +5714,8 @@ async def _advisor_commission_order(order_id: str) -> tuple:
 async def review_advisor_commission(order_id: str, data: AdvisorCommissionReview,
                                     current_user: dict = Depends(require_roles(LIQUIDATION_ROLES))):
     o, rec = await _advisor_commission_order(order_id)
-    if rec and rec.get("status") in ("aprobado", "pagado"):
-        raise HTTPException(status_code=400, detail="Esta comisión ya fue aprobada")
+    if not rec or rec.get("status") != "pendiente":
+        raise HTTPException(status_code=400, detail="Solo se revisan comisiones que el asesor ya cobró")
     notes = (data.notes or "").strip() or None
     commission = compute_advisor_commission(o)
     now = datetime.now(timezone.utc).isoformat()
@@ -5680,6 +5732,9 @@ async def review_advisor_commission(order_id: str, data: AdvisorCommissionReview
             raise HTTPException(status_code=400, detail="Escribe el motivo del rechazo")
         upd.update({"status": "rechazado", "approved_amount": None, "commission": None})
     await db.advisor_commissions.update_one({"order_id": order_id}, {"$set": upd}, upsert=True)
+    await _alert_advisor(order_id, o.get("checkin_by_id"),
+                         "Comisión aprobada" if data.approved else "Comisión rechazada",
+                         f"{o.get('plate')}: " + (f"aprobada por {_cop(upd['approved_amount'])}" if data.approved else f"rechazada · {notes}"))
     return {"message": "Comisión aprobada" if data.approved else "Comisión rechazada"}
 
 
@@ -5696,13 +5751,15 @@ async def reopen_advisor_commission(order_id: str, current_user: dict = Depends(
 @api_router.put("/advisor-commissions/{order_id}/pay")
 async def pay_advisor_commission(order_id: str, data: TechnicianChargePay,
                                  current_user: dict = Depends(require_roles(LIQUIDATION_ROLES))):
-    _, rec = await _advisor_commission_order(order_id)
+    o, rec = await _advisor_commission_order(order_id)
     if not rec or rec.get("status") != "aprobado":
         raise HTTPException(status_code=400, detail="Solo se pagan comisiones aprobadas")
     now = datetime.now(timezone.utc).isoformat()
     await db.advisor_commissions.update_one({"order_id": order_id}, {"$set": {
         "status": "pagado", "paid_at": now, "paid_by_id": current_user["id"], "paid_by_name": current_user["name"],
         "payment_reference": (data.reference or "").strip() or None}})
+    await _alert_advisor(order_id, o.get("checkin_by_id"), "Comisión pagada",
+                         f"{o.get('plate')}: te pagaron {_cop(rec.get('approved_amount'))}")
     return {"message": "Comisión marcada como pagada"}
 
 
