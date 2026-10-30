@@ -234,9 +234,18 @@ export const inspectionsAPI = {
 export const technicianChargesAPI = {
     history: () => api.get('/technician/history'),
     create: (data) => api.post('/technician-charges', data),
+    quote: (data) => api.post('/technician-charges/quote', data),
+    rates: () => api.get('/technician-rates'),
     list: (status) => api.get('/technician-charges', { params: status ? { status } : {} }),
     review: (id, data) => api.put(`/technician-charges/${id}/review`, data),
     pay: (id, data) => api.put(`/technician-charges/${id}/pay`, data),
+};
+
+export const advisorCommissionsAPI = {
+    list: (status) => api.get('/advisor-commissions', { params: status ? { status } : {} }),
+    review: (orderId, data) => api.put(`/advisor-commissions/${orderId}/review`, data),
+    reopen: (orderId) => api.put(`/advisor-commissions/${orderId}/reopen`),
+    pay: (orderId, data) => api.put(`/advisor-commissions/${orderId}/pay`, data),
 };
 
 export const qualityAPI = {

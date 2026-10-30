@@ -24,6 +24,7 @@ from io import BytesIO
 import asyncio
 import resend
 import re
+from installer_rates import claim_label, compute_advisor_commission, compute_installer_charge, rates_table
 from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate, build_retention_certificate
 from cutting_catalog import (CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, CUTTING_REFERENCE_GROUPS,
                              DEFAULT_ROLL_METERS, lookup_car_average)
@@ -5364,10 +5365,73 @@ async def technician_history(current_user: dict = Depends(require_roles([UserRol
     } for o in orders]
 
 
-class TechnicianChargeCreate(BaseModel):
+def _installed_service_items(o: dict) -> List[tuple]:
+    """(índice, servicio) de lo que se marcó como instalado (o todos, en órdenes anteriores)."""
+    services = o.get("services") or []
+    installed = o.get("installed_services") or []
+    picked = [(x["index"], services[x["index"]]) for x in installed
+              if isinstance(x.get("index"), int) and 0 <= x["index"] < len(services) and isinstance(services[x["index"]], dict)]
+    return picked or [(i, s) for i, s in enumerate(services) if isinstance(s, dict)]
+
+
+class TechnicianChargeOptions(BaseModel):
+    vehicle_type: str = "automovil"            # automovil | camioneta
+    tesla_roof: Optional[str] = None           # medio | completo
+    removals: Optional[List[str]] = None       # completo | laterales | panoramico
+    # Lo que instaló este técnico (None = todo): {índice del servicio: [vidrios]} y otros servicios por índice
+    pieces: Optional[Dict[str, List[str]]] = None
+    services: Optional[List[int]] = None
+
+
+class TechnicianChargeQuote(TechnicianChargeOptions):
     order_id: str
-    amount: float
+
+
+class TechnicianChargeCreate(TechnicianChargeOptions):
+    order_id: str
+    other_amount: Optional[float] = None       # valor de servicios sin tarifa (accesorios, detailing...)
+    amount: Optional[float] = None             # ignorado: el valor sale de la tabla de tarifas
     notes: Optional[str] = None
+
+
+def _charge_tariff(order: dict, data: TechnicianChargeOptions) -> dict:
+    return compute_installer_charge(
+        _installed_service_items(order), brand=order.get("brand"), vehicle_type=data.vehicle_type,
+        tesla_roof=data.tesla_roof, removals=data.removals,
+        pieces=data.pieces, services=data.services,
+    )
+
+
+async def _claims_taken_by_others(order_id: str, technician_id: str) -> Dict[str, str]:
+    """Piezas/servicios que ya cobró el otro técnico de la orden (cobros no rechazados): {claim: técnico}."""
+    taken: Dict[str, str] = {}
+    async for c in db.technician_charges.find(
+            {"order_id": order_id, "technician_id": {"$ne": technician_id}, "status": {"$ne": "rechazado"}}, {"_id": 0}):
+        for claim in (c.get("tariff") or {}).get("claims") or []:
+            taken[claim] = c.get("technician_name") or "otro técnico"
+    return taken
+
+
+@api_router.get("/technician-rates")
+async def technician_rates(current_user: dict = Depends(require_roles(
+        [UserRole.ADMIN, UserRole.LIQUIDACIONES, UserRole.TECNICO, UserRole.COORDINADOR]))):
+    """Tablas de pago a instaladores y a asesores 2026."""
+    return rates_table()
+
+
+@api_router.post("/technician-charges/quote")
+async def quote_technician_charge(data: TechnicianChargeQuote, current_user: dict = Depends(require_roles(
+        [UserRole.ADMIN, UserRole.LIQUIDACIONES, UserRole.TECNICO]))):
+    """Valor que le corresponde al técnico según la tabla de tarifas (antes de enviar el cobro)."""
+    order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in (
+            order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+        raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
+    tariff = _charge_tariff(order, data)
+    tariff["taken"] = await _claims_taken_by_others(order["id"], current_user["id"])
+    return tariff
 
 
 @api_router.post("/technician-charges")
@@ -5381,9 +5445,22 @@ async def create_technician_charge(data: TechnicianChargeCreate, current_user: d
         raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
     if order.get("status") not in FINISHED_FOR_TECH:
         raise HTTPException(status_code=400, detail="Solo puedes cobrar servicios terminados")
-    amount = round(float(data.amount or 0), 2)
+    # El valor sale de la tabla de pago a instaladores; solo los servicios sin tarifa llevan valor manual
+    tariff = _charge_tariff(order, data)
+    # Dos técnicos en el mismo carro: cada uno cobra solo lo que instaló, sin repetir lo del otro
+    taken = await _claims_taken_by_others(order["id"], uid)
+    repeated = [c for c in tariff["claims"] if c in taken]
+    if repeated:
+        names = ", ".join(claim_label(c, tariff["units"]) for c in repeated)
+        raise HTTPException(status_code=409, detail=f"Ya lo cobró {taken[repeated[0]]}: {names}. Cobra solo lo que instalaste tú.")
+    other_amount = round(float(data.other_amount or 0), 2) if tariff["without_rate"] else 0
+    if other_amount < 0:
+        raise HTTPException(status_code=400, detail="El valor de los servicios sin tarifa no puede ser negativo")
+    if tariff["without_rate"] and other_amount > 0 and not (data.notes or "").strip():
+        raise HTTPException(status_code=400, detail="Explica en la nota el valor de los servicios sin tarifa")
+    amount = round(tariff["total"] + other_amount, 2)
     if amount <= 0:
-        raise HTTPException(status_code=400, detail="Escribe el valor a cobrar")
+        raise HTTPException(status_code=400, detail="Este servicio no tiene tarifa: escribe el valor y explica en la nota")
     existing = await db.technician_charges.find_one({"order_id": order["id"], "technician_id": uid}, {"_id": 0})
     if existing and existing.get("status") != "rechazado":
         raise HTTPException(status_code=400, detail="Ya enviaste el cobro de este servicio")
@@ -5402,6 +5479,10 @@ async def create_technician_charge(data: TechnicianChargeCreate, current_user: d
         "technician_role": "principal" if order.get("assigned_technician_id") == uid else "apoyo",
         "services": _tech_service_names(order),
         "amount": amount,
+        "tariff": tariff,
+        "other_amount": other_amount or None,
+        "partner_name": (order.get("assigned_technician_2_name") if order.get("assigned_technician_id") == uid
+                         else order.get("assigned_technician_name")) if order.get("assigned_technician_2_id") else None,
         "notes": (data.notes or "").strip() or None,
         "status": "pendiente",
         "created_at": now,
@@ -5505,6 +5586,124 @@ async def pay_technician_charge(charge_id: str, data: TechnicianChargePay,
     await db.technician_charges.update_one({"id": charge_id}, {"$set": upd})
     await _alert_technician(charge, "Cobro pagado", f"{charge['plate']}: te pagaron {_cop(charge.get('approved_amount'))}")
     return {"message": "Cobro marcado como pagado", "charge": {**charge, **upd}}
+
+
+# ===================== Liquidación de asesores (comisión del check-in) =====================
+ADVISOR_ORDER_EXCLUDED = [OrderStatus.AGENDADO.value, OrderStatus.DESISTIMIENTO.value]
+
+
+def _advisor_commission_row(o: dict, rec: Optional[dict]) -> dict:
+    """La comisión del asesor por una orden: calculada en vivo mientras está por revisar; congelada al aprobarla."""
+    live = compute_advisor_commission(o)
+    rec = rec or {}
+    status = rec.get("status") or "pendiente"
+    commission = rec.get("commission") if status in ("aprobado", "pagado") and rec.get("commission") else live
+    return {
+        "id": o["id"],
+        "order_id": o["id"],
+        "order_code": o.get("order_code"),
+        "plate": o.get("plate"),
+        "brand": o.get("brand"),
+        "model": o.get("model"),
+        "client_name": o.get("client_name"),
+        "order_status": o.get("status"),
+        "ingreso_at": o.get("ingreso_at"),
+        "profile_photo_url": o.get("profile_photo_url"),
+        "advisor_id": o.get("checkin_by_id"),
+        "advisor_name": o.get("checkin_by_name"),
+        "services": [_service_label(s) for s in (o.get("services") or []) if isinstance(s, dict)],
+        "order_total": float(o.get("final_value") or o.get("negotiated_value") or 0),
+        "payment_status": _payment_status(o),
+        "commission": commission,
+        "amount": commission["total"],
+        "status": status,
+        "approved_amount": rec.get("approved_amount"),
+        "reviewed_at": rec.get("reviewed_at"), "reviewed_by_name": rec.get("reviewed_by_name"),
+        "review_notes": rec.get("review_notes"),
+        "paid_at": rec.get("paid_at"), "paid_by_name": rec.get("paid_by_name"),
+        "payment_reference": rec.get("payment_reference"),
+    }
+
+
+@api_router.get("/advisor-commissions")
+async def list_advisor_commissions(
+    status: Optional[str] = None,
+    current_user: dict = Depends(require_roles(LIQUIDATION_ROLES)),
+):
+    """Comisiones de los asesores por cada check-in que hicieron (tabla de pago a asesores)."""
+    orders = await db.orders.find(
+        {"checkin_by_id": {"$nin": [None, ""]}, "is_postventa": {"$ne": True},
+         "status": {"$nin": ADVISOR_ORDER_EXCLUDED}},
+        {"_id": 0, "inspection_photos": 0, "service_completion_photos": 0, "quality_photos": 0, "signature_url": 0},
+    ).sort("ingreso_at", -1).to_list(1000)
+    recs = {r["order_id"]: r async for r in db.advisor_commissions.find(
+        {"order_id": {"$in": [o["id"] for o in orders]}}, {"_id": 0})}
+    rows = [_advisor_commission_row(o, recs.get(o["id"])) for o in orders]
+    if status in CHARGE_STATUSES:
+        rows = [r for r in rows if r["status"] == status]
+    return rows
+
+
+class AdvisorCommissionReview(BaseModel):
+    approved: bool
+    amount: Optional[float] = None
+    notes: Optional[str] = None
+
+
+async def _advisor_commission_order(order_id: str) -> tuple:
+    o = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not o or not o.get("checkin_by_id"):
+        raise HTTPException(status_code=404, detail="Orden sin asesor de check-in")
+    rec = await db.advisor_commissions.find_one({"order_id": order_id}, {"_id": 0})
+    return o, rec
+
+
+@api_router.put("/advisor-commissions/{order_id}/review")
+async def review_advisor_commission(order_id: str, data: AdvisorCommissionReview,
+                                    current_user: dict = Depends(require_roles(LIQUIDATION_ROLES))):
+    o, rec = await _advisor_commission_order(order_id)
+    if rec and rec.get("status") in ("aprobado", "pagado"):
+        raise HTTPException(status_code=400, detail="Esta comisión ya fue aprobada")
+    notes = (data.notes or "").strip() or None
+    commission = compute_advisor_commission(o)
+    now = datetime.now(timezone.utc).isoformat()
+    upd = {"order_id": order_id, "advisor_id": o.get("checkin_by_id"), "advisor_name": o.get("checkin_by_name"),
+           "reviewed_at": now, "reviewed_by_id": current_user["id"], "reviewed_by_name": current_user["name"],
+           "review_notes": notes}
+    if data.approved:
+        amount = round(float(data.amount if data.amount is not None else commission["total"]), 2)
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="El valor aprobado debe ser mayor a 0")
+        upd.update({"status": "aprobado", "approved_amount": amount, "commission": commission})
+    else:
+        if not notes:
+            raise HTTPException(status_code=400, detail="Escribe el motivo del rechazo")
+        upd.update({"status": "rechazado", "approved_amount": None, "commission": None})
+    await db.advisor_commissions.update_one({"order_id": order_id}, {"$set": upd}, upsert=True)
+    return {"message": "Comisión aprobada" if data.approved else "Comisión rechazada"}
+
+
+@api_router.put("/advisor-commissions/{order_id}/reopen")
+async def reopen_advisor_commission(order_id: str, current_user: dict = Depends(require_roles(LIQUIDATION_ROLES))):
+    """Devuelve una comisión rechazada a 'Por revisar'."""
+    _, rec = await _advisor_commission_order(order_id)
+    if not rec or rec.get("status") != "rechazado":
+        raise HTTPException(status_code=400, detail="Solo se reabren comisiones rechazadas")
+    await db.advisor_commissions.update_one({"order_id": order_id}, {"$set": {"status": "pendiente"}})
+    return {"message": "Comisión devuelta a por revisar"}
+
+
+@api_router.put("/advisor-commissions/{order_id}/pay")
+async def pay_advisor_commission(order_id: str, data: TechnicianChargePay,
+                                 current_user: dict = Depends(require_roles(LIQUIDATION_ROLES))):
+    _, rec = await _advisor_commission_order(order_id)
+    if not rec or rec.get("status") != "aprobado":
+        raise HTTPException(status_code=400, detail="Solo se pagan comisiones aprobadas")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.advisor_commissions.update_one({"order_id": order_id}, {"$set": {
+        "status": "pagado", "paid_at": now, "paid_by_id": current_user["id"], "paid_by_name": current_user["name"],
+        "payment_reference": (data.reference or "").strip() or None}})
+    return {"message": "Comisión marcada como pagada"}
 
 
 @api_router.get("/orders-pending-invoice")
