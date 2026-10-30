@@ -10,6 +10,7 @@ pymongo==4.19.0
 python-dotenv==1.2.4
 python-multipart==0.0.32
 qrcode==8.2
+openpyxl==3.1.5
 reportlab==5.1.0
 resend==2.50.0
 uvicorn[standard]==0.54.0

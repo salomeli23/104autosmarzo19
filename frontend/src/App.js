@@ -29,6 +29,7 @@ import { Calidad } from './pages/Calidad';
 import { Liquidaciones } from './pages/Liquidaciones';
 import { Retenciones } from './pages/Retenciones';
 import { MisComisiones } from './pages/MisComisiones';
+import { Reportes } from './pages/Reportes';
 import { homeFor } from './lib/utils';
 import './App.css';
 
@@ -232,6 +233,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador']}>
                         <FacturacionElectronica />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/reportes" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'liquidaciones', 'facturacion', 'coordinador', 'calidad']}>
+                        <Reportes />
                     </ProtectedRoute>
                 } 
             />

@@ -241,6 +241,11 @@ export const technicianChargesAPI = {
     pay: (id, data) => api.put(`/technician-charges/${id}/pay`, data),
 };
 
+export const reportsAPI = {
+    list: () => api.get('/reports'),
+    download: (id, params) => api.get(`/reports/${id}.xlsx`, { params, responseType: 'blob' }),
+};
+
 export const advisorCommissionsAPI = {
     list: (status) => api.get('/advisor-commissions', { params: status ? { status } : {} }),
     mine: () => api.get('/advisor-commissions/mine'),

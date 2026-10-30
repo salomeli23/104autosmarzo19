@@ -24,6 +24,8 @@ from io import BytesIO
 import asyncio
 import resend
 import re
+from reports import (CHARGE_LABELS, METHOD_LABELS, PAYMENT_STATUS_LABELS, STATUS_LABELS, build_workbook,
+                     local_dt, range_bounds, summarize)
 from installer_rates import claim_label, compute_advisor_commission, compute_installer_charge, rates_table
 from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate, build_retention_certificate
 from cutting_catalog import (CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, CUTTING_REFERENCE_GROUPS,
@@ -5761,6 +5763,357 @@ async def pay_advisor_commission(order_id: str, data: TechnicianChargePay,
     await _alert_advisor(order_id, o.get("checkin_by_id"), "Comisión pagada",
                          f"{o.get('plate')}: te pagaron {_cop(rec.get('approved_amount'))}")
     return {"message": "Comisión marcada como pagada"}
+
+
+# ===================== Reportes en Excel =====================
+REPORTS = {
+    "liquidaciones": {"title": "Liquidaciones de asesores e instaladores", "roles": [UserRole.ADMIN, UserRole.LIQUIDACIONES]},
+    "servicios-diario": {"title": "Informe diario de servicios y autos sin salir", "roles": [UserRole.ADMIN, UserRole.COORDINADOR]},
+    "pagos": {"title": "Pagos por día y método", "roles": [UserRole.ADMIN, UserRole.FACTURACION]},
+    "retenciones": {"title": "Retenciones", "roles": [UserRole.ADMIN, UserRole.FACTURACION]},
+    "agendamiento": {"title": "Agendamiento por asesor", "roles": [UserRole.ADMIN, UserRole.COORDINADOR]},
+    "calidad": {"title": "Control de calidad", "roles": [UserRole.ADMIN, UserRole.CALIDAD, UserRole.COORDINADOR]},
+    "inventario": {"title": "Inventario", "roles": [UserRole.ADMIN, UserRole.COORDINADOR]},
+}
+_C = lambda h, k, kind="text", w=16: (h, k, kind, w)  # noqa: E731  columna de reporte
+
+
+def _techs(o: dict) -> str:
+    return " · ".join(t for t in (o.get("assigned_technician_name"), o.get("assigned_technician_2_name")) if t)
+
+
+def _services_text(o: dict) -> str:
+    return ", ".join(_service_label(s) for s in (o.get("services") or []))
+
+
+async def _report_liquidaciones(start: str, end: str) -> List[dict]:
+    charges = await db.technician_charges.find({"created_at": {"$gte": start, "$lt": end}}, {"_id": 0}).sort("created_at", 1).to_list(5000)
+    inst = [{
+        "fecha": c.get("created_at"), "tecnico": c.get("technician_name"), "rol": c.get("technician_role"),
+        "orden": c.get("order_code"), "placa": c.get("plate"), "vehiculo": f"{c.get('brand') or ''} {c.get('model') or ''}".strip(),
+        "tipo": ((c.get("tariff") or {}).get("vehicle_type") or "").capitalize(),
+        "detalle": " | ".join(f"{l['concept']}: {_cop(l['amount'])}" for l in (c.get("tariff") or {}).get("lines") or []),
+        "solicitado": c.get("amount") or 0, "aprobado": c.get("approved_amount") or 0,
+        "pagado": (c.get("approved_amount") or 0) if c.get("status") == "pagado" else 0,
+        "estado": CHARGE_LABELS.get(c.get("status"), c.get("status")), "fecha_pago": c.get("paid_at"),
+        "referencia": c.get("payment_reference"), "notas": c.get("notes"),
+    } for c in charges]
+    orders = await db.orders.find(
+        {"checkin_by_id": {"$nin": [None, ""]}, "is_postventa": {"$ne": True}, "status": {"$nin": ADVISOR_ORDER_EXCLUDED},
+         "ingreso_at": {"$gte": start, "$lt": end}},
+        {"_id": 0, "inspection_photos": 0, "service_completion_photos": 0, "quality_photos": 0, "signature_url": 0},
+    ).sort("ingreso_at", 1).to_list(5000)
+    recs = {r["order_id"]: r async for r in db.advisor_commissions.find({"order_id": {"$in": [o["id"] for o in orders]}}, {"_id": 0})}
+    adv = []
+    for o in orders:
+        r = _advisor_commission_row(o, recs.get(o["id"]))
+        adv.append({
+            "fecha": r["ingreso_at"], "asesor": r["advisor_name"], "orden": r["order_code"], "placa": r["plate"],
+            "cliente": r["client_name"], "venta": r["order_total"],
+            "pago_cliente": PAYMENT_STATUS_LABELS.get(r["payment_status"], r["payment_status"]),
+            "detalle": " | ".join(f"{l['concept']}: {_cop(l['amount'])}" for l in r["commission"]["lines"]),
+            "sin_tarifa": ", ".join(r["commission"]["without_rate"]),
+            "comision": r["amount"], "aprobado": r["approved_amount"] or 0,
+            "pagado": (r["approved_amount"] or 0) if r["status"] == "pagado" else 0,
+            "estado": CHARGE_LABELS.get(r["status"], r["status"]), "fecha_pago": r["paid_at"], "referencia": r["payment_reference"],
+        })
+    sum_cols = {"cobros": "count", "solicitado": "sum:solicitado", "aprobado": "sum:aprobado", "pagado": "sum:pagado"}
+    inst_sum = summarize(inst, "tecnico", sum_cols)
+    adv_sum = summarize(adv, "asesor", {"ventas": "count", "comision": "sum:comision", "aprobado": "sum:aprobado", "pagado": "sum:pagado"})
+    for r in inst_sum + adv_sum:
+        r["por_pagar"] = r["aprobado"] - r["pagado"]
+    return [
+        {"title": "Resumen instaladores", "columns": [_C("Técnico", "tecnico", w=26), _C("Cobros", "cobros", "int", 10),
+                                                      _C("Solicitado", "solicitado", "money"), _C("Aprobado", "aprobado", "money"),
+                                                      _C("Pagado", "pagado", "money"), _C("Por pagar", "por_pagar", "money")],
+         "rows": inst_sum, "totals": ["cobros", "solicitado", "aprobado", "pagado", "por_pagar"]},
+        {"title": "Instaladores", "subtitle": "Cobros de técnicos enviados en el periodo", "columns": [
+            _C("Fecha", "fecha", "datetime"), _C("Técnico", "tecnico", w=22), _C("Rol", "rol", w=10), _C("Orden", "orden", w=12),
+            _C("Placa", "placa", w=10), _C("Vehículo", "vehiculo", w=18), _C("Tipo", "tipo", w=12), _C("Detalle tarifa", "detalle", w=50),
+            _C("Solicitado", "solicitado", "money"), _C("Aprobado", "aprobado", "money"), _C("Pagado", "pagado", "money"),
+            _C("Estado", "estado", w=18), _C("Fecha pago", "fecha_pago", "datetime"), _C("Referencia", "referencia", w=18),
+            _C("Notas", "notas", w=30)], "rows": inst, "totals": ["solicitado", "aprobado", "pagado"]},
+        {"title": "Resumen asesores", "columns": [_C("Asesor", "asesor", w=26), _C("Ventas", "ventas", "int", 10),
+                                                  _C("Comisión", "comision", "money"), _C("Aprobado", "aprobado", "money"),
+                                                  _C("Pagado", "pagado", "money"), _C("Por pagar", "por_pagar", "money")],
+         "rows": adv_sum, "totals": ["ventas", "comision", "aprobado", "pagado", "por_pagar"]},
+        {"title": "Asesores", "subtitle": "Comisión de cada check-in del periodo", "columns": [
+            _C("Check-in", "fecha", "datetime"), _C("Asesor", "asesor", w=22), _C("Orden", "orden", w=12), _C("Placa", "placa", w=10),
+            _C("Cliente", "cliente", w=24), _C("Venta", "venta", "money"), _C("Pago cliente", "pago_cliente", w=14),
+            _C("Detalle comisión", "detalle", w=50), _C("Sin tarifa", "sin_tarifa", w=24), _C("Comisión", "comision", "money"),
+            _C("Aprobado", "aprobado", "money"), _C("Pagado", "pagado", "money"), _C("Estado", "estado", w=18),
+            _C("Fecha pago", "fecha_pago", "datetime"), _C("Referencia", "referencia", w=18)],
+         "rows": adv, "totals": ["venta", "comision", "aprobado", "pagado"]},
+    ]
+
+
+async def _report_servicios_diario(start: str, end: str) -> List[dict]:
+    proj = {"_id": 0, "inspection_photos": 0, "service_completion_photos": 0, "quality_photos": 0, "signature_url": 0, "profile_photo_url": 0}
+    day = await db.orders.find({"$or": [{"ingreso_at": {"$gte": start, "$lt": end}},
+                                        {"service_completed_at": {"$gte": start, "$lt": end}},
+                                        {"delivered_at": {"$gte": start, "$lt": end}}]}, proj).sort("ingreso_at", 1).to_list(2000)
+    inside = lambda v: bool(v) and start <= v < end  # noqa: E731
+
+    def row(o: dict) -> dict:
+        b = _order_balance(o)
+        return {
+            "orden": o.get("order_code"), "placa": o.get("plate"), "vehiculo": f"{o.get('brand') or ''} {o.get('model') or ''}".strip(),
+            "cliente": o.get("client_name"), "telefono": o.get("client_phone"), "servicios": _services_text(o),
+            "tecnicos": _techs(o), "asesor": o.get("checkin_by_name"), "estado": STATUS_LABELS.get(o.get("status"), o.get("status")),
+            "calidad": (o.get("quality_status") or "").capitalize(), "ingreso": o.get("ingreso_at"),
+            "terminado": o.get("service_completed_at"), "entregado": o.get("delivered_at"),
+            "total": b["total"], "abonado": b["paid"], "saldo": b["balance"],
+            "certificado": (o.get("exit_certificate") or {}).get("number"),
+        }
+    day_rows = []
+    for o in day:
+        r = row(o)
+        r["movimiento"] = " · ".join(x for x, v in (("Ingresó", o.get("ingreso_at")), ("Terminado", o.get("service_completed_at")),
+                                                   ("Entregado", o.get("delivered_at"))) if inside(v))
+        day_rows.append(r)
+    pending = await db.orders.find(
+        {"ingreso_at": {"$nin": [None, ""]}, "delivered_at": {"$in": [None]},
+         "status": {"$nin": [OrderStatus.ENTREGADO.value, OrderStatus.DESISTIMIENTO.value, OrderStatus.AGENDADO.value]}},
+        proj).sort("ingreso_at", 1).to_list(2000)
+    now = datetime.now(timezone.utc)
+    pend_rows = []
+    for o in pending:
+        r = row(o)
+        try:
+            r["dias"] = (now - datetime.fromisoformat(o["ingreso_at"].replace("Z", "+00:00"))).days
+        except (ValueError, AttributeError):
+            r["dias"] = None
+        pend_rows.append(r)
+    base_cols = [_C("Orden", "orden", w=12), _C("Placa", "placa", w=10), _C("Vehículo", "vehiculo", w=18), _C("Cliente", "cliente", w=24),
+                 _C("Teléfono", "telefono", w=14), _C("Servicios", "servicios", w=40), _C("Técnicos", "tecnicos", w=24),
+                 _C("Asesor check-in", "asesor", w=20), _C("Estado", "estado", w=20), _C("Calidad", "calidad", w=12),
+                 _C("Ingreso", "ingreso", "datetime"), _C("Terminado", "terminado", "datetime")]
+    money = [_C("Total", "total", "money"), _C("Abonado", "abonado", "money"), _C("Saldo", "saldo", "money")]
+    return [
+        {"title": "Servicios del día", "subtitle": "Autos que ingresaron, terminaron o se entregaron", "columns":
+            [_C("Movimiento", "movimiento", w=26)] + base_cols + [_C("Entregado", "entregado", "datetime")] + money,
+         "rows": day_rows, "totals": ["total", "abonado", "saldo"]},
+        {"title": "Autos sin salir", "subtitle": "Vehículos en el taller que aún no se entregan (a la fecha)", "columns":
+            base_cols + [_C("Días en taller", "dias", "int", 12)] + money + [_C("Certificado salida", "certificado", w=16)],
+         "rows": pend_rows, "totals": ["total", "abonado", "saldo"]},
+    ]
+
+
+async def _report_pagos(start: str, end: str) -> List[dict]:
+    pays = await db.payments.find({"created_at": {"$gte": start, "$lt": end}}, {"_id": 0}).sort("created_at", 1).to_list(10000)
+    rows = [{
+        "fecha": p.get("created_at"), "dia": (local_dt(p.get("created_at")) or datetime.now()).strftime("%Y-%m-%d"),
+        "orden": p.get("order_code"), "placa": p.get("plate"), "cliente": p.get("client_name"), "cedula": p.get("client_cedula"),
+        "metodo": METHOD_LABELS.get(p.get("method"), p.get("method")), "valor": p.get("amount") or 0,
+        "referencia": p.get("reference"), "notas": p.get("notes"), "registro": p.get("created_by_name"),
+    } for p in pays]
+    methods = sorted({r["metodo"] or "-" for r in rows})
+    by_day: Dict[str, dict] = {}
+    for r in rows:
+        d = by_day.setdefault(r["dia"], {"dia": r["dia"], "total": 0, "pagos": 0, **{m: 0 for m in methods}})
+        d[r["metodo"] or "-"] += r["valor"]
+        d["total"] += r["valor"]
+        d["pagos"] += 1
+    by_method = summarize(rows, "metodo", {"pagos": "count", "valor": "sum:valor"})
+    return [
+        {"title": "Por día y método", "columns": [_C("Día", "dia", "date", 12), _C("Pagos", "pagos", "int", 10)]
+            + [_C(m, m, "money") for m in methods] + [_C("Total", "total", "money")],
+         "rows": [by_day[k] for k in sorted(by_day)], "totals": ["pagos", *methods, "total"]},
+        {"title": "Por método", "columns": [_C("Método", "metodo", w=18), _C("Pagos", "pagos", "int", 10), _C("Total", "valor", "money")],
+         "rows": by_method, "totals": ["pagos", "valor"]},
+        {"title": "Detalle de pagos", "columns": [
+            _C("Fecha", "fecha", "datetime"), _C("Orden", "orden", w=12), _C("Placa", "placa", w=10), _C("Cliente", "cliente", w=24),
+            _C("Cédula/NIT", "cedula", w=14), _C("Método", "metodo", w=14), _C("Valor", "valor", "money"),
+            _C("Referencia", "referencia", w=18), _C("Notas", "notas", w=26), _C("Registrado por", "registro", w=20)],
+         "rows": rows, "totals": ["valor"]},
+    ]
+
+
+async def _report_retenciones(start: str, end: str) -> List[dict]:
+    items = await db.retentions.find({"applied_at": {"$gte": start, "$lt": end}}, {"_id": 0}).sort("applied_at", -1).to_list(5000)
+    latest: Dict[str, dict] = {}
+    for r in items:
+        latest.setdefault(r["order_id"], r)  # la última aplicada de cada orden
+    orders = {o["id"]: o for o in await db.orders.find({"id": {"$in": list(latest)}},
+                                                       {"_id": 0, "id": 1, "client_razon_social": 1, "invoice_number": 1, "client_cedula": 1}).to_list(5000)}
+    rows = []
+    for r in sorted(latest.values(), key=lambda x: x.get("applied_at") or ""):
+        o = orders.get(r["order_id"]) or {}
+        ica_unit = "/1000" if r.get("reteica_unit") == "por_mil" else "%"
+        rows.append({
+            "fecha": r.get("applied_at"), "cliente": r.get("client_name"), "razon": o.get("client_razon_social"),
+            "nit": o.get("client_cedula") or r.get("client_cedula"), "placa": r.get("plate"), "orden": r.get("order_code"),
+            "ciudad": r.get("city"), "factura": o.get("invoice_number"), "certificado": r.get("certificate_number"),
+            "sin_retencion": "Sí" if r.get("no_aplica") else "No",
+            "base": r.get("retention_base") if r.get("retention_base") is not None else r.get("order_total_before"),
+            "total_factura": r.get("order_total_before") or 0,
+            "tarifa_rf": f"{r['retefuente_rate']}%" if r.get("retefuente_applied") else "", "retefuente": r.get("retefuente_amount") or 0,
+            "tarifa_ica": f"{r['reteica_rate']}{ica_unit}" if r.get("reteica_applied") else "", "ica": r.get("reteica_amount") or 0,
+            "total": r.get("total_retention") or 0, "a_pagar": r.get("order_total_after") or 0, "por": r.get("applied_by_name"),
+        })
+    by_client = summarize([x for x in rows if x["sin_retencion"] == "No"], "cliente",
+                          {"ordenes": "count", "retefuente": "sum:retefuente", "ica": "sum:ica", "total": "sum:total"})
+    return [
+        {"title": "Retenciones", "subtitle": "Retención vigente de cada orden aplicada en el periodo", "columns": [
+            _C("Fecha", "fecha", "datetime"), _C("Cliente", "cliente", w=24), _C("Razón social", "razon", w=24), _C("NIT/Cédula", "nit", w=14),
+            _C("Placa", "placa", w=10), _C("Orden", "orden", w=12), _C("Ciudad", "ciudad", w=12), _C("Factura", "factura", w=22),
+            _C("Certificado", "certificado", w=14), _C("Sin retención", "sin_retencion", w=10), _C("Base (sin IVA)", "base", "money"),
+            _C("Total factura", "total_factura", "money"), _C("Tarifa Retefuente", "tarifa_rf", w=10), _C("Retefuente", "retefuente", "money"),
+            _C("Tarifa ICA", "tarifa_ica", w=10), _C("ICA", "ica", "money"), _C("Total retenido", "total", "money"),
+            _C("Valor a pagar cliente", "a_pagar", "money"), _C("Aplicada por", "por", w=18)],
+         "rows": rows, "totals": ["base", "total_factura", "retefuente", "ica", "total", "a_pagar"]},
+        {"title": "Por cliente", "columns": [_C("Cliente", "cliente", w=28), _C("Órdenes", "ordenes", "int", 10),
+                                             _C("Retefuente", "retefuente", "money"), _C("ICA", "ica", "money"), _C("Total", "total", "money")],
+         "rows": by_client, "totals": ["ordenes", "retefuente", "ica", "total"]},
+    ]
+
+
+async def _report_agendamiento(start: str, end: str) -> List[dict]:
+    orders = await db.orders.find({"created_at": {"$gte": start, "$lt": end}},
+                                  {"_id": 0, "inspection_photos": 0, "service_completion_photos": 0, "quality_photos": 0,
+                                   "signature_url": 0, "profile_photo_url": 0}).sort("created_at", 1).to_list(5000)
+    rows = [{
+        "creada": o.get("created_at"), "asesor": o.get("created_by_name") or "Sin asesor", "cita": o.get("date"),
+        "hora": o.get("scheduled_time"), "tipo": "Postventa" if o.get("is_postventa") else ("Prioridad" if o.get("is_priority") else "Normal"),
+        "orden": o.get("order_code"), "placa": o.get("plate"), "cliente": o.get("client_name"), "telefono": o.get("client_phone"),
+        "servicios": _services_text(o), "valor": float(o.get("final_value") or o.get("negotiated_value") or 0),
+        "estado": STATUS_LABELS.get(o.get("status"), o.get("status")), "checkin": "Sí" if o.get("ingreso_at") else "No",
+        "desistio": "Sí" if o.get("status") == OrderStatus.DESISTIMIENTO.value else "No",
+        "checkin_por": o.get("checkin_by_name"), "descuento": o.get("discount_code"),
+    } for o in orders]
+    summary = summarize(rows, "asesor", {"citas": "count", "con_checkin": "count:checkin=Sí", "desistidas": "count:desistio=Sí", "valor": "sum:valor"})
+    for r in summary:
+        r["efectividad"] = round(r["con_checkin"] / r["citas"] * 100, 1) if r["citas"] else 0
+    return [
+        {"title": "Por asesor", "columns": [_C("Asesor", "asesor", w=26), _C("Citas", "citas", "int", 10), _C("Con check-in", "con_checkin", "int", 12),
+                                            _C("Desistidas", "desistidas", "int", 12), _C("% check-in", "efectividad", "number", 12),
+                                            _C("Valor agendado", "valor", "money", 18)],
+         "rows": summary, "totals": ["citas", "con_checkin", "desistidas", "valor"]},
+        {"title": "Citas", "subtitle": "Citas creadas en el periodo", "columns": [
+            _C("Creada", "creada", "datetime"), _C("Asesor", "asesor", w=22), _C("Fecha cita", "cita", "date", 12), _C("Hora", "hora", w=8),
+            _C("Tipo", "tipo", w=10), _C("Orden", "orden", w=12), _C("Placa", "placa", w=10), _C("Cliente", "cliente", w=24),
+            _C("Teléfono", "telefono", w=14), _C("Servicios", "servicios", w=40), _C("Valor", "valor", "money"),
+            _C("Estado", "estado", w=20), _C("Check-in", "checkin", w=9), _C("Check-in por", "checkin_por", w=20),
+            _C("Código descuento", "descuento", w=14)], "rows": rows, "totals": ["valor"]},
+    ]
+
+
+async def _report_calidad(start: str, end: str) -> List[dict]:
+    orders = await db.orders.find({"quality_reviews.at": {"$gte": start, "$lt": end}},
+                                  {"_id": 0, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "client_name": 1, "services": 1,
+                                   "assigned_technician_name": 1, "assigned_technician_2_name": 1, "quality_reviews": 1,
+                                   "installed_by_name": 1}).to_list(5000)
+    rows = []
+    for o in orders:
+        for rv in o.get("quality_reviews") or []:
+            if not (start <= (rv.get("at") or "") < end):
+                continue
+            rows.append({
+                "fecha": rv.get("at"), "orden": o.get("order_code"), "placa": o.get("plate"),
+                "vehiculo": f"{o.get('brand') or ''} {o.get('model') or ''}".strip(), "servicios": _services_text(o),
+                "tecnico": o.get("assigned_technician_name") or o.get("installed_by_name") or "Sin técnico",
+                "apoyo": o.get("assigned_technician_2_name"), "resultado": (rv.get("result") or "").capitalize(),
+                "calificacion": rv.get("rating"), "novedades": " | ".join(f"{f['label']}{': ' + f['note'] if f.get('note') else ''}" for f in rv.get("failed") or []),
+                "comentarios": rv.get("notes"), "revisor": rv.get("by_name"),
+            })
+    rows.sort(key=lambda r: r["fecha"] or "")
+    summary = summarize(rows, "tecnico", {"revisiones": "count", "aprobadas": "count:resultado=Aprobado",
+                                          "rechazadas": "count:resultado=Rechazado", "suma": "sum:calificacion"})
+    for r in summary:
+        rated = [x["calificacion"] for x in rows if x["tecnico"] == r["tecnico"] and x["calificacion"]]
+        r["promedio"] = round(sum(rated) / len(rated), 2) if rated else None
+        r["aprobacion"] = round(r["aprobadas"] / r["revisiones"] * 100, 1) if r["revisiones"] else 0
+    return [
+        {"title": "Por técnico", "columns": [_C("Técnico", "tecnico", w=26), _C("Revisiones", "revisiones", "int", 12),
+                                             _C("Aprobadas", "aprobadas", "int", 12), _C("Rechazadas", "rechazadas", "int", 12),
+                                             _C("% aprobación", "aprobacion", "number", 12), _C("Calificación promedio", "promedio", "number", 14)],
+         "rows": summary, "totals": ["revisiones", "aprobadas", "rechazadas"]},
+        {"title": "Revisiones", "subtitle": "Revisiones de calidad hechas en el periodo", "columns": [
+            _C("Fecha", "fecha", "datetime"), _C("Orden", "orden", w=12), _C("Placa", "placa", w=10), _C("Vehículo", "vehiculo", w=18),
+            _C("Servicios", "servicios", w=36), _C("Técnico", "tecnico", w=20), _C("Apoyo", "apoyo", w=20), _C("Resultado", "resultado", w=12),
+            _C("Calificación (1-5)", "calificacion", "int", 12), _C("Novedades", "novedades", w=40), _C("Comentarios", "comentarios", w=36),
+            _C("Revisó", "revisor", w=18)], "rows": rows},
+    ]
+
+
+async def _report_inventario(start: str, end: str) -> List[dict]:
+    items = await db.inventory.find({"active": {"$ne": False}}, {"_id": 0}).sort([("categoria", 1), ("nombre", 1)]).to_list(5000)
+    rows = []
+    for it in items:
+        rollo = it.get("tipo_articulo") == "rollo"
+        quedan = float(it.get("metros_restantes") or 0) if rollo else float(it.get("cantidad_restante") or 0)
+        inicial = float(it.get("metros_iniciales") or 0) if rollo else float(it.get("cantidad_inicial") or 0)
+        minimo = 5 if rollo else it.get("stock_minimo")
+        low = quedan <= 0 or (minimo is not None and quedan < float(minimo))
+        rows.append({
+            "codigo": it.get("codigo"), "nombre": it.get("nombre"), "categoria": (it.get("categoria") or "").capitalize(),
+            "tipo": "Rollo (metros)" if rollo else "Unidades", "referencia": it.get("tipo_rollo"),
+            "inicial": inicial, "quedan": quedan, "usado": max(inicial - quedan, 0),
+            "minimo": minimo, "alerta": ("Agotado" if quedan <= 0 else "Bajo") if low else "",
+            "stock_corte": ("En corte" if it.get("en_stock_corte") is not False else "En bodega") if rollo else "",
+            "sede": it.get("sede_nombre"), "costo": it.get("costo") or 0, "factura": it.get("factura_compra"), "ingreso": it.get("fecha_ingreso"),
+        })
+    names = {it["id"]: it for it in items}
+    moves = await db.inventory_movements.find({"created_at": {"$gte": start, "$lt": end}}, {"_id": 0}).sort("created_at", 1).to_list(10000)
+    move_rows = [{
+        "fecha": m.get("created_at"), "codigo": (names.get(m.get("inventory_item_id")) or {}).get("codigo"),
+        "nombre": (names.get(m.get("inventory_item_id")) or {}).get("nombre"), "tipo": m.get("type"),
+        "metros": m.get("metros"), "cantidad": m.get("cantidad"), "motivo": m.get("reason"), "usuario": m.get("user_name"),
+    } for m in moves]
+    by_cat = summarize(rows, "categoria", {"articulos": "count", "quedan": "sum:quedan", "usado": "sum:usado", "alertas": "count:alerta=Bajo"})
+    return [
+        {"title": "Existencias", "subtitle": "Lo que queda de cada artículo (a la fecha)", "columns": [
+            _C("Código", "codigo", w=12), _C("Artículo", "nombre", w=30), _C("Categoría", "categoria", w=14), _C("Tipo", "tipo", w=14),
+            _C("Referencia", "referencia", w=22), _C("Inicial", "inicial", "number", 11), _C("Quedan", "quedan", "number", 11),
+            _C("Usado", "usado", "number", 11), _C("Mínimo", "minimo", "number", 10), _C("Alerta", "alerta", w=10),
+            _C("Stock", "stock_corte", w=11), _C("Sede", "sede", w=14), _C("Costo", "costo", "money"),
+            _C("Factura compra", "factura", w=16), _C("Ingreso", "ingreso", "date", 12)], "rows": rows},
+        {"title": "Por categoría", "columns": [_C("Categoría", "categoria", w=18), _C("Artículos", "articulos", "int", 12),
+                                               _C("Quedan (m o und)", "quedan", "number", 16), _C("Usado", "usado", "number", 12),
+                                               _C("Con stock bajo", "alertas", "int", 14)], "rows": by_cat, "totals": ["articulos"]},
+        {"title": "Movimientos", "subtitle": "Descuentos y movimientos de inventario del periodo", "columns": [
+            _C("Fecha", "fecha", "datetime"), _C("Código", "codigo", w=12), _C("Artículo", "nombre", w=28), _C("Movimiento", "tipo", w=20),
+            _C("Metros", "metros", "number", 10), _C("Cantidad", "cantidad", "number", 10), _C("Motivo", "motivo", w=36),
+            _C("Usuario", "usuario", w=18)], "rows": move_rows, "totals": ["metros", "cantidad"]},
+    ]
+
+
+REPORT_BUILDERS = {
+    "liquidaciones": _report_liquidaciones, "servicios-diario": _report_servicios_diario, "pagos": _report_pagos,
+    "retenciones": _report_retenciones, "agendamiento": _report_agendamiento, "calidad": _report_calidad,
+    "inventario": _report_inventario,
+}
+
+
+@api_router.get("/reports")
+async def list_reports(current_user: dict = Depends(get_current_user)):
+    """Reportes que puede descargar el usuario."""
+    return [{"id": k, "title": v["title"]} for k, v in REPORTS.items()
+            if current_user["role"] in [r.value for r in v["roles"]]]
+
+
+@api_router.get("/reports/{report_id}.xlsx")
+async def download_report(report_id: str, date_from: Optional[str] = None, date_to: Optional[str] = None,
+                          current_user: dict = Depends(get_current_user)):
+    report = REPORTS.get(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    if current_user["role"] not in [r.value for r in report["roles"]]:
+        raise HTTPException(status_code=403, detail="No tienes acceso a este reporte")
+    today = datetime.now(timezone(timedelta(hours=-5))).strftime("%Y-%m-%d")
+    date_from, date_to = date_from or today, date_to or date_from or today
+    try:
+        start, end = range_bounds(date_from, date_to)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fechas inválidas (AAAA-MM-DD)")
+    if start >= end:
+        raise HTTPException(status_code=400, detail="La fecha inicial debe ser anterior a la final")
+    sheets = await REPORT_BUILDERS[report_id](start, end)
+    period = date_from if date_from == date_to else f"{date_from} a {date_to}"
+    data = await asyncio.to_thread(build_workbook, report["title"], period, sheets)
+    filename = f"reporte_{report_id}_{date_from}{'' if date_from == date_to else '_' + date_to}.xlsx"
+    return FastAPIResponse(content=data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @api_router.get("/orders-pending-invoice")
