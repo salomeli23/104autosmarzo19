@@ -424,6 +424,9 @@ class OrderResponse(BaseModel):
     checkin_by_id: Optional[str] = None
     checkin_by_name: Optional[str] = None
     signed_order_pdf_url: Optional[str] = None
+    # Última actualización de servicios/valores (botón "Actualizar orden")
+    last_updated_at: Optional[str] = None
+    last_updated_by_name: Optional[str] = None
     accessory_status: Optional[str] = None  # pendiente | despachado | entregado
     # Control de calidad y certificado de salida
     quality_required: Optional[bool] = None

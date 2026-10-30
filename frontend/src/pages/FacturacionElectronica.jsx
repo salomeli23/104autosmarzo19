@@ -9,12 +9,13 @@ import { Badge } from '../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { PlateBadge } from '../components/PlateBadge';
+import { OrderPreviewDialog } from '../components/OrderPreviewDialog';
 import { formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
 import {
     FileText, Mail, Loader2, User, Phone, CheckCircle2,
     Receipt, MapPin, Percent, IdCard, ShieldCheck, Search,
-    Download, MailPlus, Edit3, Tag, Lock, Plus, Trash2, Calendar, Power,
+    Download, MailPlus, Edit3, Tag, Lock, Plus, Trash2, Calendar, Power, Eye,
 } from 'lucide-react';
 
 const RETEICA_PRESETS = [6.9, 11.4];
@@ -44,6 +45,7 @@ export const FacturacionElectronica = () => {
     const [rNewCedula, setRNewCedula] = useState('');
     const [rNewRazonSocial, setRNewRazonSocial] = useState('');
     const [savingRet, setSavingRet] = useState(false);
+    const [previewOrderId, setPreviewOrderId] = useState(null);
 
     // Impuestos tab
     const [retentions, setRetentions] = useState([]);
@@ -819,6 +821,14 @@ export const FacturacionElectronica = () => {
                         )}
 
                         <Button
+                            variant="outline"
+                            onClick={() => setPreviewOrderId(retentionOrder.id)}
+                            className="w-full"
+                            data-testid="ret-preview-order-btn"
+                        >
+                            <Eye className="w-4 h-4 mr-2" /> Previsualizar orden
+                        </Button>
+                        <Button
                             onClick={submitRetention}
                             disabled={savingRet}
                             className="w-full brand-glow"
@@ -830,6 +840,13 @@ export const FacturacionElectronica = () => {
                     </div>
                 </DialogContent>
             </Dialog>
+            {previewOrderId && (
+                <OrderPreviewDialog
+                    orderId={previewOrderId}
+                    retention={preview && !rNoAplica ? { reteica: preview.reteica, retefuente: preview.retefuente } : null}
+                    onClose={() => setPreviewOrderId(null)}
+                />
+            )}
             {/* Email Edit Dialog */}
             <Dialog open={!!emailEdit} onOpenChange={(v) => !v && closeEmailEdit()}>
                 <DialogContent>
