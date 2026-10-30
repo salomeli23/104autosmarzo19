@@ -487,7 +487,7 @@ def build_invoice_html(order: dict, invoice_number: str, is_mock: bool = True) -
 
     ret_rows = ""
     if reteica > 0:
-        ret_rows += f"<div style='display:flex;justify-content:space-between;padding:6px 0;color:#f87171;font-size:12px;'><span>− Reteica {retention.get('reteica_rate')}%</span><span class='val-sm' style='color:#f87171;'>-{_fmt_money(reteica)}</span></div>"
+        ret_rows += f"<div style='display:flex;justify-content:space-between;padding:6px 0;color:#f87171;font-size:12px;'><span>− Reteica {retention.get('reteica_rate')}{'/1000' if retention.get('reteica_unit') == 'por_mil' else '%'}</span><span class='val-sm' style='color:#f87171;'>-{_fmt_money(reteica)}</span></div>"
     if retefuente > 0:
         ret_rows += f"<div style='display:flex;justify-content:space-between;padding:6px 0;color:#f87171;font-size:12px;'><span>− Retefuente {retention.get('retefuente_rate')}%</span><span class='val-sm' style='color:#f87171;'>-{_fmt_money(retefuente)}</span></div>"
 

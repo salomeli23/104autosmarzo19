@@ -191,11 +191,11 @@ class TestApplyRetentionNoBackendGate:
                           headers=admin_headers, timeout=30)
         assert r.status_code == 200, r.text
         j = r.json()["retention"]
-        assert j["retefuente_amount"] == round(400000.0 * 0.025, 2)  # 10000.0
+        assert j["retefuente_amount"] == int(int(400000.0 / 1.19 + 0.5) * 0.025 + 0.5)  # base sin IVA
         assert j["reteica_amount"] == 0
 
     def test_reteica_6_9(self, admin_headers, seeded, mongo_db):
-        """New preset 6.9% is accepted by backend (no whitelist)."""
+        """Preset 6,9/1000 (por mil) is accepted by backend (no whitelist)."""
         oid = seeded["pending"]
         r = requests.post(f"{BASE_URL}/api/orders/{oid}/apply-retention",
                           json={"city": "Bogotá", "apply_reteica": True, "reteica_rate": 6.9},
@@ -203,4 +203,4 @@ class TestApplyRetentionNoBackendGate:
         assert r.status_code == 200, r.text
         j = r.json()["retention"]
         assert j["reteica_rate"] == 6.9
-        assert j["reteica_amount"] == round(1000000.0 * 0.069, 2)
+        assert j["reteica_amount"] == int(int(1000000.0 / 1.19 + 0.5) * 6.9 / 1000 + 0.5)  # base sin IVA

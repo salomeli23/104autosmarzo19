@@ -109,8 +109,11 @@ class TestApplyRetentionBogota:
         r = requests.post(f"{BASE_URL}/api/orders/{oid}/apply-retention", json=payload, headers=admin_headers, timeout=30)
         assert r.status_code == 200, r.text
         j = r.json()["retention"]
-        assert j["reteica_amount"] == round(4521964.0 * 0.00966, 2)
-        assert j["retefuente_amount"] == round(4521964.0 * 0.025, 2)
+        # Base sin IVA; Reteica en por mil y Retefuente en %, redondeadas al peso
+        base = int(4521964.0 / 1.19 + 0.5)
+        assert j["retention_base"] == base
+        assert j["reteica_amount"] == int(base * 0.966 / 1000 + 0.5)
+        assert j["retefuente_amount"] == int(base * 0.025 + 0.5)
         assert j["total_retention"] == round(j["reteica_amount"] + j["retefuente_amount"], 2)
         assert j["city"] == "Bogotá"
 

@@ -98,7 +98,7 @@ export const OrderPreviewDialog = ({ orderId, retention, onClose }) => {
                         <Row label="Ajustes" value={formatCurrency(tax)} />
                     )}
                     <Row label="Total orden" value={formatCurrency(total)} className="font-bold border-t border-border pt-1" testId="order-preview-total" />
-                    {retention?.reteica > 0 && <Row label="− Reteica" value={`-${formatCurrency(retention.reteica)}`} className="text-red-400" />}
+                    {retention?.reteica > 0 && <Row label="− ICA (por mil)" value={`-${formatCurrency(retention.reteica)}`} className="text-red-400" />}
                     {retention?.retefuente > 0 && <Row label="− Retefuente" value={`-${formatCurrency(retention.retefuente)}`} className="text-red-400" />}
                     {ret > 0 && (
                         <Row label="Neto a pagar" value={formatCurrency(total - ret)} className="font-bold text-green-400 border-t border-border pt-1" testId="order-preview-net" />

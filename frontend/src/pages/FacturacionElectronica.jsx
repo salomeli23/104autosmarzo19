@@ -18,9 +18,12 @@ import {
     Download, MailPlus, Edit3, Tag, Lock, Plus, Trash2, Calendar, Power, Eye,
 } from 'lucide-react';
 
-const RETEICA_PRESETS = [6.9, 11.4];
+const RETEICA_PRESETS = [6.9, 11.4]; // por mil (‰): 6,9/1000
 const RETEFUENTE_RATE = 2.5;
-const RETEFUENTE_MIN_TOTAL = 524000; // Retefuente 2.5% solo si total > $524.000
+const RETEFUENTE_MIN_TOTAL = 524000; // Retefuente 2.5% solo si la base (sin IVA) > $524.000
+// Las retenciones se liquidan sobre la base gravable (antes de IVA)
+const retentionBase = (o) => o?.retention_base ?? o?.total ?? 0;
+const reteicaLabel = (r) => (r.reteica_unit === 'por_mil' ? `${r.reteica_rate}/1000` : `${r.reteica_rate}%`);
 
 export const FacturacionElectronica = () => {
     const navigate = useNavigate();
@@ -203,7 +206,7 @@ export const FacturacionElectronica = () => {
         setRNoAplica(false);
         setRApplyReteica(true);
         setRReteicaRate(String(RETEICA_PRESETS[0]));
-        setRApplyRetefuente(o.total > RETEFUENTE_MIN_TOTAL);
+        setRApplyRetefuente(retentionBase(o) > RETEFUENTE_MIN_TOTAL);
         setRRetefuenteRate(String(RETEFUENTE_RATE));
         setRUpdateIdentity(false);
         setRNewCedula(o.client_cedula || '');
@@ -216,11 +219,13 @@ export const FacturacionElectronica = () => {
 
     const computeRet = () => {
         const total = retentionOrder?.total || 0;
-        if (rNoAplica) return { reteica: 0, retefuente: 0, total_ret: 0, after: total };
-        const reteica = rApplyReteica ? total * ((parseFloat(rReteicaRate) || 0) / 100) : 0;
-        const retefuente = rApplyRetefuente ? total * ((parseFloat(rRetefuenteRate) || 0) / 100) : 0;
+        const base = retentionBase(retentionOrder);
+        const iva = total - base;
+        if (rNoAplica) return { base, iva, total, reteica: 0, retefuente: 0, total_ret: 0, after: total };
+        const reteica = rApplyReteica ? Math.round(base * (parseFloat(rReteicaRate) || 0) / 1000) : 0;
+        const retefuente = rApplyRetefuente ? Math.round(base * (parseFloat(rRetefuenteRate) || 0) / 100) : 0;
         const total_ret = reteica + retefuente;
-        return { reteica, retefuente, total_ret, after: total - total_ret };
+        return { base, iva, total, reteica, retefuente, total_ret, after: total - total_ret };
     };
 
     const submitRetention = async () => {
@@ -522,7 +527,7 @@ export const FacturacionElectronica = () => {
                                         </div>
                                         <div className="grid grid-cols-3 gap-3 text-right text-xs">
                                             <div>
-                                                <p className="text-[10px] text-muted-foreground">Reteica {r.reteica_rate ? `(${r.reteica_rate}%)` : ''}</p>
+                                                <p className="text-[10px] text-muted-foreground">Reteica {r.reteica_rate ? `(${reteicaLabel(r)})` : ''}</p>
                                                 <p className="font-mono text-cyan-400">{formatCurrency(r.reteica_amount || 0)}</p>
                                             </div>
                                             <div>
@@ -709,14 +714,14 @@ export const FacturacionElectronica = () => {
                                             className="w-4 h-4 accent-cyan-500"
                                             data-testid="ret-reteica-check"
                                         />
-                                        <span className="text-sm font-medium">Aplicar Reteica</span>
+                                        <span className="text-sm font-medium">Aplicar Reteica (ICA por mil)</span>
                                     </label>
                                     {rApplyReteica && (
                                         <div className="mt-2 flex gap-2 items-center flex-wrap">
-                                            <Percent className="w-3 h-3" />
+                                            <span className="text-xs text-muted-foreground">‰</span>
                                             <Input
                                                 type="number"
-                                                step="0.1"
+                                                step="0.01"
                                                 value={rReteicaRate}
                                                 onChange={(e) => setRReteicaRate(e.target.value)}
                                                 className="w-32"
@@ -732,20 +737,21 @@ export const FacturacionElectronica = () => {
                                                     className="h-7 text-xs"
                                                     data-testid={`ret-preset-reteica-${p}`}
                                                 >
-                                                    {p}%
+                                                    {p}/1000
                                                 </Button>
                                             ))}
                                         </div>
                                     )}
+                                    {rApplyReteica && <p className="text-[11px] text-muted-foreground mt-1">ICA por mil sobre la base sin IVA (ej.: 6,9/1000)</p>}
                                 </div>
 
-                                <div className={`p-3 rounded-lg border ${retentionOrder && retentionOrder.total > RETEFUENTE_MIN_TOTAL ? 'border-cyan-500/40 bg-cyan-500/5' : 'border-muted bg-muted/20 opacity-60'}`}>
+                                <div className={`p-3 rounded-lg border ${retentionOrder && retentionBase(retentionOrder) > RETEFUENTE_MIN_TOTAL ? 'border-cyan-500/40 bg-cyan-500/5' : 'border-muted bg-muted/20 opacity-60'}`}>
                                     <label className="flex items-center gap-2 cursor-pointer">
                                         <input
                                             type="checkbox"
                                             checked={rApplyRetefuente}
                                             onChange={(e) => setRApplyRetefuente(e.target.checked)}
-                                            disabled={!retentionOrder || retentionOrder.total <= RETEFUENTE_MIN_TOTAL}
+                                            disabled={!retentionOrder || retentionBase(retentionOrder) <= RETEFUENTE_MIN_TOTAL}
                                             className="w-4 h-4 accent-cyan-500"
                                             data-testid="ret-retefuente-check"
                                         />
@@ -772,9 +778,9 @@ export const FacturacionElectronica = () => {
                                             >2.5%</Button>
                                         </div>
                                     )}
-                                    {retentionOrder && retentionOrder.total <= RETEFUENTE_MIN_TOTAL && (
+                                    {retentionOrder && retentionBase(retentionOrder) <= RETEFUENTE_MIN_TOTAL && (
                                         <p className="text-[11px] text-amber-400 mt-1">
-                                            Retefuente 2.5% aplica solo cuando el total de la factura supera {formatCurrency(RETEFUENTE_MIN_TOTAL)}.
+                                            Retefuente 2.5% aplica solo cuando la base sin IVA supera {formatCurrency(RETEFUENTE_MIN_TOTAL)}.
                                         </p>
                                     )}
                                 </div>
@@ -813,10 +819,13 @@ export const FacturacionElectronica = () => {
                         {/* Preview */}
                         {preview && !rNoAplica && (
                             <div className="p-3 rounded-lg bg-muted/60 space-y-1 text-sm" data-testid="ret-preview">
-                                <div className="flex justify-between"><span>Subtotal orden</span><span className="font-mono">{formatCurrency(retentionOrder.total)}</span></div>
-                                {preview.reteica > 0 && <div className="flex justify-between text-red-400"><span>− Reteica</span><span className="font-mono">-{formatCurrency(preview.reteica)}</span></div>}
-                                {preview.retefuente > 0 && <div className="flex justify-between text-red-400"><span>− Retefuente</span><span className="font-mono">-{formatCurrency(preview.retefuente)}</span></div>}
-                                <div className="flex justify-between font-bold border-t border-border pt-1"><span>Neto a pagar</span><span className="font-mono text-green-400" data-testid="ret-preview-after">{formatCurrency(preview.after)}</span></div>
+                                <div className="flex justify-between"><span>Base (sin IVA)</span><span className="font-mono" data-testid="ret-preview-base">{formatCurrency(preview.base)}</span></div>
+                                {preview.iva > 0 && <div className="flex justify-between text-muted-foreground"><span>IVA 19%</span><span className="font-mono">{formatCurrency(preview.iva)}</span></div>}
+                                <div className="flex justify-between"><span>Subtotal</span><span className="font-mono">{formatCurrency(preview.total)}</span></div>
+                                {preview.retefuente > 0 && <div className="flex justify-between text-red-400"><span>− Retefuente {rRetefuenteRate}%</span><span className="font-mono" data-testid="ret-preview-retefuente">-{formatCurrency(preview.retefuente)}</span></div>}
+                                {preview.reteica > 0 && <div className="flex justify-between text-red-400"><span>− ICA {rReteicaRate}/1000</span><span className="font-mono" data-testid="ret-preview-reteica">-{formatCurrency(preview.reteica)}</span></div>}
+                                {preview.total_ret > 0 && <div className="flex justify-between text-red-400 font-medium"><span>Total retenciones practicadas</span><span className="font-mono">-{formatCurrency(preview.total_ret)}</span></div>}
+                                <div className="flex justify-between font-bold border-t border-border pt-1"><span>Valor a pagar cliente</span><span className="font-mono text-green-400" data-testid="ret-preview-after">{formatCurrency(preview.after)}</span></div>
                             </div>
                         )}
 

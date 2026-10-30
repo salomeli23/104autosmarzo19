@@ -908,6 +908,21 @@ def _match_service_route(order: dict, routes: List[dict]) -> Optional[dict]:
     matches.sort(key=lambda r: len(r.get("service_triggers") or []), reverse=True)
     return matches[0] if matches else None
 
+IVA_RATE = 0.19
+
+
+def _round_peso(value: float) -> int:
+    """Redondeo al peso (mitad hacia arriba), como en la liquidación de retenciones."""
+    return int(float(value) + 0.5)
+
+
+def _retention_base(order: dict) -> Dict[str, float]:
+    """Las retenciones se liquidan sobre la base gravable (valor antes de IVA), no sobre el total."""
+    total = float(order.get("final_value") or order.get("negotiated_value") or 0)
+    base = _round_peso(total / (1 + IVA_RATE)) if order.get("requires_invoice") else total
+    return {"base": base, "iva": round(total - base, 2), "total": total}
+
+
 def _order_retention(order: dict) -> float:
     """Valor retenido por el cliente (Reteica + Retefuente): se descuenta de lo que debe pagar."""
     snap = order.get("retention_snapshot") or {}
@@ -5498,6 +5513,7 @@ async def orders_pending_invoice(
             "invoice_sent_at": o.get("invoice_sent_at"),
             "retention_applied": bool(o.get("retention_applied")),
             "retention_snapshot": o.get("retention_snapshot"),
+            "retention_base": _retention_base(o)["base"],
             **b,
         })
     return out
@@ -5506,9 +5522,9 @@ async def orders_pending_invoice(
 class ApplyRetention(BaseModel):
     city: Optional[str] = None
     apply_reteica: bool = False
-    reteica_rate: Optional[float] = None  # % ej: 0.966
+    reteica_rate: Optional[float] = None  # por mil (‰) ej: 6.9 → 6,9/1000
     apply_retefuente: bool = False
-    retefuente_rate: Optional[float] = None  # % ej: 2.5 o 6.9
+    retefuente_rate: Optional[float] = None  # % ej: 2.5
     update_identity: bool = False
     new_cedula: Optional[str] = None
     new_razon_social: Optional[str] = None
@@ -5527,19 +5543,20 @@ async def apply_retention(
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
 
-    total = float(order.get("final_value") or order.get("negotiated_value") or 0)
-    reteica_amt = 0.0
-    retefuente_amt = 0.0
+    amounts = _retention_base(order)
+    total, base = amounts["total"], amounts["base"]
+    reteica_amt = 0
+    retefuente_amt = 0
 
     if not data.no_aplica:
         if data.apply_reteica:
             if data.reteica_rate is None or data.reteica_rate < 0:
                 raise HTTPException(status_code=400, detail="Tasa de Reteica inválida")
-            reteica_amt = round(total * (data.reteica_rate / 100.0), 2)
+            reteica_amt = _round_peso(base * data.reteica_rate / 1000.0)
         if data.apply_retefuente:
             if data.retefuente_rate is None or data.retefuente_rate < 0:
                 raise HTTPException(status_code=400, detail="Tasa de Retefuente inválida")
-            retefuente_amt = round(total * (data.retefuente_rate / 100.0), 2)
+            retefuente_amt = _round_peso(base * data.retefuente_rate / 100.0)
 
     total_ret = round(reteica_amt + retefuente_amt, 2)
     now = datetime.now(timezone.utc).isoformat()
@@ -5555,11 +5572,14 @@ async def apply_retention(
         "no_aplica": bool(data.no_aplica),
         "reteica_applied": bool(data.apply_reteica) and not data.no_aplica,
         "reteica_rate": data.reteica_rate,
+        "reteica_unit": "por_mil",
         "reteica_amount": reteica_amt,
         "retefuente_applied": bool(data.apply_retefuente) and not data.no_aplica,
         "retefuente_rate": data.retefuente_rate,
         "retefuente_amount": retefuente_amt,
         "total_retention": total_ret,
+        "retention_base": base,
+        "iva": amounts["iva"],
         "order_total_before": total,
         "order_total_after": round(total - total_ret, 2),
         "identity_updated": bool(data.update_identity),
@@ -5581,10 +5601,12 @@ async def apply_retention(
             "no_aplica": bool(data.no_aplica),
             "city": data.city,
             "reteica_rate": data.reteica_rate if data.apply_reteica and not data.no_aplica else None,
+            "reteica_unit": "por_mil",
             "reteica_amount": reteica_amt,
             "retefuente_rate": data.retefuente_rate if data.apply_retefuente and not data.no_aplica else None,
             "retefuente_amount": retefuente_amt,
             "total_retention": total_ret,
+            "retention_base": base,
         },
         "retention_applied_at": now,
         "retention_applied_by": current_user["name"],
