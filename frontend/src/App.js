@@ -227,7 +227,7 @@ function AppRoutes() {
             <Route 
                 path="/facturacion-electronica" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'asesor']}>
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'asesor', 'coordinador']}>
                         <FacturacionElectronica />
                     </ProtectedRoute>
                 } 

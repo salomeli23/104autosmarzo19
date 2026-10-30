@@ -905,9 +905,15 @@ def _match_service_route(order: dict, routes: List[dict]) -> Optional[dict]:
     matches.sort(key=lambda r: len(r.get("service_triggers") or []), reverse=True)
     return matches[0] if matches else None
 
+def _order_retention(order: dict) -> float:
+    """Valor retenido por el cliente (Reteica + Retefuente): se descuenta de lo que debe pagar."""
+    snap = order.get("retention_snapshot") or {}
+    return float(snap.get("total_retention") or 0) if order.get("retention_applied") else 0.0
+
+
 def _payment_status(order: dict) -> str:
     """Devuelve 'paid' | 'partial' | 'pending' desde datos de facturación."""
-    total = float(order.get("final_value") or order.get("negotiated_value") or 0)
+    total = float(order.get("final_value") or order.get("negotiated_value") or 0) - _order_retention(order)
     paid = float(order.get("amount_paid") or 0)
     if total <= 0:
         return "pending"
@@ -4482,7 +4488,9 @@ class PaymentRegister(BaseModel):
 def _order_balance(order: dict) -> Dict[str, float]:
     total = float(order.get("final_value") or order.get("negotiated_value") or 0)
     paid = float(order.get("amount_paid") or 0)
-    return {"total": round(total, 2), "paid": round(paid, 2), "balance": round(max(total - paid, 0), 2)}
+    retention = _order_retention(order)
+    return {"total": round(total, 2), "paid": round(paid, 2), "retention": round(retention, 2),
+            "balance": round(max(total - retention - paid, 0), 2)}
 
 
 async def _send_email_with_attachments(
@@ -4536,6 +4544,13 @@ async def register_payment(
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
 
+    if order.get("requires_invoice") and not order.get("retention_applied"):
+        raise HTTPException(
+            status_code=409,
+            detail="El cliente solicitó factura: registra primero la retención (o márcala como 'no aplica') "
+                   "en Clientes por facturar y después el abono.",
+        )
+
     bal_before = _order_balance(order)
     if data.amount > bal_before["balance"] + 0.01:
         raise HTTPException(
@@ -4563,7 +4578,7 @@ async def register_payment(
 
     new_paid = round(bal_before["paid"] + float(data.amount), 2)
     total = bal_before["total"]
-    new_balance = round(max(total - new_paid, 0), 2)
+    new_balance = round(max(total - bal_before["retention"] - new_paid, 0), 2)
     update = {
         "amount_paid": new_paid,
         "last_payment_at": payment_doc["created_at"],
@@ -4692,6 +4707,8 @@ async def orders_with_balance(
             "ingreso_at": o.get("ingreso_at"),
             "payment_method": o.get("payment_method"),
             "requires_invoice": bool(o.get("requires_invoice")),
+            "retention_applied": bool(o.get("retention_applied")),
+            "retention_snapshot": o.get("retention_snapshot"),
             "profile_photo_url": o.get("profile_photo_url"),
             **b,
         })
@@ -5453,7 +5470,7 @@ async def pay_technician_charge(charge_id: str, data: TechnicianChargePay,
 @api_router.get("/orders-pending-invoice")
 async def orders_pending_invoice(
     include_sent: bool = False,
-    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR])),
 ):
     """Clientes que solicitaron factura electrónica. Por defecto solo pendientes; con include_sent=true incluye las ya enviadas."""
     query = {"requires_invoice": True}
@@ -5499,7 +5516,7 @@ class ApplyRetention(BaseModel):
 async def apply_retention(
     order_id: str,
     data: ApplyRetention,
-    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR])),
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR])),
 ):
     """Aplica retenciones (Reteica/Retefuente) sobre la orden y opcionalmente actualiza
     cédula/razón social. Requerido antes de enviar la factura electrónica."""

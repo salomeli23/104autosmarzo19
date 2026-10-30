@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { paymentsAPI, discountCodesAPI } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -21,6 +22,10 @@ const RETEFUENTE_RATE = 2.5;
 const RETEFUENTE_MIN_TOTAL = 524000; // Retefuente 2.5% solo si total > $524.000
 
 export const FacturacionElectronica = () => {
+    const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    // Viene de Pagos: registrar la retención de esta orden y luego volver a registrar el abono
+    const [fromPayment, setFromPayment] = useState(searchParams.get('retencion'));
     const [tab, setTab] = useState('pendientes');
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -82,6 +87,20 @@ export const FacturacionElectronica = () => {
     }, [retQ]);
 
     useEffect(() => { load(); }, [load]);
+
+    useEffect(() => {
+        const id = searchParams.get('retencion');
+        if (!id || loading) return;
+        const o = orders.find(x => x.id === id);
+        setSearchParams({}, { replace: true });
+        if (o) {
+            setTab('pendientes');
+            openRetention(o);
+        } else {
+            setFromPayment(null);
+            toast.error('No se encontró la orden en Clientes por facturar');
+        }
+    }, [orders, loading]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => { if (tab === 'impuestos') loadRetentions(); }, [tab, loadRetentions]);
 
     // ====== Discount codes: funciones ======
@@ -216,8 +235,14 @@ export const FacturacionElectronica = () => {
                 new_razon_social: rUpdateIdentity ? (rNewRazonSocial || null) : null,
                 no_aplica: rNoAplica,
             });
-            toast.success(rNoAplica ? 'Marcado como sin retención' : 'Retención aplicada');
+            const orderId = retentionOrder.id;
             closeRetention();
+            if (fromPayment === orderId) {
+                toast.success(`${rNoAplica ? 'Marcado como sin retención' : 'Retención aplicada'} · ahora registra el abono`);
+                navigate(`/pagos?abono=${orderId}`);
+                return;
+            }
+            toast.success(rNoAplica ? 'Marcado como sin retención' : 'Retención aplicada');
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || 'Error al aplicar retención');

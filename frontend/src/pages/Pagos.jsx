@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { paymentsAPI } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -12,7 +13,7 @@ import { PlateBadge } from '../components/PlateBadge';
 import { CarAvatar } from '../components/CarAvatar';
 import { formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
-import { DollarSign, Search, Wallet, Receipt, User, Phone, Filter, Loader2, Mail } from 'lucide-react';
+import { DollarSign, Search, Wallet, Receipt, User, Phone, Filter, Loader2, Mail, ShieldCheck, ShieldAlert, ShieldOff, ArrowRight } from 'lucide-react';
 
 const METHODS = [
     { v: 'efectivo', l: 'Efectivo' },
@@ -23,7 +24,93 @@ const METHODS = [
     { v: 'otro', l: 'Otro' },
 ];
 
+const needsRetention = (o) => o?.requires_invoice && !o.retention_applied;
+
+/**
+ * El cliente pidió factura y aún no se registra la retención: se pregunta 2 veces.
+ * Si aplica → Clientes por facturar para registrarla primero. Si no aplica → se marca "sin retención" y sigue el abono.
+ */
+const RetentionCheckDialog = ({ order, onClose, onNoRetention, onApply }) => {
+    const [answer, setAnswer] = useState(null); // null (1ª pregunta) | 'aplica' | 'no_aplica'
+    const [saving, setSaving] = useState(false);
+
+    const confirmNo = async () => {
+        setSaving(true);
+        try {
+            await onNoRetention(order);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <Dialog open onOpenChange={(v) => !v && !saving && onClose()}>
+            <DialogContent data-testid="retention-check-dialog">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                        <ShieldAlert className="w-5 h-5 text-amber-400" />
+                        {answer ? 'Confirma otra vez' : 'El cliente solicitó factura'}
+                    </DialogTitle>
+                    <DialogDescription asChild>
+                        <div className="pt-1 flex items-center gap-2 flex-wrap">
+                            <PlateBadge plate={order.plate} size="md" />
+                            <span className="text-sm">{order.client_name} · Total: <b>{formatCurrency(order.total)}</b></span>
+                        </div>
+                    </DialogDescription>
+                </DialogHeader>
+                {!answer && (
+                    <div className="space-y-4" data-testid="retention-step-1">
+                        <p className="text-sm">
+                            Antes de registrar el abono: <b>¿a este cliente se le aplica retención</b> (Reteica / Retefuente)?
+                        </p>
+                        <div className="grid sm:grid-cols-2 gap-2">
+                            <Button variant="outline" onClick={() => setAnswer('no_aplica')} data-testid="retention-no-btn">
+                                <ShieldOff className="w-4 h-4 mr-2" /> No aplica retención
+                            </Button>
+                            <Button onClick={() => setAnswer('aplica')} data-testid="retention-yes-btn">
+                                <ShieldCheck className="w-4 h-4 mr-2" /> Sí, aplicar retención
+                            </Button>
+                        </div>
+                    </div>
+                )}
+                {answer === 'aplica' && (
+                    <div className="space-y-4" data-testid="retention-step-2-aplica">
+                        <p className="text-sm">
+                            ¿Seguro que <b>sí se aplica retención</b>? Primero debes registrarla en <b>Clientes por facturar</b>;
+                            al guardarla vuelves aquí para registrar el abono por el saldo con la retención descontada.
+                        </p>
+                        <div className="grid sm:grid-cols-2 gap-2">
+                            <Button variant="outline" onClick={() => setAnswer(null)} data-testid="retention-back-btn">Volver</Button>
+                            <Button onClick={() => onApply(order)} data-testid="retention-go-btn">
+                                Registrar la retención <ArrowRight className="w-4 h-4 ml-2" />
+                            </Button>
+                        </div>
+                    </div>
+                )}
+                {answer === 'no_aplica' && (
+                    <div className="space-y-4" data-testid="retention-step-2-no">
+                        <p className="text-sm">
+                            ¿Seguro que <b>no se aplica retención</b>? La factura quedará marcada como &quot;sin retención&quot;
+                            y el abono se registra por el valor completo.
+                        </p>
+                        <div className="grid sm:grid-cols-2 gap-2">
+                            <Button variant="outline" onClick={() => setAnswer(null)} disabled={saving} data-testid="retention-back-btn">Volver</Button>
+                            <Button onClick={confirmNo} disabled={saving} data-testid="retention-confirm-no-btn">
+                                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldOff className="w-4 h-4 mr-2" />}
+                                Sí, no aplica · registrar abono
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </DialogContent>
+        </Dialog>
+    );
+};
+
 export const Pagos = () => {
+    const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const [retentionCheck, setRetentionCheck] = useState(null);
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [q, setQ] = useState('');
@@ -65,6 +152,10 @@ export const Pagos = () => {
     }, [fetchOrders, fetchHistory]);
 
     const openRegister = (o) => {
+        if (needsRetention(o)) {
+            setRetentionCheck(o);
+            return;
+        }
         setSelected(o);
         setAmount(String(o.balance || ''));
         setMethod(o.payment_method || 'efectivo');
@@ -73,6 +164,34 @@ export const Pagos = () => {
     };
 
     const closeRegister = () => setSelected(null);
+
+    const markNoRetention = async (o) => {
+        try {
+            await paymentsAPI.applyRetention(o.id, { no_aplica: true });
+            toast.success('Factura marcada sin retención');
+            setRetentionCheck(null);
+            const res = await paymentsAPI.ordersWithBalance({ q: o.plate });
+            const fresh = res.data.find(x => x.id === o.id);
+            fetchOrders();
+            if (fresh) openRegister(fresh);
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'No se pudo registrar que no aplica retención');
+        }
+    };
+
+    const goApplyRetention = (o) => {
+        setRetentionCheck(null);
+        navigate(`/facturacion-electronica?retencion=${o.id}`);
+    };
+
+    // Vuelve de Clientes por facturar con la retención registrada: abrir el abono de esa orden
+    useEffect(() => {
+        const id = searchParams.get('abono');
+        if (!id || loading) return;
+        setSearchParams({}, { replace: true });
+        const o = orders.find(x => x.id === id);
+        if (o && o.balance > 0) openRegister(o);
+    }, [orders, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const submitPayment = async () => {
         const amt = parseFloat(amount);
@@ -180,6 +299,16 @@ export const Pagos = () => {
                                                 {o.requires_invoice && (
                                                     <Badge className="bg-purple-500/20 text-purple-500 border-purple-500/40">Factura E.</Badge>
                                                 )}
+                                                {needsRetention(o) && (
+                                                    <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/40" data-testid={`retention-pending-${o.id}`}>
+                                                        <ShieldAlert className="w-3 h-3 mr-1" /> Retención por definir
+                                                    </Badge>
+                                                )}
+                                                {o.retention > 0 && (
+                                                    <Badge className="bg-cyan-500/15 text-cyan-400 border-cyan-500/40" data-testid={`retention-badge-${o.id}`}>
+                                                        <ShieldCheck className="w-3 h-3 mr-1" /> Retención {formatCurrency(o.retention)}
+                                                    </Badge>
+                                                )}
                                             </div>
                                             <p className="text-sm mt-1 truncate">{o.brand} {o.model}</p>
                                             <p className="text-xs text-muted-foreground flex items-center gap-1 truncate">
@@ -187,7 +316,7 @@ export const Pagos = () => {
                                             </p>
                                         </div>
                                     </div>
-                                    <div className="grid grid-cols-3 gap-2 text-right text-sm">
+                                    <div className="grid grid-cols-3 gap-2 text-right text-sm" title={o.retention > 0 ? `Saldo = total − retención (${formatCurrency(o.retention)}) − abonado` : undefined}>
                                         <div>
                                             <p className="text-[10px] uppercase text-muted-foreground">Total</p>
                                             <p className="font-mono">{formatCurrency(o.total)}</p>
@@ -245,6 +374,16 @@ export const Pagos = () => {
                 )
             )}
 
+            {retentionCheck && (
+                <RetentionCheckDialog
+                    key={retentionCheck.id}
+                    order={retentionCheck}
+                    onClose={() => setRetentionCheck(null)}
+                    onNoRetention={markNoRetention}
+                    onApply={goApplyRetention}
+                />
+            )}
+
             {/* Register payment dialog */}
             <Dialog open={!!selected} onOpenChange={(v) => !v && closeRegister()}>
                 <DialogContent>
@@ -254,7 +393,10 @@ export const Pagos = () => {
                             {selected ? (
                                 <div className="pt-1 flex items-center gap-2 flex-wrap">
                                     <PlateBadge plate={selected.plate} size="md" />
-                                    <span className="text-sm">{selected.client_name} · Saldo: <b className="text-red-500">{formatCurrency(selected.balance)}</b></span>
+                                    <span className="text-sm">
+                                        {selected.client_name} · Saldo: <b className="text-red-500">{formatCurrency(selected.balance)}</b>
+                                        {selected.retention > 0 && <> · <span className="text-cyan-400">retención {formatCurrency(selected.retention)} descontada</span></>}
+                                    </span>
                                 </div>
                             ) : <span />}
                         </DialogDescription>

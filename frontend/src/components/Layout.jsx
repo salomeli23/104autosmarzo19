@@ -56,7 +56,7 @@ const navItems = [
     { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
     { path: '/billing', label: 'Facturación', icon: CreditCard, roles: ['admin', 'facturacion'] },
     { path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'asesor', 'facturacion', 'coordinador'] },
-    { path: '/facturacion-electronica', label: 'Clientes por Facturar', icon: FileSignature, roles: ['admin', 'facturacion', 'asesor'] },
+    { path: '/facturacion-electronica', label: 'Clientes por Facturar', icon: FileSignature, roles: ['admin', 'facturacion', 'asesor', 'coordinador'] },
     { path: '/calidad', label: 'Control de Calidad', icon: BadgeCheck, roles: ['admin', 'calidad', 'coordinador'] },
     { path: '/liquidaciones', label: 'Liquidaciones', icon: HandCoins, roles: ['admin', 'liquidaciones'] },
     { path: '/autos-salida', label: 'Listo para Entrega', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador', 'calidad', 'seguridad'] },

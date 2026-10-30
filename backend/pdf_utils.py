@@ -119,13 +119,21 @@ def _services_table(services):
     return tbl
 
 
-def _totals_table(total, paid, balance, payment_method=None, requires_invoice=False):
+def _retention(order: dict) -> float:
+    """Reteica + Retefuente que retiene el cliente: no la paga."""
+    snap = order.get("retention_snapshot") or {}
+    return float(snap.get("total_retention") or 0) if order.get("retention_applied") else 0.0
+
+
+def _totals_table(total, paid, balance, payment_method=None, requires_invoice=False, retention=0.0):
     rows = [
         ["Total", _fmt_money(total)],
         ["Método de pago", (payment_method or "-").capitalize()],
     ]
     if requires_invoice:
         rows.append(["Factura electrónica", "Solicitada (+IVA 19%)"])
+    if retention:
+        rows.append(["Retenciones", f"-{_fmt_money(retention)}"])
     rows += [
         ["Abonos", _fmt_money(paid)],
         ["Saldo pendiente", _fmt_money(balance)],
@@ -170,7 +178,8 @@ def build_ingreso_receipt(order: dict) -> bytes:
 
     total = float(order.get("final_value") or order.get("negotiated_value") or 0)
     paid = float(order.get("amount_paid") or 0)
-    balance = max(total - paid, 0)
+    retention = _retention(order)
+    balance = max(total - retention - paid, 0)
 
     story.append(_kv_table([
         ["Cliente", order.get("client_name") or "-"],
@@ -190,6 +199,7 @@ def build_ingreso_receipt(order: dict) -> bytes:
         total, paid, balance,
         payment_method=order.get("payment_method"),
         requires_invoice=bool(order.get("requires_invoice")),
+        retention=retention,
     ))
     story.append(Spacer(1, 0.6 * cm))
 
@@ -242,7 +252,8 @@ def build_payment_statement(order: dict, payments: List[dict]) -> bytes:
 
     total = float(order.get("final_value") or order.get("negotiated_value") or 0)
     paid = float(order.get("amount_paid") or 0)
-    balance = max(total - paid, 0)
+    retention = _retention(order)
+    balance = max(total - retention - paid, 0)
 
     story.append(_kv_table([
         ["Cliente", order.get("client_name") or "-"],
@@ -274,7 +285,7 @@ def build_payment_statement(order: dict, payments: List[dict]) -> bytes:
         story.append(tbl)
         story.append(Spacer(1, 0.4 * cm))
 
-    story.append(_totals_table(total, paid, balance, payment_method=order.get("payment_method")))
+    story.append(_totals_table(total, paid, balance, payment_method=order.get("payment_method"), retention=retention))
     story.append(Spacer(1, 0.6 * cm))
 
     if balance <= 0:
@@ -423,7 +434,9 @@ def build_exit_certificate(order: dict) -> bytes:
     total = float(order.get("final_value") or order.get("negotiated_value") or 0)
     paid = float(order.get("amount_paid") or 0)
     story.append(Paragraph("<b>Pago</b>", styles["Heading4"]))
-    story.append(_totals_table(total, paid, max(total - paid, 0), payment_method=order.get("payment_method")))
+    retention = _retention(order)
+    story.append(_totals_table(total, paid, max(total - retention - paid, 0),
+                               payment_method=order.get("payment_method"), retention=retention))
     story.append(Spacer(1, 0.25 * cm))
 
     story.append(Spacer(1, 0.9 * cm))
