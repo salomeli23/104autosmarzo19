@@ -27,6 +27,7 @@ import { AutosSalida } from './pages/AutosSalida';
 import { Accesorios } from './pages/Accesorios';
 import { Calidad } from './pages/Calidad';
 import { Liquidaciones } from './pages/Liquidaciones';
+import { Retenciones } from './pages/Retenciones';
 import './App.css';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -229,6 +230,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'facturacion', 'asesor', 'coordinador']}>
                         <FacturacionElectronica />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/retenciones" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'asesor', 'coordinador']}>
+                        <Retenciones />
                     </ProtectedRoute>
                 } 
             />

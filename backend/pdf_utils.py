@@ -453,3 +453,108 @@ def build_exit_certificate(order: dict) -> bytes:
 
     doc.build(story)
     return buf.getvalue()
+
+
+def build_retention_certificate(ret: dict, order: dict) -> bytes:
+    """Certificado de retención: Retefuente e ICA que el cliente practicó sobre la factura del servicio."""
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=LETTER,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+        topMargin=1.2 * cm, bottomMargin=1.2 * cm,
+    )
+    styles = getSampleStyleSheet()
+    story = []
+    _header(story, "Certificado de Retención",
+            f"N.º {ret.get('certificate_number', '-')} · Emitido {_fmt_dt(ret.get('certificate_issued_at'))} · "
+            f"Orden {ret.get('order_code') or order.get('order_code', '')}")
+
+    story.append(Paragraph("<b>Datos del cliente (agente retenedor)</b>", styles["Heading4"]))
+    story.append(_kv_table([
+        ["Nombre", order.get("client_name") or ret.get("client_name") or "-"],
+        ["Razón social", order.get("client_razon_social") or "-"],
+        ["NIT / Cédula", order.get("client_cedula") or ret.get("client_cedula") or "-"],
+        ["Ciudad", ret.get("city") or "-"],
+        ["Correo", order.get("client_email") or "-"],
+    ]))
+    story.append(Spacer(1, 0.2 * cm))
+
+    story.append(Paragraph("<b>Vehículo y servicio</b>", styles["Heading4"]))
+    story.append(_kv_table([
+        ["Placa", (ret.get("plate") or order.get("plate") or "").upper()],
+        ["Vehículo", f"{order.get('brand', '')} {order.get('model', '')} {order.get('color') or ''}".strip() or "-"],
+        ["Servicios", ", ".join(s.get("description") or s.get("service") or "-"
+                                for s in (order.get("services") or []) if isinstance(s, dict)) or "-"],
+        ["Factura electrónica", order.get("invoice_number") or "Pendiente de envío"],
+        ["Retención aplicada", f"{_fmt_dt(ret.get('applied_at'))} · por {ret.get('applied_by_name') or '-'}"],
+    ]))
+    story.append(Spacer(1, 0.3 * cm))
+
+    total = float(ret.get("order_total_before") or 0)
+    base = ret.get("retention_base")
+    por_mil = ret.get("reteica_unit") == "por_mil"
+    if base is None:  # retenciones anteriores a la liquidación sobre la base sin IVA
+        base = total
+    base = float(base)
+    story.append(Paragraph("<b>Liquidación de la retención</b>", styles["Heading4"]))
+    data = [["Concepto", "Base", "Tarifa", "Valor retenido"]]
+    if ret.get("retefuente_applied"):
+        data.append(["Retención en la fuente", _fmt_money(base), f"{ret.get('retefuente_rate')}%",
+                     _fmt_money(ret.get("retefuente_amount"))])
+    if ret.get("reteica_applied"):
+        data.append(["Retención de ICA (Reteica)", _fmt_money(base),
+                     f"{ret.get('reteica_rate')}/1000" if por_mil else f"{ret.get('reteica_rate')}%",
+                     _fmt_money(ret.get("reteica_amount"))])
+    data.append(["Total retenciones practicadas", "", "", _fmt_money(ret.get("total_retention"))])
+    tbl = Table(data, colWidths=[7 * cm, 3.5 * cm, 3 * cm, 3.5 * cm])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), BRAND_COLOR),
+        ("TEXTCOLOR", (0, 0), (-1, 0), DARK_COLOR),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 0.3 * cm))
+
+    iva = total - base if total > base else 0
+    rows = [["Base (sin IVA)", _fmt_money(base)]]
+    if iva:
+        rows.append(["IVA 19%", _fmt_money(iva)])
+    rows += [
+        ["Subtotal factura", _fmt_money(total)],
+        ["Menos total retenciones", f"-{_fmt_money(ret.get('total_retention'))}"],
+        ["Valor a pagar cliente", _fmt_money(ret.get("order_total_after"))],
+    ]
+    totals = Table(rows, colWidths=[5 * cm, 4 * cm])
+    totals.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("TEXTCOLOR", (0, 0), (0, -1), MUTED_COLOR),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, DARK_COLOR),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+    ]))
+    story.append(totals)
+    if base == total and not por_mil:
+        story.append(Spacer(1, 0.2 * cm))
+        story.append(Paragraph("<i>Retención registrada antes de la liquidación sobre la base sin IVA.</i>", styles["Italic"]))
+
+    story.append(Spacer(1, 1.4 * cm))
+    sig = Table([["_______________________", "_______________________"],
+                 ["Facturación PolarizadosYA!", "Cliente / Agente retenedor"]],
+                colWidths=[8.5 * cm] * 2)
+    sig.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TEXTCOLOR", (0, 1), (-1, 1), MUTED_COLOR),
+    ]))
+    story.append(sig)
+
+    doc.build(story)
+    return buf.getvalue()

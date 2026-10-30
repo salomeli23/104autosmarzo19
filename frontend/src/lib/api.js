@@ -337,6 +337,8 @@ export const paymentsAPI = {
     reschedule: (orderId, data) => api.post(`/orders/${orderId}/reschedule`, data),
     applyRetention: (orderId, data) => api.post(`/orders/${orderId}/apply-retention`, data),
     listRetentions: (q) => api.get('/retentions', { params: q ? { q } : {} }),
+    retentionsRegistry: (q) => api.get('/retentions/registry', { params: q ? { q } : {} }),
+    retentionCertificate: (retentionId) => api.get(`/retentions/${retentionId}/certificate.pdf`, { responseType: 'blob' }),
     sendIngresoReceipt: (orderId) => api.post(`/orders/${orderId}/send-ingreso-receipt`),
     seedTestOrders: () => api.post('/seed/test-orders'),
 };

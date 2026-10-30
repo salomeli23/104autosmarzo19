@@ -24,7 +24,7 @@ from io import BytesIO
 import asyncio
 import resend
 import re
-from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate
+from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate, build_retention_certificate
 from cutting_catalog import (CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, CUTTING_REFERENCE_GROUPS,
                              DEFAULT_ROLL_METERS, lookup_car_average)
 from email_templates import (
@@ -5665,6 +5665,93 @@ async def list_retentions(
             "total_retention": round(total_reteica + total_retefuente, 2),
         },
     }
+
+
+RETENTION_ROLES = [UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR]
+
+
+@api_router.get("/retentions/registry")
+async def retentions_registry(
+    q: Optional[str] = None,
+    current_user: dict = Depends(require_roles(RETENTION_ROLES)),
+):
+    """Sección Retenciones: la retención vigente de cada orden (la última aplicada), con datos del cliente y del auto."""
+    filt: Dict[str, Any] = {}
+    if q:
+        rx = re.compile(re.escape(q), re.IGNORECASE)
+        filt["$or"] = [{"plate": rx}, {"client_cedula": rx}, {"client_name": rx},
+                       {"order_code": rx}, {"city": rx}, {"certificate_number": rx}]
+    items = await db.retentions.find(filt, {"_id": 0}).sort("applied_at", -1).to_list(2000)
+    current: Dict[str, dict] = {}
+    for r in items:
+        if r["order_id"] in current:
+            current[r["order_id"]]["times_modified"] += 1
+        else:
+            current[r["order_id"]] = {**r, "times_modified": 0}
+    orders = await db.orders.find(
+        {"id": {"$in": list(current)}},
+        {"_id": 0, "id": 1, "brand": 1, "model": 1, "color": 1, "client_name": 1, "client_cedula": 1,
+         "client_razon_social": 1, "client_email": 1, "invoice_number": 1, "retention_snapshot": 1, "requires_invoice": 1,
+         "final_value": 1, "negotiated_value": 1},
+    ).to_list(2000)
+    by_id = {o["id"]: o for o in orders}
+    out = []
+    for oid, r in current.items():
+        o = by_id.get(oid) or {}
+        base = r.get("retention_base")
+        if base is None:  # retenciones anteriores a la liquidación sobre la base sin IVA
+            base = r.get("order_total_before") or 0
+        out.append({
+            **r,
+            "retention_base": base,
+            "brand": o.get("brand"), "model": o.get("model"), "color": o.get("color"),
+            # Datos actuales del cliente (pudieron cambiar con "Cambiar NIT/Cédula")
+            "client_name": o.get("client_name") or r.get("client_name"),
+            "client_cedula": o.get("client_cedula") or r.get("client_cedula"),
+            "client_razon_social": o.get("client_razon_social"),
+            "client_email": o.get("client_email"),
+            "invoice_number": o.get("invoice_number"),
+        })
+    with_ret = [r for r in out if not r.get("no_aplica")]
+    return {
+        "items": out,
+        "summary": {
+            "orders": len(out),
+            "with_retention": len(with_ret),
+            "clients": len({(r.get("client_cedula") or r.get("client_name") or "").strip().lower() for r in out}),
+            "total_reteica": round(sum(float(r.get("reteica_amount") or 0) for r in with_ret), 2),
+            "total_retefuente": round(sum(float(r.get("retefuente_amount") or 0) for r in with_ret), 2),
+            "total_retention": round(sum(float(r.get("total_retention") or 0) for r in with_ret), 2),
+        },
+    }
+
+
+@api_router.get("/retentions/{retention_id}/certificate.pdf")
+async def retention_certificate_pdf(retention_id: str, current_user: dict = Depends(require_roles(RETENTION_ROLES))):
+    """Certificado de retención en PDF. El número (CR-AAAA-00001) se asigna la primera vez que se genera."""
+    ret = await db.retentions.find_one({"id": retention_id}, {"_id": 0})
+    if not ret:
+        raise HTTPException(status_code=404, detail="Retención no encontrada")
+    if ret.get("no_aplica"):
+        raise HTTPException(status_code=400, detail="Esta orden quedó sin retención: no hay certificado")
+    if not ret.get("certificate_number"):
+        year = datetime.now(timezone.utc).strftime("%Y")
+        counter = await db.counters.find_one_and_update(
+            {"id": f"retention_certificate_{year}"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+        )
+        number = f"CR-{year}-{int(counter['seq']):05d}"
+        now = datetime.now(timezone.utc).isoformat()
+        # Solo la primera solicitud asigna el número (evita dos números si se pide dos veces a la vez)
+        await db.retentions.update_one(
+            {"id": retention_id, "certificate_number": {"$in": [None]}},
+            {"$set": {"certificate_number": number, "certificate_issued_at": now,
+                      "certificate_issued_by_name": current_user["name"]}},
+        )
+        ret = await db.retentions.find_one({"id": retention_id}, {"_id": 0})
+    order = await db.orders.find_one({"id": ret["order_id"]}, {"_id": 0}) or {}
+    pdf_bytes = await asyncio.to_thread(build_retention_certificate, ret, order)
+    return FastAPIResponse(content=pdf_bytes, media_type="application/pdf",
+                           headers={"Content-Disposition": f'attachment; filename="certificado_retencion_{ret["certificate_number"]}.pdf"'})
 
 
 class UpdateClientEmail(BaseModel):
