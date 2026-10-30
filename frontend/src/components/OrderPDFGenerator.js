@@ -84,7 +84,31 @@ export const generateOrderPDF = async (order, { download = true } = {}) => {
     doc.setFont('helvetica', 'normal');
     doc.text(order.client_email || 'N/A', pageWidth / 2 + 25, yPos);
 
-    yPos += 12;
+    yPos += 8;
+
+    // Factura electrónica solicitada en el check-in
+    if (order.requires_invoice) {
+        doc.setDrawColor(202, 138, 4);
+        doc.setFillColor(254, 249, 195);
+        doc.rect(margin, yPos, pageWidth - 2 * margin, 14, 'FD');
+        doc.setTextColor(133, 77, 14);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.text('FACTURA ELECTRONICA SOLICITADA - el valor incluye IVA 19%', margin + 3, yPos + 5.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        const invoiceTo = [
+            `A nombre de: ${order.client_razon_social || order.client_name || 'N/A'}`,
+            `NIT/Cedula: ${order.client_id_number || order.client_cedula || 'N/A'}`,
+            `Se envia a: ${order.client_email || 'correo por confirmar'}`,
+        ].join('   |   ');
+        doc.text(doc.splitTextToSize(invoiceTo, pageWidth - 2 * margin - 6)[0], margin + 3, yPos + 11);
+        doc.setDrawColor(0, 0, 0);
+        doc.setTextColor(0, 0, 0);
+        yPos += 18;
+    } else {
+        yPos += 4;
+    }
 
     // Section: Vehicle Data
     doc.setFillColor(240, 240, 240);
@@ -201,14 +225,45 @@ export const generateOrderPDF = async (order, { download = true } = {}) => {
 
     yPos += 5;
 
-    // Total
-    const total = order.negotiated_value || order.total_value || services.reduce((sum, s) => sum + (s.price || 0), 0);
+    // Totales: subtotal, descuento, IVA (si pidió factura) y total
+    const money = (v) => `$${Math.round(v || 0).toLocaleString('es-CO')}`;
+    const servicesSum = services.reduce((sum, s) => sum + (s.price || 0)
+        + (s.extras || []).reduce((t, e) => t + (e?.price || 0), 0), 0);
+    const total = order.negotiated_value || order.total_value || servicesSum;
+    const bk = order.price_breakdown || {};
+    const discount = bk.discount ?? (order.discount_amount || 0);
+    const base = bk.base ?? servicesSum;
+    // Sin desglose del check-in: el IVA es lo que hay entre la base (menos descuento) y el total
+    const iva = order.requires_invoice ? (bk.iva ?? Math.max(total - Math.max(base - discount, 0), 0)) : 0;
+    const totalRows = [];
+    if (order.requires_invoice || discount > 0) {
+        totalRows.push([order.requires_invoice && !discount ? 'Subtotal (sin IVA)' : 'Subtotal servicios', money(base)]);
+        if (discount > 0) totalRows.push([`Descuento${order.discount_code ? ` (${order.discount_code})` : ''}`, `-${money(discount)}`]);
+        if (order.requires_invoice) {
+            if (discount > 0) totalRows.push(['Base gravable', money(Math.max(base - discount, 0))]);
+            totalRows.push(['IVA 19%', money(iva)]);
+        }
+    }
+    if (totalRows.length) {
+        const boxX = pageWidth - 85;
+        doc.setFontSize(9);
+        totalRows.forEach(([label, value]) => {
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(80, 80, 80);
+            doc.text(label, boxX, yPos + 4);
+            doc.setTextColor(0, 0, 0);
+            doc.text(value, pageWidth - margin - 2, yPos + 4, { align: 'right' });
+            yPos += 6;
+        });
+        yPos += 1;
+    }
     doc.setFillColor(...primaryColor);
-    doc.rect(pageWidth - 75, yPos, 60, 10, 'F');
+    doc.rect(pageWidth - 85, yPos, 70, 10, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text(`TOTAL: $${total.toLocaleString('es-CO')}`, pageWidth - 70, yPos + 7);
+    doc.text(order.requires_invoice ? 'TOTAL (IVA incl.)' : 'TOTAL', pageWidth - 82, yPos + 7);
+    doc.text(money(total), pageWidth - margin - 2, yPos + 7, { align: 'right' });
 
     yPos += 18;
 

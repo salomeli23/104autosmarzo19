@@ -609,6 +609,9 @@ export const CheckIn = () => {
                 negotiated_value: total,
                 client_id_number: cedulaNumber || order.client_id_number,
                 signature_url: clientSignature,
+                requires_invoice: requiresInvoice,
+                discount_code: discountApplied?.code || order.discount_code,
+                price_breakdown: { base: bk.subtotal + bk.extrasSum, discount: bk.discountAmount, iva: bk.iva },
             };
             let orderPdf = null;
             try {
@@ -1907,6 +1910,12 @@ export const CheckIn = () => {
                                             negotiated_value: calculateTotal(),
                                             signature_url: signature,
                                             client_id_number: cedulaNumber || order.client_id_number,
+                                            requires_invoice: requiresInvoice,
+                                            discount_code: discountApplied?.code || order.discount_code,
+                                            price_breakdown: (() => {
+                                                const bk = calculateBreakdown();
+                                                return { base: bk.subtotal + bk.extrasSum, discount: bk.discountAmount, iva: bk.iva };
+                                            })(),
                                         });
                                         toast.success('PDF generado correctamente');
                                     } else {
