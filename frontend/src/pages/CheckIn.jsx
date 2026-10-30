@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { ordersAPI, servicesAPI, serviceExtrasAPI, discountCodesAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -908,11 +909,17 @@ export const CheckIn = () => {
                         Escanea el QR o ingresa el código de la cita
                     </p>
                 </div>
-                {step > 1 && (
-                    <Button variant="outline" onClick={resetForm}>
-                        Nueva Búsqueda
+                <div className="flex gap-2 flex-wrap">
+                    {/* Revisiones 360° que se dejaron para después en el check-in */}
+                    <Button variant="outline" asChild data-testid="pending-360-link">
+                        <Link to="/inspections">Revisiones 360° pendientes</Link>
                     </Button>
-                )}
+                    {step > 1 && (
+                        <Button variant="outline" onClick={resetForm}>
+                            Nueva Búsqueda
+                        </Button>
+                    )}
+                </div>
             </div>
 
             {/* Progress Steps */}

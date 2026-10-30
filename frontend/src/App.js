@@ -29,9 +29,10 @@ import { Calidad } from './pages/Calidad';
 import { Liquidaciones } from './pages/Liquidaciones';
 import { Retenciones } from './pages/Retenciones';
 import { MisComisiones } from './pages/MisComisiones';
+import { homeFor } from './lib/utils';
 import './App.css';
 
-const ProtectedRoute = ({ children, allowedRoles }) => {
+const ProtectedRoute = ({ children, allowedRoles, excludeRoles }) => {
     const { user, loading, isAuthenticated } = useAuth();
 
     if (loading) {
@@ -46,15 +47,15 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
         return <Navigate to="/login" replace />;
     }
 
-    if (allowedRoles && !allowedRoles.includes(user?.role)) {
-        return <Navigate to="/dashboard" replace />;
+    if ((allowedRoles && !allowedRoles.includes(user?.role)) || excludeRoles?.includes(user?.role)) {
+        return <Navigate to={homeFor(user?.role)} replace />;
     }
 
     return <Layout>{children}</Layout>;
 };
 
 const PublicRoute = ({ children }) => {
-    const { isAuthenticated, loading } = useAuth();
+    const { isAuthenticated, loading, user } = useAuth();
 
     if (loading) {
         return (
@@ -65,7 +66,7 @@ const PublicRoute = ({ children }) => {
     }
 
     if (isAuthenticated) {
-        return <Navigate to="/dashboard" replace />;
+        return <Navigate to={homeFor(user?.role)} replace />;
     }
 
     return children;
@@ -85,7 +86,7 @@ function AppRoutes() {
             <Route 
                 path="/dashboard" 
                 element={
-                    <ProtectedRoute>
+                    <ProtectedRoute excludeRoles={['asesor']}>
                         <Dashboard />
                     </ProtectedRoute>
                 } 
@@ -109,7 +110,7 @@ function AppRoutes() {
             <Route 
                 path="/vehicles" 
                 element={
-                    <ProtectedRoute>
+                    <ProtectedRoute excludeRoles={['asesor']}>
                         <Vehicles />
                     </ProtectedRoute>
                 } 
@@ -157,7 +158,7 @@ function AppRoutes() {
             <Route 
                 path="/quotes" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'asesor']}>
+                    <ProtectedRoute allowedRoles={['admin']}>
                         <Quotes />
                     </ProtectedRoute>
                 } 
@@ -165,7 +166,7 @@ function AppRoutes() {
             <Route 
                 path="/service-orders" 
                 element={
-                    <ProtectedRoute>
+                    <ProtectedRoute excludeRoles={['asesor']}>
                         <ServiceOrders />
                     </ProtectedRoute>
                 } 
@@ -205,7 +206,7 @@ function AppRoutes() {
             <Route 
                 path="/postventa" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'asesor', 'coordinador']}>
+                    <ProtectedRoute allowedRoles={['admin', 'coordinador']}>
                         <Postventa />
                     </ProtectedRoute>
                 } 
@@ -221,7 +222,7 @@ function AppRoutes() {
             <Route 
                 path="/pagos" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'asesor', 'facturacion', 'coordinador']}>
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador']}>
                         <Pagos />
                     </ProtectedRoute>
                 } 
@@ -229,7 +230,7 @@ function AppRoutes() {
             <Route 
                 path="/facturacion-electronica" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'asesor', 'coordinador']}>
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador']}>
                         <FacturacionElectronica />
                     </ProtectedRoute>
                 } 
@@ -245,7 +246,7 @@ function AppRoutes() {
             <Route 
                 path="/retenciones" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'asesor', 'coordinador']}>
+                    <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador']}>
                         <Retenciones />
                     </ProtectedRoute>
                 } 

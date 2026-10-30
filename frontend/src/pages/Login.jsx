@@ -7,6 +7,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { toast } from 'sonner';
+import { homeFor } from '../lib/utils';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
@@ -24,9 +25,9 @@ export const Login = () => {
         e.preventDefault();
         setLoading(true);
         try {
-            await login(loginData.email, loginData.password);
+            const loggedUser = await login(loginData.email, loginData.password);
             toast.success('¡Bienvenido!');
-            navigate('/dashboard');
+            navigate(homeFor(loggedUser?.role));
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Error al iniciar sesión');
         } finally {

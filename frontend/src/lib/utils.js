@@ -325,3 +325,6 @@ export const CHECKIN_NOTICES = [
     'El cliente autoriza la movilidad del auto y dejar su llave para el proceso de instalación y servicios.',
     'No se entrega su auto si el cliente no ha realizado el pago del servicio.',
 ];
+
+// Página de inicio de cada rol (el asesor solo trabaja en agendamiento, check-in y sus comisiones)
+export const homeFor = (role) => (role === 'asesor' ? '/appointments' : '/dashboard');
