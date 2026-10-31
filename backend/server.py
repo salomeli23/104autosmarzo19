@@ -763,6 +763,63 @@ async def set_user_pin(user_id: str, data: PinUpdate, current_user: dict = Depen
     return {"message": f"Acceso de {user['name']} actualizado", "has_pin": True, "entry_id": entry_id}
 
 
+class BulkTechnician(BaseModel):
+    name: str
+    entry_id: str
+    pin: str
+
+
+class BulkTechnicians(BaseModel):
+    technicians: List[BulkTechnician]
+
+
+@api_router.post("/users/technicians/bulk")
+async def bulk_technicians(data: BulkTechnicians, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Crea varios técnicos con ID de entrada y PIN en un paso. Si ya existe un técnico con ese nombre,
+    solo se le asignan el ID y el PIN. Los correos y contraseñas internas se generan solos."""
+    import secrets as _secrets
+    items = data.technicians or []
+    if not 1 <= len(items) <= 20:
+        raise HTTPException(status_code=400, detail="Envía entre 1 y 20 técnicos")
+    names = [(t.name or "").strip() for t in items]
+    if any(not n for n in names):
+        raise HTTPException(status_code=400, detail="Todos los técnicos necesitan nombre")
+    if len({n.lower() for n in names}) != len(names):
+        raise HTTPException(status_code=400, detail="Hay nombres repetidos en la lista")
+    ids = [(t.entry_id or "").strip() for t in items]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=400, detail="Hay ID de entrada repetidos en la lista")
+    plan = []
+    for t, name, eid in zip(items, names, ids):
+        _valid_pin(t.pin)
+        existing = await db.users.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"},
+                                            "role": UserRole.TECNICO.value}, {"_id": 0, "id": 1})
+        await _free_entry_id(eid, existing["id"] if existing else None)  # valida formato y que no lo use otro
+        plan.append((name, eid, t.pin.strip(), existing))
+    now = datetime.now(timezone.utc).isoformat()
+    results = []
+    for name, eid, pin, existing in plan:
+        if existing:
+            await db.users.update_one({"id": existing["id"]}, {"$set": {
+                "entry_id": eid, "pin_hash": hash_password(pin), "pin_fails": 0, "pin_locked_until": None}})
+            results.append({"name": name, "entry_id": eid, "action": "actualizado"})
+            continue
+        slug = re.sub(r"[^a-z0-9]+", ".", name.lower()).strip(".") or "tecnico"
+        email = f"{slug}@tecnicos.polarizadosya.com"
+        n = 1
+        while await db.users.find_one({"email": email}, {"_id": 1}):
+            n += 1
+            email = f"{slug}{n}@tecnicos.polarizadosya.com"
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()), "email": email, "password": hash_password(_secrets.token_urlsafe(24)),
+            "name": name, "role": UserRole.TECNICO.value, "phone": None, "created_at": now,
+            "entry_id": eid, "pin_hash": hash_password(pin), "created_by": current_user["id"],
+        })
+        results.append({"name": name, "entry_id": eid, "action": "creado"})
+    return {"message": f"{sum(r['action'] == 'creado' for r in results)} técnicos creados, "
+                       f"{sum(r['action'] == 'actualizado' for r in results)} actualizados", "results": results}
+
+
 @api_router.post("/auth/register", response_model=TokenResponse)
 async def register(user_data: UserCreate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     existing = await db.users.find_one({"email": user_data.email})

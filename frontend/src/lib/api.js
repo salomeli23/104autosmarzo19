@@ -41,6 +41,7 @@ export const usersAPI = {
     updateRole: (userId, role) => api.put(`/users/${userId}/role`, { role }),
     resetPassword: (userId, newPassword) => api.put(`/users/${userId}/password`, { new_password: newPassword }),
     setPin: (userId, data) => api.put(`/users/${userId}/pin`, data),
+    bulkTechnicians: (technicians) => api.post('/users/technicians/bulk', { technicians }),
 };
 
 // Orders (nuevo flujo completo)
