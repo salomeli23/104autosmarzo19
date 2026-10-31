@@ -27,7 +27,7 @@ import re
 from reports import (CHARGE_LABELS, METHOD_LABELS, PAYMENT_STATUS_LABELS, STATUS_LABELS, build_workbook,
                      local_dt, range_bounds, summarize)
 from installer_rates import claim_label, compute_advisor_commission, compute_installer_charge, rates_table
-from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate, build_retention_certificate
+from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate, build_retention_certificate, PAYMENT_METHOD_LABELS
 from cutting_catalog import (CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, CUTTING_REFERENCE_GROUPS,
                              DEFAULT_ROLL_METERS, lookup_car_average)
 from email_templates import (
@@ -4727,9 +4727,40 @@ import base64 as _b64_pay
 class PaymentRegister(BaseModel):
     order_id: str
     amount: float
-    method: str  # 'efectivo' | 'tarjeta' | 'transferencia' | 'nequi' | 'daviplata' | 'otro'
+    method: str  # ver PAYMENT_METHODS
     reference: Optional[str] = None
     notes: Optional[str] = None
+    receipt: Optional[str] = None  # comprobante: data URL de imagen o PDF
+    receipt_name: Optional[str] = None
+
+
+# Métodos de abono/pago ('tarjeta' y 'otro' quedan para pagos anteriores)
+PAYMENT_METHODS = ["efectivo", "breb", "nequi", "daviplata", "bancolombia", "tarjeta_debito", "tarjeta_credito",
+                   "transferencia", "tarjeta", "otro"]
+RECEIPT_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _decode_receipt(data_url: str) -> tuple:
+    """Comprobante → (bytes, content_type). Las imágenes se comprimen a JPEG; los PDF se guardan tal cual."""
+    if not data_url or "," not in data_url:
+        raise HTTPException(status_code=400, detail="El comprobante no es válido")
+    header = data_url.split(",", 1)[0].lower()
+    if "application/pdf" in header:
+        try:
+            raw = base64.b64decode(data_url.split(",", 1)[1])
+        except Exception:
+            raise HTTPException(status_code=400, detail="El comprobante no es válido")
+        if not raw.startswith(b"%PDF"):
+            raise HTTPException(status_code=400, detail="El PDF del comprobante no es válido")
+        if len(raw) > RECEIPT_MAX_BYTES:
+            raise HTTPException(status_code=400, detail="El comprobante pesa más de 8 MB")
+        return raw, "application/pdf"
+    if header.startswith("data:image/"):
+        jpeg = _compress_data_url_image(data_url, 1800, 80)
+        if not jpeg:
+            raise HTTPException(status_code=400, detail="No se pudo leer la imagen del comprobante")
+        return jpeg, "image/jpeg"
+    raise HTTPException(status_code=400, detail="El comprobante debe ser una imagen o un PDF")
 
 
 def _order_balance(order: dict) -> Dict[str, float]:
@@ -4787,6 +4818,9 @@ async def register_payment(
     """Registra un abono/pago sobre una orden. Acumula en order.amount_paid."""
     if data.amount is None or data.amount <= 0:
         raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    if data.method not in PAYMENT_METHODS:
+        raise HTTPException(status_code=400, detail="Elige un método de pago válido")
+    receipt = await asyncio.to_thread(_decode_receipt, data.receipt) if data.receipt else None
     order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
@@ -4819,7 +4853,16 @@ async def register_payment(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": current_user["id"],
         "created_by_name": current_user["name"],
+        "has_receipt": bool(receipt),
+        "receipt_type": receipt[1] if receipt else None,
+        "receipt_name": ((data.receipt_name or "").strip()[:120] or None) if receipt else None,
     }
+    if receipt:
+        await db.payment_receipts.insert_one({
+            "payment_id": payment_doc["id"], "order_id": data.order_id, "data": BsonBinary(receipt[0]),
+            "content_type": receipt[1], "filename": payment_doc["receipt_name"],
+            "uploaded_by": current_user["id"], "created_at": payment_doc["created_at"],
+        })
     await db.payments.insert_one(payment_doc)
     payment_doc.pop("_id", None)
 
@@ -4862,7 +4905,7 @@ async def register_payment(
                 f"<h2 style='color:#00e0d1'>Recibimos tu pago</h2>"
                 f"<p>Hola <b>{order.get('client_name')}</b>,</p>"
                 f"<p>Registramos un abono de <b>${data.amount:,.0f}</b> "
-                f"({data.method}) para la orden <b>{order.get('order_code')}</b>.</p>"
+                f"({PAYMENT_METHOD_LABELS.get(data.method, data.method)}) para la orden <b>{order.get('order_code')}</b>.</p>"
                 f"<p>Saldo pendiente: <b>${new_balance:,.0f}</b>.</p>"
                 f"<p>Adjuntamos el estado de cuenta en PDF.</p>"
                 f"<p style='color:#64748b;font-size:12px'>— PolarizadosYA!</p>"
@@ -4911,6 +4954,18 @@ async def list_payments(
 async def payments_for_order(order_id: str, current_user: dict = Depends(get_current_user)):
     items = await db.payments.find({"order_id": order_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
     return items
+
+
+@api_router.get("/payments/{payment_id}/receipt")
+async def payment_receipt(
+    payment_id: str,
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR])),
+):
+    """Comprobante adjunto al abono (imagen JPEG o PDF)."""
+    doc = await db.payment_receipts.find_one({"payment_id": payment_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Este pago no tiene comprobante")
+    return FastAPIResponse(content=bytes(doc["data"]), media_type=doc.get("content_type") or "image/jpeg")
 
 
 @api_router.get("/orders-with-balance")

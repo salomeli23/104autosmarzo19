@@ -7,22 +7,21 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Badge } from '../components/ui/badge';
 import { PlateBadge } from '../components/PlateBadge';
 import { CarAvatar } from '../components/CarAvatar';
 import { formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
-import { DollarSign, Search, Wallet, Receipt, User, Phone, Filter, Loader2, Mail, ShieldCheck, ShieldAlert, ShieldOff, ArrowRight } from 'lucide-react';
+import { DollarSign, Search, Wallet, Receipt, User, Phone, Filter, Loader2, Mail, ShieldCheck, ShieldAlert, ShieldOff, ArrowRight, Paperclip, X, FileText } from 'lucide-react';
+import { PaymentMethodPicker, PaymentMethodLogo, PAYMENT_METHODS, paymentMethodLabel } from '../components/PaymentMethodPicker';
 
-const METHODS = [
-    { v: 'efectivo', l: 'Efectivo' },
-    { v: 'tarjeta', l: 'Tarjeta' },
-    { v: 'transferencia', l: 'Transferencia' },
-    { v: 'nequi', l: 'Nequi' },
-    { v: 'daviplata', l: 'Daviplata' },
-    { v: 'otro', l: 'Otro' },
-];
+const RECEIPT_MAX_MB = 8;
+const readAsDataURL = (file) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+});
 
 const needsRetention = (o) => o?.requires_invoice && !o.retention_applied;
 
@@ -124,6 +123,7 @@ export const Pagos = () => {
     const [method, setMethod] = useState('efectivo');
     const [reference, setReference] = useState('');
     const [notes, setNotes] = useState('');
+    const [receipt, setReceipt] = useState(null); // { dataUrl, name, type }
     const [saving, setSaving] = useState(false);
 
     const fetchOrders = useCallback(async () => {
@@ -158,12 +158,42 @@ export const Pagos = () => {
         }
         setSelected(o);
         setAmount(String(o.balance || ''));
-        setMethod(o.payment_method || 'efectivo');
+        // El método del check-in se propone solo si existe en la lista (p. ej. 'tarjeta' obliga a elegir débito o crédito)
+        setMethod(PAYMENT_METHODS.some(m => m.v === o.payment_method) ? o.payment_method : (o.payment_method ? '' : 'efectivo'));
         setReference('');
         setNotes('');
+        setReceipt(null);
     };
 
     const closeRegister = () => setSelected(null);
+
+    const pickReceipt = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+            toast.error('El comprobante debe ser una foto o un PDF');
+            return;
+        }
+        if (file.size > RECEIPT_MAX_MB * 1024 * 1024) {
+            toast.error(`El comprobante pesa más de ${RECEIPT_MAX_MB} MB`);
+            return;
+        }
+        try {
+            setReceipt({ dataUrl: await readAsDataURL(file), name: file.name, type: file.type });
+        } catch {
+            toast.error('No se pudo leer el comprobante');
+        }
+    };
+
+    const openReceipt = async (p) => {
+        try {
+            const res = await paymentsAPI.receipt(p.id);
+            window.open(URL.createObjectURL(res.data), '_blank');
+        } catch {
+            toast.error('No se pudo abrir el comprobante');
+        }
+    };
 
     const markNoRetention = async (o) => {
         try {
@@ -199,6 +229,10 @@ export const Pagos = () => {
             toast.error('Ingrese un monto válido');
             return;
         }
+        if (!method) {
+            toast.error('Elige el método de pago');
+            return;
+        }
         setSaving(true);
         try {
             const res = await paymentsAPI.register({
@@ -207,6 +241,8 @@ export const Pagos = () => {
                 method,
                 reference: reference || null,
                 notes: notes || null,
+                receipt: receipt?.dataUrl || null,
+                receipt_name: receipt?.name || null,
             });
             const b = res.data;
             toast.success(
@@ -359,10 +395,16 @@ export const Pagos = () => {
                                     <div className="flex-1 min-w-0">
                                         <p className="font-medium truncate">{p.client_name}</p>
                                         <p className="text-xs text-muted-foreground truncate">
-                                            {p.order_code} · {new Date(p.created_at).toLocaleString()} · {p.method}
+                                            {p.order_code} · {new Date(p.created_at).toLocaleString()} · {paymentMethodLabel(p.method)}
                                             {p.reference ? ` · ${p.reference}` : ''}
                                         </p>
                                     </div>
+                                    <PaymentMethodLogo method={p.method} />
+                                    {p.has_receipt && (
+                                        <Button variant="outline" size="sm" onClick={() => openReceipt(p)} data-testid={`receipt-btn-${p.id}`}>
+                                            <Paperclip className="w-3.5 h-3.5 mr-1" /> Comprobante
+                                        </Button>
+                                    )}
                                     <div className="text-right">
                                         <p className="font-mono font-bold text-green-500">{formatCurrency(p.amount)}</p>
                                         <p className="text-[10px] text-muted-foreground">{p.created_by_name}</p>
@@ -386,7 +428,7 @@ export const Pagos = () => {
 
             {/* Register payment dialog */}
             <Dialog open={!!selected} onOpenChange={(v) => !v && closeRegister()}>
-                <DialogContent>
+                <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Registrar abono</DialogTitle>
                         <DialogDescription asChild>
@@ -412,14 +454,28 @@ export const Pagos = () => {
                                 data-testid="pay-amount-input"
                             />
                         </div>
-                        <div>
+                        <div className="space-y-1">
                             <Label>Método *</Label>
-                            <Select value={method} onValueChange={setMethod}>
-                                <SelectTrigger data-testid="pay-method-select"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    {METHODS.map(m => <SelectItem key={m.v} value={m.v}>{m.l}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
+                            <PaymentMethodPicker value={method} onChange={setMethod} />
+                        </div>
+                        <div className="space-y-1">
+                            <Label>Comprobante {method && method !== 'efectivo' ? '(recomendado)' : '(opcional)'}</Label>
+                            {receipt ? (
+                                <div className="flex items-center gap-3 p-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5" data-testid="pay-receipt-preview">
+                                    {receipt.type === 'application/pdf'
+                                        ? <FileText className="w-10 h-10 text-red-400 shrink-0" />
+                                        : <img src={receipt.dataUrl} alt="Comprobante" className="w-12 h-12 object-cover rounded" />}
+                                    <span className="flex-1 min-w-0 text-sm truncate">{receipt.name}</span>
+                                    <Button type="button" variant="ghost" size="icon" onClick={() => setReceipt(null)} aria-label="Quitar comprobante">
+                                        <X className="w-4 h-4" />
+                                    </Button>
+                                </div>
+                            ) : (
+                                <label className="flex items-center justify-center gap-2 p-3 rounded-lg border border-dashed border-border hover:bg-muted/40 cursor-pointer text-sm text-muted-foreground">
+                                    <Paperclip className="w-4 h-4" /> Adjuntar comprobante (foto o PDF)
+                                    <input type="file" accept="image/*,application/pdf" className="hidden" onChange={pickReceipt} data-testid="pay-receipt-input" />
+                                </label>
+                            )}
                         </div>
                         <div>
                             <Label>Referencia (opcional)</Label>

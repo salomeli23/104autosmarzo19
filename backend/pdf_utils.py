@@ -271,7 +271,7 @@ def build_payment_statement(order: dict, payments: List[dict]) -> bytes:
         for p in payments:
             data.append([
                 _fmt_dt(p.get("created_at")),
-                (p.get("method") or "-").capitalize(),
+                PAYMENT_METHOD_LABELS.get(p.get("method"), (p.get("method") or "-").capitalize()),
                 p.get("reference") or "-",
                 _fmt_money(p.get("amount")),
             ])
@@ -322,8 +322,9 @@ INVOICE_COMPANY = {
 }
 
 PAYMENT_METHOD_LABELS = {
-    "efectivo": "Efectivo", "tarjeta": "Tarjeta", "transferencia": "Transferencia",
-    "nequi": "Nequi", "daviplata": "Daviplata", "otro": "Otro",
+    "efectivo": "Efectivo", "breb": "Bre-B", "nequi": "Nequi", "daviplata": "Daviplata",
+    "bancolombia": "Bancolombia", "tarjeta_debito": "Tarjeta débito", "tarjeta_credito": "Tarjeta crédito",
+    "transferencia": "Transferencia", "tarjeta": "Tarjeta", "otro": "Otro",
 }
 
 _UNITS = ["", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez",

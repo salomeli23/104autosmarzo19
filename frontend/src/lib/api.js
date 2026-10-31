@@ -344,6 +344,7 @@ export const paymentsAPI = {
     register: (data) => api.post('/payments', data),
     list: (q) => api.get('/payments', { params: q ? { q } : {} }),
     forOrder: (orderId) => api.get(`/payments/order/${orderId}`),
+    receipt: (paymentId) => api.get(`/payments/${paymentId}/receipt`, { responseType: 'blob' }),
     ordersWithBalance: (params) => api.get('/orders-with-balance', { params }),
     pendingRelease: () => api.get('/orders-pending-release'),
     authorizeRelease: (orderId) => api.post(`/orders/${orderId}/authorize-release`),

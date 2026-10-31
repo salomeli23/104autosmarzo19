@@ -28,8 +28,9 @@ STATUS_LABELS = {
 CHARGE_LABELS = {"por_cobrar": "Sin cobrar", "pendiente": "Por revisar", "aprobado": "Aprobado (por pagar)",
                  "rechazado": "Rechazado", "pagado": "Pagado"}
 PAYMENT_STATUS_LABELS = {"paid": "Pagado", "partial": "Abono parcial", "pending": "Sin pagar"}
-METHOD_LABELS = {"efectivo": "Efectivo", "tarjeta": "Tarjeta", "transferencia": "Transferencia",
-                 "nequi": "Nequi", "daviplata": "Daviplata", "otro": "Otro", "sin_pago": "Sin pago"}
+METHOD_LABELS = {"efectivo": "Efectivo", "breb": "Bre-B", "nequi": "Nequi", "daviplata": "Daviplata",
+                 "bancolombia": "Bancolombia", "tarjeta_debito": "Tarjeta débito", "tarjeta_credito": "Tarjeta crédito",
+                 "transferencia": "Transferencia", "tarjeta": "Tarjeta", "otro": "Otro", "sin_pago": "Sin pago"}
 
 
 def local_dt(iso: Optional[str]) -> Optional[datetime]:
