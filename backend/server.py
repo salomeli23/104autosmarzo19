@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi import Response as FastAPIResponse
+from fastapi import Request, Response as FastAPIResponse
 from bson import Binary as BsonBinary
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -255,6 +255,7 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.ASESOR
     phone: Optional[str] = None
     pin: Optional[str] = None  # técnicos: PIN de 4 dígitos para el ingreso rápido
+    entry_id: Optional[str] = None  # técnicos: ID de entrada de 6 dígitos (se usa con el PIN)
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -270,6 +271,7 @@ class UserResponse(BaseModel):
     sede_nombre: Optional[str] = None
     tecnico_roles: List[str] = []  # roles funcionales del técnico
     has_pin: bool = False  # el técnico puede ingresar con PIN
+    entry_id: Optional[str] = None  # ID de entrada del técnico (solo lo ve el administrador)
     created_at: str
 
 class TokenResponse(BaseModel):
@@ -654,9 +656,13 @@ async def _resolve_discount_code(code: str) -> Optional[dict]:
     return doc
 
 # ==================== AUTH ENDPOINTS ====================
-# ==================== INGRESO DE TÉCNICOS CON PIN ====================
+# ==================== INGRESO DE TÉCNICOS: ID DE ENTRADA + PIN ====================
 PIN_MAX_FAILS = 5
 PIN_LOCK_MINUTES = 5
+# Límite por dirección IP para que no se prueben IDs al azar
+IP_MAX_FAILS = 20
+IP_WINDOW_MINUTES = 15
+_pin_ip_fails: Dict[str, List[datetime]] = {}
 
 
 def _valid_pin(pin: str) -> str:
@@ -666,44 +672,61 @@ def _valid_pin(pin: str) -> str:
     return pin
 
 
+async def _free_entry_id(entry_id: str, user_id: Optional[str] = None) -> str:
+    entry_id = (entry_id or "").strip()
+    if not re.fullmatch(r"\d{6}", entry_id):
+        raise HTTPException(status_code=400, detail="El ID de entrada debe tener 6 dígitos")
+    other = await db.users.find_one({"entry_id": entry_id, "id": {"$ne": user_id}}, {"_id": 0, "name": 1})
+    if other:
+        raise HTTPException(status_code=400, detail="Ese ID de entrada ya lo tiene otro técnico")
+    return entry_id
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for")
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")) or "?"
+
+
 class PinLogin(BaseModel):
-    user_id: str
+    entry_id: str
     pin: str
 
 
 class PinUpdate(BaseModel):
-    pin: Optional[str] = None  # vacío = quitar el PIN
-
-
-@api_router.get("/auth/pin-users")
-async def pin_users():
-    """Técnicos que pueden ingresar con PIN (solo nombre e id, para el botón del login)."""
-    users = await db.users.find({"role": UserRole.TECNICO.value, "pin_hash": {"$exists": True, "$ne": None}},
-                                {"_id": 0, "id": 1, "name": 1}).to_list(200)
-    return sorted(users, key=lambda u: u["name"].lower())
+    pin: Optional[str] = None  # vacío = quitar el acceso con PIN
+    entry_id: Optional[str] = None
 
 
 @api_router.post("/auth/pin-login", response_model=TokenResponse)
-async def pin_login(data: PinLogin):
-    """Ingreso de técnicos con PIN de 4 dígitos. Tras 5 intentos fallidos el técnico queda bloqueado 5 minutos."""
-    user = await db.users.find_one({"id": data.user_id, "role": UserRole.TECNICO.value}, {"_id": 0})
-    if not user or not user.get("pin_hash"):
-        raise HTTPException(status_code=401, detail="PIN incorrecto")
+async def pin_login(data: PinLogin, request: Request):
+    """Ingreso de técnicos con ID de entrada (6 dígitos) y PIN (4 dígitos).
+    5 PIN fallidos bloquean al técnico 5 minutos; 20 fallos desde la misma IP la bloquean 15 minutos."""
     now = datetime.now(timezone.utc)
-    locked_until = user.get("pin_locked_until")
-    if locked_until and datetime.fromisoformat(locked_until) > now:
-        mins = max(1, int((datetime.fromisoformat(locked_until) - now).total_seconds() // 60) + 1)
+    ip = _client_ip(request)
+    recent = [t for t in _pin_ip_fails.get(ip, []) if t > now - timedelta(minutes=IP_WINDOW_MINUTES)]
+    _pin_ip_fails[ip] = recent
+    if len(recent) >= IP_MAX_FAILS:
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Espera unos minutos e intenta de nuevo")
+    entry_id, pin = (data.entry_id or "").strip(), (data.pin or "").strip()
+    user = None
+    if re.fullmatch(r"\d{6}", entry_id):
+        user = await db.users.find_one({"entry_id": entry_id, "role": UserRole.TECNICO.value}, {"_id": 0})
+    if user and user.get("pin_locked_until") and datetime.fromisoformat(user["pin_locked_until"]) > now:
+        mins = max(1, int((datetime.fromisoformat(user["pin_locked_until"]) - now).total_seconds() // 60) + 1)
         raise HTTPException(status_code=429, detail=f"Demasiados intentos. Intenta de nuevo en {mins} minuto(s)")
-    pin = (data.pin or "").strip()
-    if not re.fullmatch(r"\d{4}", pin) or not verify_password(pin, user["pin_hash"]):
-        fails = int(user.get("pin_fails") or 0) + 1
-        upd: Dict[str, Any] = {"pin_fails": fails}
-        if fails >= PIN_MAX_FAILS:
-            upd = {"pin_fails": 0, "pin_locked_until": (now + timedelta(minutes=PIN_LOCK_MINUTES)).isoformat()}
-        await db.users.update_one({"id": user["id"]}, {"$set": upd})
-        if fails >= PIN_MAX_FAILS:
-            raise HTTPException(status_code=429, detail=f"Demasiados intentos. Intenta de nuevo en {PIN_LOCK_MINUTES} minutos")
-        raise HTTPException(status_code=401, detail=f"PIN incorrecto ({PIN_MAX_FAILS - fails} intento(s) más)")
+    ok = bool(user and user.get("pin_hash") and re.fullmatch(r"\d{4}", pin) and verify_password(pin, user["pin_hash"]))
+    if not ok:
+        _pin_ip_fails[ip].append(now)
+        if user:
+            fails = int(user.get("pin_fails") or 0) + 1
+            upd: Dict[str, Any] = {"pin_fails": fails}
+            if fails >= PIN_MAX_FAILS:
+                upd = {"pin_fails": 0, "pin_locked_until": (now + timedelta(minutes=PIN_LOCK_MINUTES)).isoformat()}
+            await db.users.update_one({"id": user["id"]}, {"$set": upd})
+            if fails >= PIN_MAX_FAILS:
+                raise HTTPException(status_code=429, detail=f"Demasiados intentos. Intenta de nuevo en {PIN_LOCK_MINUTES} minutos")
+        # Mismo mensaje si el ID no existe o el PIN no coincide
+        raise HTTPException(status_code=401, detail="ID de entrada o PIN incorrecto")
     await db.users.update_one({"id": user["id"]}, {"$set": {"pin_fails": 0, "pin_locked_until": None,
                                                            "last_pin_login_at": now.isoformat()}})
     token = create_token(user["id"], user["email"], user["role"])
@@ -719,18 +742,25 @@ async def pin_login(data: PinLogin):
 
 @api_router.put("/users/{user_id}/pin")
 async def set_user_pin(user_id: str, data: PinUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
-    """Asigna, cambia o quita el PIN de ingreso de un técnico."""
-    user = await db.users.find_one({"id": user_id}, {"_id": 0, "role": 1, "name": 1})
+    """Asigna o cambia el ID de entrada y el PIN de un técnico (o quita el acceso con PIN)."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "role": 1, "name": 1, "entry_id": 1})
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     if user["role"] != UserRole.TECNICO.value:
-        raise HTTPException(status_code=400, detail="El PIN es solo para técnicos")
+        raise HTTPException(status_code=400, detail="El ID de entrada y el PIN son solo para técnicos")
+    if not data.pin and not data.entry_id:
+        await db.users.update_one({"id": user_id}, {"$unset": {"pin_hash": "", "entry_id": ""}})
+        return {"message": f"{user['name']} ya no ingresa con PIN", "has_pin": False, "entry_id": None}
+    entry_id = await _free_entry_id(data.entry_id or user.get("entry_id"), user_id)
+    upd: Dict[str, Any] = {"entry_id": entry_id, "pin_fails": 0, "pin_locked_until": None}
     if data.pin:
-        await db.users.update_one({"id": user_id}, {"$set": {"pin_hash": hash_password(_valid_pin(data.pin)),
-                                                            "pin_fails": 0, "pin_locked_until": None}})
-        return {"message": f"PIN de {user['name']} actualizado", "has_pin": True}
-    await db.users.update_one({"id": user_id}, {"$unset": {"pin_hash": ""}})
-    return {"message": f"{user['name']} ya no ingresa con PIN", "has_pin": False}
+        upd["pin_hash"] = hash_password(_valid_pin(data.pin))
+    else:
+        existing = await db.users.find_one({"id": user_id, "pin_hash": {"$exists": True, "$ne": None}}, {"_id": 1})
+        if not existing:
+            raise HTTPException(status_code=400, detail="Escribe el PIN de 4 dígitos")
+    await db.users.update_one({"id": user_id}, {"$set": upd})
+    return {"message": f"Acceso de {user['name']} actualizado", "has_pin": True, "entry_id": entry_id}
 
 
 @api_router.post("/auth/register", response_model=TokenResponse)
@@ -749,10 +779,13 @@ async def register(user_data: UserCreate, current_user: dict = Depends(require_r
         "phone": user_data.phone,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
-    if user_data.pin:
+    if user_data.pin or user_data.entry_id:
         if user_data.role != UserRole.TECNICO:
-            raise HTTPException(status_code=400, detail="El PIN es solo para técnicos")
+            raise HTTPException(status_code=400, detail="El ID de entrada y el PIN son solo para técnicos")
+        if not (user_data.pin and user_data.entry_id):
+            raise HTTPException(status_code=400, detail="El técnico necesita ID de entrada y PIN")
         user_doc["pin_hash"] = hash_password(_valid_pin(user_data.pin))
+        user_doc["entry_id"] = await _free_entry_id(user_data.entry_id)
     await db.users.insert_one(user_doc)
     
     token = create_token(user_id, user_data.email, user_data.role.value)
@@ -761,6 +794,7 @@ async def register(user_data: UserCreate, current_user: dict = Depends(require_r
         user=UserResponse(
             id=user_id, email=user_data.email, name=user_data.name,
             role=user_data.role, phone=user_data.phone, has_pin=bool(user_doc.get("pin_hash")),
+            entry_id=user_doc.get("entry_id"),
             created_at=user_doc["created_at"]
         )
     )
@@ -800,6 +834,7 @@ async def get_users(role: Optional[str] = None, current_user: dict = Depends(get
         sede_id=u.get("sede_id"), sede_nombre=u.get("sede_nombre"),
         tecnico_roles=u.get("tecnico_roles") or [],
         has_pin=bool(u.get("pin_hash")),
+        entry_id=u.get("entry_id") if current_user["role"] == UserRole.ADMIN.value else None,
         created_at=u["created_at"]
     ) for u in users]
 
@@ -812,6 +847,7 @@ async def get_technicians(current_user: dict = Depends(get_current_user)):
         sede_id=u.get("sede_id"), sede_nombre=u.get("sede_nombre"),
         tecnico_roles=u.get("tecnico_roles") or [],
         has_pin=bool(u.get("pin_hash")),
+        entry_id=u.get("entry_id") if current_user["role"] == UserRole.ADMIN.value else None,
         created_at=u["created_at"]
     ) for u in users]
 

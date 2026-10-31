@@ -13,6 +13,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { DiscountCodesSection } from '../components/DiscountCodesSection';
 import { SedesSection, CarSeriesSection, ServiceExtrasSection, TechnicianRolesSection } from '../components/SettingsSections';
 
+
+// ID de entrada aleatorio de 6 dígitos (sin empezar en 0)
+const randomEntryId = () => {
+    const n = new Uint32Array(1);
+    window.crypto.getRandomValues(n);
+    return String(100000 + (n[0] % 900000));
+};
+
 export const Settings = () => {
     const { user } = useAuth();
     const [users, setUsers] = useState([]);
@@ -35,7 +43,7 @@ export const Settings = () => {
     const [completionPinSaving, setCompletionPinSaving] = useState(false);
 
     // Crear usuario
-    const emptyNewUser = { name: '', email: '', phone: '', role: 'accesorios', password: '', pin: '' };
+    const emptyNewUser = { name: '', email: '', phone: '', role: 'accesorios', password: '', pin: '', entry_id: '' };
     const [newUser, setNewUser] = useState(emptyNewUser);
     const [creatingUser, setCreatingUser] = useState(false);
 
@@ -43,6 +51,7 @@ export const Settings = () => {
     const [resetUser, setResetUser] = useState(null);
     const [pinUser, setPinUser] = useState(null);
     const [pinValue, setPinValue] = useState('');
+    const [entryValue, setEntryValue] = useState('');
     const [savingPin, setSavingPin] = useState(false);
     const [resetPwd, setResetPwd] = useState('');
     const [resetPwd2, setResetPwd2] = useState('');
@@ -181,14 +190,14 @@ export const Settings = () => {
     };
 
     const savePin = async (remove = false) => {
-        if (!remove && !/^\d{4}$/.test(pinValue)) {
-            toast.error('El PIN debe tener 4 dígitos');
-            return;
+        if (!remove) {
+            if (!/^\d{6}$/.test(entryValue)) { toast.error('El ID de entrada debe tener 6 dígitos'); return; }
+            if (!(pinUser.has_pin && !pinValue) && !/^\d{4}$/.test(pinValue)) { toast.error('El PIN debe tener 4 dígitos'); return; }
         }
         setSavingPin(true);
         try {
-            const res = await usersAPI.setPin(pinUser.id, remove ? null : pinValue);
-            setUsers(prev => prev.map(x => (x.id === pinUser.id ? { ...x, has_pin: res.data.has_pin } : x)));
+            const res = await usersAPI.setPin(pinUser.id, remove ? {} : { entry_id: entryValue, pin: pinValue || null });
+            setUsers(prev => prev.map(x => (x.id === pinUser.id ? { ...x, has_pin: res.data.has_pin, entry_id: res.data.entry_id } : x)));
             toast.success(res.data.message);
             setPinUser(null);
         } catch (error) {
@@ -208,9 +217,9 @@ export const Settings = () => {
             toast.error('La contraseña debe tener al menos 6 caracteres');
             return;
         }
-        if (newUser.role === 'tecnico' && newUser.pin && !/^\d{4}$/.test(newUser.pin)) {
-            toast.error('El PIN debe tener 4 dígitos');
-            return;
+        if (newUser.role === 'tecnico' && (newUser.pin || newUser.entry_id)) {
+            if (!/^\d{6}$/.test(newUser.entry_id)) { toast.error('El ID de entrada debe tener 6 dígitos'); return; }
+            if (!/^\d{4}$/.test(newUser.pin)) { toast.error('El PIN debe tener 4 dígitos'); return; }
         }
         try {
             setCreatingUser(true);
@@ -221,6 +230,7 @@ export const Settings = () => {
                 role: newUser.role,
                 password: newUser.password,
                 pin: newUser.role === 'tecnico' && newUser.pin ? newUser.pin : null,
+                entry_id: newUser.role === 'tecnico' && newUser.entry_id ? newUser.entry_id : null,
             });
             setUsers(prev => [...prev, res.data.user]);
             setNewUser(emptyNewUser);
@@ -445,12 +455,23 @@ export const Settings = () => {
                             </Select>
                         </div>
                         {newUser.role === 'tecnico' && (
-                            <div className="space-y-2 sm:col-span-2">
-                                <Label htmlFor="new-user-pin">PIN de ingreso (4 dígitos)</Label>
-                                <Input id="new-user-pin" inputMode="numeric" maxLength={4} autoComplete="off" value={newUser.pin}
-                                    onChange={(e) => setNewUser(u => ({ ...u, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
-                                    placeholder="Ej. 1234" className="w-32 font-mono tracking-widest" data-testid="new-user-pin" />
-                                <p className="text-xs text-muted-foreground">Con el PIN el técnico entra desde el botón "Ingreso de técnicos con PIN" del login.</p>
+                            <div className="sm:col-span-2 grid grid-cols-2 gap-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="new-user-entry">ID de entrada (6 dígitos)</Label>
+                                    <div className="flex gap-2">
+                                        <Input id="new-user-entry" inputMode="numeric" maxLength={6} autoComplete="off" value={newUser.entry_id}
+                                            onChange={(e) => setNewUser(u => ({ ...u, entry_id: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                                            placeholder="Ej. 463256" className="font-mono tracking-widest" data-testid="new-user-entry" />
+                                        <Button type="button" variant="outline" onClick={() => setNewUser(u => ({ ...u, entry_id: randomEntryId() }))}>Generar</Button>
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="new-user-pin">PIN (4 dígitos)</Label>
+                                    <Input id="new-user-pin" inputMode="numeric" maxLength={4} autoComplete="off" value={newUser.pin}
+                                        onChange={(e) => setNewUser(u => ({ ...u, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                                        placeholder="Ej. 1111" className="w-32 font-mono tracking-widest" data-testid="new-user-pin" />
+                                </div>
+                                <p className="col-span-2 text-xs text-muted-foreground">Con el ID de entrada y el PIN el técnico entra desde "Ingreso de técnicos con PIN" en el login.</p>
                             </div>
                         )}
                         <div className="space-y-2 sm:col-span-2">
@@ -516,9 +537,9 @@ export const Settings = () => {
                                             </Select>
                                         )}
                                         {u.role === 'tecnico' && (
-                                            <Button variant="outline" size="sm" onClick={() => { setPinUser(u); setPinValue(''); }} data-testid={`pin-btn-${u.id}`}>
+                                            <Button variant="outline" size="sm" onClick={() => { setPinUser(u); setPinValue(''); setEntryValue(u.entry_id || ''); }} data-testid={`pin-btn-${u.id}`}>
                                                 <Hash className="w-4 h-4 sm:mr-1" />
-                                                <span className="hidden sm:inline">{u.has_pin ? 'Cambiar PIN' : 'Asignar PIN'}</span>
+                                                <span className="hidden sm:inline">{u.has_pin ? `ID ${u.entry_id || '—'} · PIN` : 'Asignar ID y PIN'}</span>
                                             </Button>
                                         )}
                                         <Button
@@ -541,20 +562,32 @@ export const Settings = () => {
             <Dialog open={!!pinUser} onOpenChange={(v) => !v && !savingPin && setPinUser(null)}>
                 <DialogContent className="max-w-sm" data-testid="pin-dialog">
                     <DialogHeader>
-                        <DialogTitle>PIN de {pinUser?.name}</DialogTitle>
+                        <DialogTitle>Acceso de {pinUser?.name}</DialogTitle>
                         <DialogDescription>
-                            {pinUser?.has_pin ? 'Escribe el nuevo PIN de 4 dígitos.' : 'Con el PIN el técnico entra desde "Ingreso de técnicos con PIN" en el login.'}
+                            El técnico entra desde "Ingreso de técnicos con PIN" marcando su ID de entrada y su PIN.
                         </DialogDescription>
                     </DialogHeader>
-                    <Input inputMode="numeric" maxLength={4} autoComplete="off" value={pinValue}
-                        onChange={(e) => setPinValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                        placeholder="4 dígitos" className="font-mono text-2xl tracking-[0.5em] text-center" data-testid="pin-input" />
+                    <div className="space-y-1">
+                        <Label>ID de entrada (6 dígitos)</Label>
+                        <div className="flex gap-2">
+                            <Input inputMode="numeric" maxLength={6} autoComplete="off" value={entryValue}
+                                onChange={(e) => setEntryValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                placeholder="6 dígitos" className="font-mono text-xl tracking-[0.3em] text-center" data-testid="entry-input" />
+                            <Button type="button" variant="outline" onClick={() => setEntryValue(randomEntryId())} data-testid="entry-generate">Generar</Button>
+                        </div>
+                    </div>
+                    <div className="space-y-1">
+                        <Label>{pinUser?.has_pin ? 'Nuevo PIN (déjalo vacío para no cambiarlo)' : 'PIN (4 dígitos)'}</Label>
+                        <Input inputMode="numeric" maxLength={4} autoComplete="off" value={pinValue}
+                            onChange={(e) => setPinValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            placeholder="4 dígitos" className="font-mono text-xl tracking-[0.5em] text-center" data-testid="pin-input" />
+                    </div>
                     <DialogFooter className="gap-2">
                         {pinUser?.has_pin && (
-                            <Button variant="ghost" className="text-red-500" onClick={() => savePin(true)} disabled={savingPin}>Quitar PIN</Button>
+                            <Button variant="ghost" className="text-red-500" onClick={() => savePin(true)} disabled={savingPin}>Quitar acceso</Button>
                         )}
-                        <Button onClick={() => savePin(false)} disabled={savingPin || pinValue.length !== 4} data-testid="pin-save">
-                            {savingPin ? 'Guardando...' : 'Guardar PIN'}
+                        <Button onClick={() => savePin(false)} disabled={savingPin || entryValue.length !== 6 || (!pinUser?.has_pin && pinValue.length !== 4)} data-testid="pin-save">
+                            {savingPin ? 'Guardando...' : 'Guardar acceso'}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

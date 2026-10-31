@@ -37,8 +37,8 @@ export const Login = () => {
         }
     };
 
-    const handlePinLogin = async (userId, pin) => {
-        const loggedUser = await loginWithPin(userId, pin);
+    const handlePinLogin = async (entryId, pin) => {
+        const loggedUser = await loginWithPin(entryId, pin);
         toast.success(`¡Bienvenido, ${loggedUser.name}!`);
         navigate(homeFor(loggedUser?.role));
     };
@@ -91,7 +91,7 @@ export const Login = () => {
                     <CardHeader className="text-center">
                         <CardTitle className="font-heading text-2xl">{pinMode ? 'Ingreso de técnicos' : 'Bienvenido'}</CardTitle>
                         <CardDescription>
-                            {pinMode ? 'Escoge tu nombre y marca tu PIN de 4 dígitos' : 'Ingresa a tu cuenta para continuar'}
+                            {pinMode ? 'Marca tu ID de entrada y tu PIN' : 'Ingresa a tu cuenta para continuar'}
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
