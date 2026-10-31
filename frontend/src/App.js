@@ -30,6 +30,7 @@ import { Liquidaciones } from './pages/Liquidaciones';
 import { Retenciones } from './pages/Retenciones';
 import { MisComisiones } from './pages/MisComisiones';
 import { Reportes } from './pages/Reportes';
+import { Comprobantes } from './pages/Comprobantes';
 import { homeFor } from './lib/utils';
 import './App.css';
 
@@ -87,7 +88,7 @@ function AppRoutes() {
             <Route 
                 path="/dashboard" 
                 element={
-                    <ProtectedRoute excludeRoles={['asesor']}>
+                    <ProtectedRoute excludeRoles={['asesor', 'gerencia']}>
                         <Dashboard />
                     </ProtectedRoute>
                 } 
@@ -229,6 +230,14 @@ function AppRoutes() {
                 } 
             />
             <Route 
+                path="/pagos/comprobantes" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'gerencia']}>
+                        <Comprobantes />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
                 path="/facturacion-electronica" 
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador']}>
@@ -239,7 +248,7 @@ function AppRoutes() {
             <Route 
                 path="/reportes" 
                 element={
-                    <ProtectedRoute allowedRoles={['admin', 'liquidaciones', 'facturacion', 'coordinador', 'calidad']}>
+                    <ProtectedRoute allowedRoles={['admin', 'liquidaciones', 'facturacion', 'coordinador', 'calidad', 'gerencia']}>
                         <Reportes />
                     </ProtectedRoute>
                 } 

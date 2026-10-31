@@ -13,6 +13,7 @@ import { CarAvatar } from '../components/CarAvatar';
 import { formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
 import { DollarSign, Search, Wallet, Receipt, User, Phone, Filter, Loader2, Mail, ShieldCheck, ShieldAlert, ShieldOff, ArrowRight, Paperclip, X, FileText } from 'lucide-react';
+import { ConfirmTwiceDialog } from '../components/ConfirmTwiceDialog';
 import { PaymentMethodPicker, PaymentMethodLogo, PAYMENT_METHODS, paymentMethodLabel } from '../components/PaymentMethodPicker';
 
 const RECEIPT_MAX_MB = 8;
@@ -125,6 +126,7 @@ export const Pagos = () => {
     const [notes, setNotes] = useState('');
     const [receipt, setReceipt] = useState(null); // { dataUrl, name, type }
     const [saving, setSaving] = useState(false);
+    const [confirmPay, setConfirmPay] = useState(false);
 
     const fetchOrders = useCallback(async () => {
         try {
@@ -223,16 +225,26 @@ export const Pagos = () => {
         if (o && o.balance > 0) openRegister(o);
     }, [orders, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const submitPayment = async () => {
+    // Validación antes de las dos confirmaciones
+    const reviewPayment = () => {
         const amt = parseFloat(amount);
         if (!amt || amt <= 0) {
             toast.error('Ingrese un monto válido');
+            return;
+        }
+        if (amt > (selected?.balance || 0) + 0.01) {
+            toast.error(`El monto supera el saldo pendiente (${formatCurrency(selected?.balance || 0)})`);
             return;
         }
         if (!method) {
             toast.error('Elige el método de pago');
             return;
         }
+        setConfirmPay(true);
+    };
+
+    const submitPayment = async () => {
+        const amt = parseFloat(amount);
         setSaving(true);
         try {
             const res = await paymentsAPI.register({
@@ -398,6 +410,12 @@ export const Pagos = () => {
                                             {p.order_code} · {new Date(p.created_at).toLocaleString()} · {paymentMethodLabel(p.method)}
                                             {p.reference ? ` · ${p.reference}` : ''}
                                         </p>
+                                        {p.review_status === 'confirmado' && (
+                                            <p className="text-xs text-emerald-400">✓ Comprobante confirmado por {p.reviewed_by_name}</p>
+                                        )}
+                                        {p.review_status === 'rechazado' && (
+                                            <p className="text-xs text-red-400" data-testid={`payment-rejected-${p.id}`}>✗ Comprobante rechazado por {p.reviewed_by_name}: {p.review_note}</p>
+                                        )}
                                     </div>
                                     <PaymentMethodLogo method={p.method} />
                                     {p.has_receipt && (
@@ -490,13 +508,45 @@ export const Pagos = () => {
                                 <Mail className="w-3 h-3" /> Se enviará el estado de cuenta a {selected.client_email}
                             </p>
                         )}
-                        <Button onClick={submitPayment} disabled={saving} className="w-full" data-testid="confirm-pay-btn">
+                        <Button onClick={reviewPayment} disabled={saving} className="w-full" data-testid="confirm-pay-btn">
                             {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <DollarSign className="w-4 h-4 mr-2" />}
                             Confirmar abono
                         </Button>
                     </div>
                 </DialogContent>
             </Dialog>
+
+            {/* Antes de registrar el abono se pregunta 2 veces con el resumen de lo que se va a guardar */}
+            <ConfirmTwiceDialog
+                open={confirmPay}
+                onOpenChange={setConfirmPay}
+                onConfirm={submitPayment}
+                cancelLabel="No, corregir"
+                steps={[
+                    {
+                        title: '¿Registrar este abono?',
+                        description: selected ? (
+                            <div className="space-y-2 text-sm text-foreground" data-testid="pay-confirm-summary">
+                                <p>Revisa los datos antes de guardar:</p>
+                                <div className="rounded-lg border p-3 space-y-1">
+                                    <p className="flex justify-between gap-2"><span className="text-muted-foreground">Placa · cliente</span><b>{selected.plate} · {selected.client_name}</b></p>
+                                    <p className="flex justify-between gap-2"><span className="text-muted-foreground">Monto</span><b className="text-green-500 text-base">{formatCurrency(parseFloat(amount) || 0)}</b></p>
+                                    <p className="flex justify-between gap-2 items-center"><span className="text-muted-foreground">Método</span><span className="flex items-center gap-2"><PaymentMethodLogo method={method} /><b>{paymentMethodLabel(method)}</b></span></p>
+                                    <p className="flex justify-between gap-2"><span className="text-muted-foreground">Comprobante</span><b className="truncate">{receipt ? receipt.name : 'Sin comprobante'}</b></p>
+                                    {reference && <p className="flex justify-between gap-2"><span className="text-muted-foreground">Referencia</span><b>{reference}</b></p>}
+                                    <p className="flex justify-between gap-2"><span className="text-muted-foreground">Saldo después</span><b>{formatCurrency(Math.max((selected.balance || 0) - (parseFloat(amount) || 0), 0))}</b></p>
+                                </div>
+                            </div>
+                        ) : '',
+                        confirm: 'Sí, los datos están bien',
+                    },
+                    {
+                        title: '¿Estás seguro?',
+                        description: `Se registrará un abono de ${formatCurrency(parseFloat(amount) || 0)} por ${paymentMethodLabel(method)} a la placa ${selected?.plate || ''}. Un pago registrado no se puede borrar desde esta pantalla.`,
+                        confirm: 'Sí, registrar abono',
+                    },
+                ]}
+            />
         </div>
     );
 };

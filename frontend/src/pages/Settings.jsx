@@ -215,6 +215,7 @@ export const Settings = () => {
             case 'calidad': return 'text-violet-500 bg-violet-500/10';
             case 'seguridad': return 'text-sky-500 bg-sky-500/10';
             case 'liquidaciones': return 'text-emerald-500 bg-emerald-500/10';
+            case 'gerencia': return 'text-yellow-500 bg-yellow-500/10';
             default: return 'text-gray-500 bg-gray-500/10';
         }
     };

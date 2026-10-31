@@ -44,6 +44,7 @@ import {
     Landmark,
     BadgeDollarSign,
     FileSpreadsheet,
+    FileCheck2,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
@@ -57,13 +58,18 @@ const navItems = [
     { path: '/cutting', label: 'Corte de Piezas', icon: Scissors, roles: ['admin', 'corte', 'coordinador'] },
     { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
     // Facturación (/billing) oculta del menú; la ruta sigue disponible
-    { path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'facturacion', 'coordinador'] },
+    {
+        path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'facturacion', 'coordinador'],
+        children: [
+            { path: '/pagos/comprobantes', label: 'Comprobantes', icon: FileCheck2, roles: ['admin', 'gerencia'] },
+        ],
+    },
     { path: '/facturacion-electronica', label: 'Clientes por Facturar', icon: FileSignature, roles: ['admin', 'facturacion', 'coordinador'] },
     { path: '/retenciones', label: 'Retenciones', icon: Landmark, roles: ['admin', 'facturacion', 'coordinador'] },
     { path: '/calidad', label: 'Control de Calidad', icon: BadgeCheck, roles: ['admin', 'calidad', 'coordinador'] },
     { path: '/liquidaciones', label: 'Liquidaciones', icon: HandCoins, roles: ['admin', 'liquidaciones'] },
     { path: '/mis-comisiones', label: 'Mis Comisiones', icon: BadgeDollarSign, roles: ['asesor'] },
-    { path: '/reportes', label: 'Reportes', icon: FileSpreadsheet, roles: ['admin', 'liquidaciones', 'facturacion', 'coordinador', 'calidad'] },
+    { path: '/reportes', label: 'Reportes', icon: FileSpreadsheet, roles: ['admin', 'liquidaciones', 'facturacion', 'coordinador', 'calidad', 'gerencia'] },
     { path: '/autos-salida', label: 'Listo para Entrega', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador', 'calidad', 'seguridad'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin'] },
     { path: '/service-orders', label: 'Órdenes', icon: Wrench, roles: ['admin', 'coordinador', 'facturacion'] },
@@ -98,9 +104,12 @@ export const Layout = ({ children }) => {
         }
     }, [user]);
 
-    const filteredNavItems = navItems.filter(item => 
-        item.roles.includes(user?.role)
-    );
+    // Submenús: los hijos van debajo del padre; si el rol solo ve el hijo, el padre queda como título sin enlace
+    const filteredNavItems = navItems.flatMap(item => {
+        const kids = (item.children || []).filter(c => c.roles.includes(user?.role)).map(c => ({ ...c, sub: true }));
+        if (item.roles.includes(user?.role)) return [item, ...kids];
+        return kids.length ? [{ ...item, header: true }, ...kids] : [];
+    });
 
     const handleLogout = () => {
         logout();
@@ -110,6 +119,13 @@ export const Layout = ({ children }) => {
     const NavLink = ({ item, mobile = false }) => {
         const isActive = location.pathname === item.path;
         const Icon = item.icon;
+        if (item.header) {
+            return (
+                <div className="flex items-center gap-3 px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <Icon className="w-4 h-4" /> <span>{item.label}</span>
+                </div>
+            );
+        }
         
         return (
             <Link
@@ -117,6 +133,7 @@ export const Layout = ({ children }) => {
                 onClick={() => mobile && setMobileOpen(false)}
                 className={cn(
                     "flex items-center gap-3 px-4 py-3 rounded-lg transition-all touch-target",
+                    item.sub && "ml-6 py-2 text-sm",
                     isActive 
                         ? "bg-primary text-primary-foreground font-semibold" 
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -271,7 +288,7 @@ export const Layout = ({ children }) => {
             {/* Mobile bottom navigation */}
             <nav className="mobile-nav">
                 <div className="flex justify-around items-center h-16">
-                    {filteredNavItems.slice(0, 5).map(item => {
+                    {filteredNavItems.filter(item => !item.header).slice(0, 5).map(item => {
                         const Icon = item.icon;
                         const isActive = location.pathname === item.path;
                         return (

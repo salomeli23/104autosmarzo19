@@ -126,6 +126,7 @@ export const ROLE_LABELS = {
     calidad: 'Calidad',
     seguridad: 'Jefe de Seguridad',
     liquidaciones: 'Coordinador de Liquidaciones',
+    gerencia: 'Gerencia',
 };
 
 // Sistema de franjas horarias con cupos
@@ -327,4 +328,4 @@ export const CHECKIN_NOTICES = [
 ];
 
 // Página de inicio de cada rol (el asesor solo trabaja en agendamiento, check-in y sus comisiones)
-export const homeFor = (role) => (role === 'asesor' ? '/appointments' : '/dashboard');
+export const homeFor = (role) => (role === 'asesor' ? '/appointments' : role === 'gerencia' ? '/pagos/comprobantes' : '/dashboard');

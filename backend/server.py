@@ -81,6 +81,7 @@ class UserRole(str, Enum):
     CALIDAD = "calidad"  # Control de calidad después de la instalación
     SEGURIDAD = "seguridad"  # Jefe de seguridad: recibe el certificado de salida y controla la portería
     LIQUIDACIONES = "liquidaciones"  # Coordinador de liquidaciones: aprueba y paga los cobros de los técnicos
+    GERENCIA = "gerencia"  # Gerencia: revisa todos los pagos y confirma los comprobantes
 
 class ServiceType(str, Enum):
     POLARIZADO = "polarizado"
@@ -122,6 +123,7 @@ class AlertType(str, Enum):
     COBRO_TECNICO = "cobro_tecnico"  # Un técnico pidió el cobro de un servicio terminado
     COBRO_REVISADO = "cobro_revisado"  # Liquidaciones aprobó, rechazó o pagó el cobro
     COMISION_ASESOR = "comision_asesor"  # Un asesor pidió el cobro de su comisión
+    COMPROBANTE_PAGO = "comprobante_pago"  # Gerencia confirmó o rechazó el comprobante de un pago
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -4956,10 +4958,85 @@ async def payments_for_order(order_id: str, current_user: dict = Depends(get_cur
     return items
 
 
+# ==================== COMPROBANTES · revisión de gerencia ====================
+RECEIPT_REVIEW_ROLES = [UserRole.ADMIN, UserRole.GERENCIA]
+REVIEW_STATUSES = ["pendiente", "confirmado", "rechazado"]
+
+
+@api_router.get("/payments/review")
+async def payments_for_review(
+    status: Optional[str] = None,  # pendiente | confirmado | rechazado (vacío = todos)
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    method: Optional[str] = None,
+    q: Optional[str] = None,
+    current_user: dict = Depends(require_roles(RECEIPT_REVIEW_ROLES)),
+):
+    """Todos los pagos registrados con el estado de revisión de su comprobante (los anteriores cuentan como pendientes)."""
+    filt: Dict[str, Any] = {}
+    if date_from or date_to:
+        start, end = range_bounds(date_from or "2000-01-01", date_to or get_colombia_time().strftime("%Y-%m-%d"))
+        filt["created_at"] = {"$gte": start, "$lt": end}
+    if method:
+        filt["method"] = method
+    if q:
+        rx = re.compile(re.escape(q.strip()), re.IGNORECASE)
+        filt["$or"] = [{"plate": rx}, {"client_name": rx}, {"order_code": rx}, {"reference": rx}, {"client_cedula": rx}]
+    items = await db.payments.find(filt, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    for it in items:
+        it["review_status"] = it.get("review_status") or "pendiente"
+    counts = {st: {"count": 0, "amount": 0.0} for st in REVIEW_STATUSES}
+    for it in items:
+        c = counts[it["review_status"]]
+        c["count"] += 1
+        c["amount"] = round(c["amount"] + float(it.get("amount") or 0), 2)
+    if status in REVIEW_STATUSES:
+        items = [it for it in items if it["review_status"] == status]
+    return {"items": items, "counts": counts}
+
+
+class PaymentReview(BaseModel):
+    action: str  # confirmar | rechazar | reabrir
+    note: Optional[str] = None
+
+
+@api_router.put("/payments/{payment_id}/review")
+async def review_payment_receipt(payment_id: str, data: PaymentReview, current_user: dict = Depends(require_roles(RECEIPT_REVIEW_ROLES))):
+    """Gerencia confirma o rechaza el comprobante del pago (o lo devuelve a pendiente)."""
+    pay = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    if not pay:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    note = (data.note or "").strip() or None
+    now = datetime.now(timezone.utc).isoformat()
+    if data.action == "confirmar":
+        update = {"review_status": "confirmado"}
+    elif data.action == "rechazar":
+        if not note:
+            raise HTTPException(status_code=400, detail="Escribe el motivo del rechazo")
+        update = {"review_status": "rechazado"}
+    elif data.action == "reabrir":
+        update = {"review_status": "pendiente"}
+    else:
+        raise HTTPException(status_code=400, detail="Acción no válida")
+    update.update({"review_note": note, "reviewed_at": now, "reviewed_by_id": current_user["id"],
+                   "reviewed_by_name": current_user["name"]})
+    await db.payments.update_one({"id": payment_id}, {"$set": update})
+    if data.action == "rechazar" and pay.get("created_by"):
+        await db.alerts.insert_one({
+            "id": str(uuid.uuid4()), "recipient_id": pay["created_by"], "alert_type": AlertType.COMPROBANTE_PAGO.value,
+            "title": f"Comprobante rechazado · {pay.get('plate')}",
+            "message": f"Gerencia rechazó el comprobante del pago de ${float(pay.get('amount') or 0):,.0f} "
+                       f"({PAYMENT_METHOD_LABELS.get(pay.get('method'), pay.get('method'))}): {note}",
+            "order_id": pay.get("order_id"), "read": False, "created_at": now,
+        })
+    pay.update(update)
+    return pay
+
+
 @api_router.get("/payments/{payment_id}/receipt")
 async def payment_receipt(
     payment_id: str,
-    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR])),
+    current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.FACTURACION, UserRole.ASESOR, UserRole.COORDINADOR, UserRole.GERENCIA])),
 ):
     """Comprobante adjunto al abono (imagen JPEG o PDF)."""
     doc = await db.payment_receipts.find_one({"payment_id": payment_id})
@@ -6027,7 +6104,7 @@ async def pay_advisor_commission(order_id: str, data: TechnicianChargePay,
 REPORTS = {
     "liquidaciones": {"title": "Liquidaciones de asesores e instaladores", "roles": [UserRole.ADMIN, UserRole.LIQUIDACIONES]},
     "servicios-diario": {"title": "Informe diario de servicios y autos sin salir", "roles": [UserRole.ADMIN, UserRole.COORDINADOR]},
-    "pagos": {"title": "Pagos por día y método", "roles": [UserRole.ADMIN, UserRole.FACTURACION]},
+    "pagos": {"title": "Pagos por día y método", "roles": [UserRole.ADMIN, UserRole.FACTURACION, UserRole.GERENCIA]},
     "retenciones": {"title": "Retenciones", "roles": [UserRole.ADMIN, UserRole.FACTURACION]},
     "agendamiento": {"title": "Agendamiento por asesor", "roles": [UserRole.ADMIN, UserRole.COORDINADOR]},
     "calidad": {"title": "Control de calidad", "roles": [UserRole.ADMIN, UserRole.CALIDAD, UserRole.COORDINADOR]},
