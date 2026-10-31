@@ -681,7 +681,7 @@ export const Inventory = () => {
                         <DialogTitle>1 rollo de cada referencia al stock de corte</DialogTitle>
                         <DialogDescription>
                             Cada una de las <b>{rollGroups.reduce((n, g) => n + g.items.length, 0)} referencias</b> queda con un rollo activo para elegir en el campo <b>Rollo</b> de Corte de piezas.
-                            Si la referencia ya tiene un rollo en corte no cambia; si tiene uno en bodega se mueve (sin foto de la caja); si no tiene ninguno se crea uno de {defaultRollMeters} m.
+                            Si ya tiene un rollo en corte no cambia; si no, se mueve uno de bodega (sin foto de la caja) o se crea uno de {defaultRollMeters} m. Además cada referencia queda con 1 rollo en bodega.
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>

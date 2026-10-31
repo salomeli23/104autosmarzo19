@@ -4470,48 +4470,63 @@ async def move_to_cutting_stock(data: CuttingStockMove, current_user: dict = Dep
     return {"message": f"Rollo {item['codigo']} activo en el stock de corte", "item": item}
 
 
-@api_router.post("/inventory/cutting-stock/one-per-reference")
-async def activate_one_roll_per_reference(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
-    """Deja 1 rollo activo en el stock de corte por cada referencia (sin foto de la caja).
-    Si la referencia ya tiene un rollo en corte con metros, no cambia; si tiene uno en bodega, lo mueve;
-    si no tiene ninguno, crea un rollo nuevo de DEFAULT_ROLL_METERS."""
+async def _ensure_rolls_per_reference(by_id: str, by_name: str) -> dict:
+    """Deja cada referencia de corte con 1 rollo activo en el stock de corte y 1 rollo en bodega.
+    Si no hay rollo en corte, se mueve uno de bodega (sin foto de la caja) o se crea; luego, si la
+    referencia quedó sin rollo en bodega, se crea uno nuevo de DEFAULT_ROLL_METERS."""
     now = datetime.now(timezone.utc).isoformat()
     rolls = await db.inventory.find(
         {"active": True, "tipo_articulo": "rollo", "tipo_rollo": {"$in": ROLLS_LIST}, "metros_restantes": {"$gt": 0}},
         {"_id": 0, "id": 1, "tipo_rollo": 1, "en_stock_corte": 1, "seq": 1},
-    ).sort("seq", 1).to_list(2000)
-    in_stock = {r["tipo_rollo"] for r in rolls if r.get("en_stock_corte") is not False}
+    ).sort("seq", 1).to_list(5000)
     last = await db.inventory.find_one({}, {"_id": 0, "seq": 1}, sort=[("seq", -1)])
     seq = int((last or {}).get("seq") or 0)
-    stamp = {"en_stock_corte": True, "stock_corte_at": now, "stock_corte_by_id": current_user["id"],
-             "stock_corte_by_name": current_user["name"], "stock_corte_sin_foto": True, "updated_at": now}
-    moved, created, already = [], [], []
+    stamp = {"en_stock_corte": True, "stock_corte_at": now, "stock_corte_by_id": by_id,
+             "stock_corte_by_name": by_name, "stock_corte_sin_foto": True, "updated_at": now}
+
+    def new_roll(group, ref, in_cutting):
+        nonlocal seq
+        seq += 1
+        return {
+            "id": str(uuid.uuid4()), "seq": seq, "codigo": f"INV-{seq:05d}",
+            "nombre": ref, "categoria": group["categoria"], "grupo_corte": group["label"],
+            "tipo_articulo": "rollo", "tipo_rollo": ref, "factura_compra": None,
+            "metros_iniciales": DEFAULT_ROLL_METERS, "metros_restantes": DEFAULT_ROLL_METERS,
+            "cantidad_inicial": None, "cantidad_restante": None, "costo": 0.0, "linked_service": None,
+            "sede_id": None, "sede_nombre": None, "fecha_ingreso": now,
+            "notes": "1 rollo por referencia · " + ("activado en el stock de corte" if in_cutting else "inventario de bodega"),
+            "stock_minimo": None, "active": True, "created_by": by_id, "created_at": now, "updated_at": now,
+            **(stamp if in_cutting else {"en_stock_corte": False}),
+        }
+
+    moved, created, bodega_created, already = [], [], [], []
     for group in CUTTING_REFERENCE_GROUPS:
         for ref in group["items"]:
-            if ref in in_stock:
+            mine = [r for r in rolls if r["tipo_rollo"] == ref]
+            bodega = [r for r in mine if r.get("en_stock_corte") is False]
+            if any(r.get("en_stock_corte") is not False for r in mine):
                 already.append(ref)
-                continue
-            bodega = next((r for r in rolls if r["tipo_rollo"] == ref and r.get("en_stock_corte") is False), None)
-            if bodega:
-                await db.inventory.update_one({"id": bodega["id"]}, {"$set": stamp})
+            elif bodega:
+                await db.inventory.update_one({"id": bodega[0]["id"]}, {"$set": stamp})
+                bodega = bodega[1:]
                 moved.append(ref)
-                continue
-            seq += 1
-            await db.inventory.insert_one({
-                "id": str(uuid.uuid4()), "seq": seq, "codigo": f"INV-{seq:05d}",
-                "nombre": ref, "categoria": group["categoria"], "grupo_corte": group["label"],
-                "tipo_articulo": "rollo", "tipo_rollo": ref, "factura_compra": None,
-                "metros_iniciales": DEFAULT_ROLL_METERS, "metros_restantes": DEFAULT_ROLL_METERS,
-                "cantidad_inicial": None, "cantidad_restante": None, "costo": 0.0, "linked_service": None,
-                "sede_id": None, "sede_nombre": None, "fecha_ingreso": now,
-                "notes": "1 rollo por referencia · activado en el stock de corte", "stock_minimo": None,
-                "active": True, "created_by": current_user["id"], "created_at": now, **stamp,
-            })
-            created.append(ref)
+            else:
+                await db.inventory.insert_one(new_roll(group, ref, True))
+                created.append(ref)
+            if not bodega:
+                await db.inventory.insert_one(new_roll(group, ref, False))
+                bodega_created.append(ref)
     return {
-        "message": f"Stock de corte: {len(moved)} rollos movidos de bodega, {len(created)} creados, {len(already)} ya estaban",
-        "moved": moved, "created": created, "already": already,
+        "message": (f"Stock de corte: {len(moved)} rollos movidos de bodega, {len(created)} creados, {len(already)} ya estaban"
+                    f" · bodega: {len(bodega_created)} rollos creados"),
+        "moved": moved, "created": created, "already": already, "bodega_created": bodega_created,
     }
+
+
+@api_router.post("/inventory/cutting-stock/one-per-reference")
+async def activate_one_roll_per_reference(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Cada referencia queda con 1 rollo en el stock de corte y 1 en bodega."""
+    return await _ensure_rolls_per_reference(current_user["id"], current_user["name"])
 
 
 @api_router.get("/inventory/{item_id}/box-photo")
@@ -7566,6 +7581,24 @@ async def backfill_checkin_by():
                 )
     except Exception as e:
         logging.getLogger(__name__).warning(f"No se pudo completar checkin_by en órdenes antiguas: {e}")
+
+@app.on_event("startup")
+async def rolls_per_reference_once():
+    """Una sola vez: 1 rollo por referencia en el stock de corte (para pruebas) y 1 en bodega."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": "rolls_corte_y_bodega_2026_10_31",
+                                        "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    try:
+        result = await _ensure_rolls_per_reference("sistema", "Sistema")
+        await db.migrations.update_one({"_id": "rolls_corte_y_bodega_2026_10_31"},
+                                       {"$set": {"finished_at": datetime.now(timezone.utc).isoformat(), "message": result["message"]}})
+        logging.getLogger(__name__).info(f"[rollos] {result['message']}")
+    except Exception as e:
+        await db.migrations.delete_one({"_id": "rolls_corte_y_bodega_2026_10_31"})
+        logging.getLogger(__name__).warning(f"No se pudieron preparar los rollos por referencia: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
