@@ -12,6 +12,11 @@ import { CompleteCuttingDialog } from '../components/CompleteCuttingDialog';
 import { ReusablePiecesDialog } from '../components/ReusablePiecesDialog';
 import { partLabel } from '../lib/opacity';
 
+// Solo PPF: se corta sin las medidas de vidrios del técnico
+const onlyPPF = (order) => !!order.ppf_plan && (order.cutting_services || []).every(s =>
+    s.ppf_scope || `${s.name || ''} ${s.service || ''}`.toLowerCase().includes('ppf'));
+const readyToCut = (order) => !!order.tech_measurements?.confirmed_at || onlyPPF(order);
+
 const CuttingView = () => {
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -324,12 +329,12 @@ const CuttingView = () => {
                                         <Button 
                                             onClick={() => openCompleteDialog(order)}
                                             className="bg-green-600 hover:bg-green-700"
-                                            disabled={!order.tech_measurements?.confirmed_at}
-                                            title={order.tech_measurements?.confirmed_at ? '' : 'El técnico debe colocar las medidas primero'}
+                                            disabled={!readyToCut(order)}
+                                            title={readyToCut(order) ? '' : 'El técnico debe colocar las medidas primero'}
                                             data-testid={`complete-cutting-btn-${order.id}`}
                                         >
                                             <CheckCircle className="w-4 h-4 mr-2" />
-                                            {order.tech_measurements?.confirmed_at ? 'Completar Corte' : 'Esperando medidas'}
+                                            {readyToCut(order) ? 'Completar Corte' : 'Esperando medidas'}
                                         </Button>
                                     </div>
                                 </CardContent>

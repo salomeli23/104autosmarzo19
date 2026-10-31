@@ -34,6 +34,39 @@ const fmtM = (m) => `${(Math.round(m * 100) / 100).toFixed(2).replace('.', ',')}
 
 let lineKey = 1;
 const newLine = (cm = '') => ({ key: `l${lineKey++}`, material: '', inventory_item_id: '', reusable_piece_id: '', cm });
+// PPF: "ppf_full" = un corte aproximado para todo el carro; "ppf:<parte>" = corte lineal de cada parte comprada
+const PPF_FULL = 'ppf_full';
+const isPpfKey = (k) => k === PPF_FULL || k.startsWith('ppf:');
+const ppfKeysFor = (plan) => !plan ? [] : plan.scope === 'full' ? [PPF_FULL] : (plan.parts || []).map(p => `ppf:${p}`);
+const ppfLabel = (k) => (k === PPF_FULL ? 'Todo el carro · corte aproximado' : k.slice(4));
+// Nombre grande del servicio comprado: "Polarizado Ceramic i3", "PPF Full body · Brillante"…
+// La descripción llega como "Categoría - Servicio": la categoría va en la etiqueta pequeña
+const splitService = (s) => {
+    const full = s.name || s.service || 'Servicio';
+    const i = full.indexOf(' - ');
+    return i > 0 ? { category: full.slice(0, i), name: full.slice(i + 3) } : { category: null, name: full };
+};
+const serviceTitle = (s) => {
+    const { name } = splitService(s);
+    const low = name.toLowerCase();
+    const extra = [s.film_label && !low.includes(String(s.film_label).toLowerCase()) ? s.film_label : null,
+        s.ppf_scope === 'full' && !low.includes('full') ? 'Full' : null,
+        s.ppf_scope === 'partes' && !low.includes('parte') ? 'Por partes' : null,
+        s.ppf_finish, s.ppf_color].filter(Boolean);
+    return extra.length ? `${name} · ${extra.join(' · ')}` : name;
+};
+const serviceKind = (s) => {
+    const t = `${s.name || ''} ${s.service || ''}`.toLowerCase();
+    if (s.ppf_scope || t.includes('ppf')) return 'ppf';
+    if (t.includes('ultrasecure') || t.includes('seguridad')) return 'ultrasecure';
+    return 'polarizado';
+};
+const KIND_STYLE = {
+    polarizado: 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300',
+    ultrasecure: 'border-amber-500/50 bg-amber-500/10 text-amber-300',
+    ppf: 'border-purple-500/50 bg-purple-500/10 text-purple-300',
+};
+const KIND_LABEL = { polarizado: 'Polarizado', ultrasecure: 'Ultrasecure', ppf: 'PPF' };
 const pieceSize = (p) => `${p.largo_cm}${p.ancho_cm ? ` × ${p.ancho_cm}` : ''} cm`;
 
 const orderHasPPF = (order) => (order?.cutting_services || order?.services || []).some(s => {
@@ -97,6 +130,9 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     // Incluye las zonas anteriores (laterales por lado) si el técnico midió con ellas
     const allZones = useMemo(() => zonesInMeasurements(tm), [tm]);
     const zones = useMemo(() => allZones.filter(z => tm[z.id] && tm[z.id].aplica !== false), [allZones, tm]);
+    const ppfPlan = order?.ppf_plan || null;
+    const ppfKeys = useMemo(() => ppfKeysFor(ppfPlan), [ppfPlan]);
+    const cutKeys = [...zones.map(z => z.id), ...ppfKeys];
 
     useEffect(() => {
         if (!order) return;
@@ -105,8 +141,9 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
             const t = tm[z.id];
             if (t && t.aplica !== false) init[z.id] = [newLine(t.medida_cm || '')];
         });
+        ppfKeysFor(order.ppf_plan).forEach(k => { init[k] = [newLine()]; });
         setCuts(init);
-        setActive(Object.keys(init)[0] || null);
+        setActive(Object.keys(init).find(k => !isPpfKey(k)) || null);
         setStep('form');
         setReuse({});
         setNotes('');
@@ -132,13 +169,24 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const isPPF = orderHasPPF(order);
     const rollById = (id) => rolls.find(r => r.id === id);
     const pieceById = (id) => pieces.find(p => p.id === id);
-    const usedPieceIds = new Set(zones.flatMap(z => (cuts[z.id] || []).map(l => l.reusable_piece_id).filter(Boolean)));
+    // Cada referencia tiene su rollo: cambia con el material salvo que el cortador haya elegido otro rollo a mano
+    const rollForMaterial = (l, material) => {
+        const current = rollById(l.inventory_item_id);
+        if (l.inventory_item_id && current && current.tipo_rollo !== l.material) return l.inventory_item_id;
+        return rolls.find(r => r.tipo_rollo === material)?.id || '';
+    };
+    const usedPieceIds = new Set(cutKeys.flatMap(k => (cuts[k] || []).map(l => l.reusable_piece_id).filter(Boolean)));
     // Piezas reutilizables de la referencia que sirven para la línea: primero las que alcanzan el largo
     const piecesFor = (l) => pieces
         .filter(p => p.referencia === l.material && (!usedPieceIds.has(p.id) || p.id === l.reusable_piece_id))
         .map(p => ({ ...p, fits: !(parseFloat(l.cm) > 0) || p.largo_cm >= parseFloat(l.cm) }))
         .sort((a, b) => (b.fits - a.fits) || a.largo_cm - b.largo_cm);
-    const allLines = zones.flatMap(z => (cuts[z.id] || []).map(l => ({ ...l, zone: z.id })));
+    const allLines = cutKeys.flatMap(k => (cuts[k] || []).map(l => ({ ...l, zone: k })));
+    const lineTitle = (k) => {
+        if (isPpfKey(k)) return `PPF · ${ppfLabel(k)}`;
+        const z = allZones.find(x => x.id === k);
+        return z ? `${z.n}. ${z.label}` : k;
+    };
 
     const zoneDone = (zoneId) => {
         const ls = cuts[zoneId] || [];
@@ -155,6 +203,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const removeLine = (zone, key) => setCuts(prev => ({ ...prev, [zone]: prev[zone].filter(l => l.key !== key) }));
 
     const zoneRollError = (zone) => {
+        if (!ZONE_LIMITS[zone]) return null;
         const [, maxRolls] = ZONE_LIMITS[zone];
         const used = new Set((cuts[zone] || []).map(l => l.inventory_item_id).filter(Boolean));
         return used.size > maxRolls ? `Máximo ${maxRolls} rollo(s) en esta zona` : null;
@@ -162,13 +211,13 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
 
     const goConfirm = () => {
         if (allLines.length === 0) {
-            toast.error('No hay zonas con medidas del técnico para cortar');
+            toast.error('No hay zonas con medidas del técnico ni PPF para cortar');
             return;
         }
         const missing = allLines.find(l => !l.material || !(parseFloat(l.cm) > 0));
         if (missing) {
-            setActive(missing.zone);
-            toast.error(`Completa material y metros en ${allZones.find(z => z.id === missing.zone).label}`);
+            if (!isPpfKey(missing.zone)) setActive(missing.zone);
+            toast.error(`Completa material y metros en ${lineTitle(missing.zone)}`);
             return;
         }
         const rollErr = zones.find(z => zoneRollError(z.id));
@@ -198,8 +247,8 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
 
     const submit = async () => {
         const zone_cuts = {};
-        zones.forEach(z => {
-            zone_cuts[z.id] = (cuts[z.id] || []).map(l => ({
+        cutKeys.forEach(k => {
+            zone_cuts[k] = (cuts[k] || []).map(l => ({
                 material: l.material,
                 inventory_item_id: reuse[l.key] ? (l.inventory_item_id || null) : l.inventory_item_id,
                 metros: Math.round((parseFloat(l.cm) || 0)) / 100,
@@ -237,7 +286,13 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         ? catalog.groups
         : catalog ? ['material_1', 'material_2', 'material_3'].filter(k => catalog[k]).map(k => catalog[k]) : [];
     const materialOptions = materialGroups.flatMap(g => g.items.map(it => ({ value: it, label: it, group: g.label })));
+    // En PPF solo se ofrecen las referencias de PPF (si el catálogo las marca)
+    const ppfGroups = materialGroups.filter(g => g.categoria === 'ppf');
+    const ppfMaterialOptions = (ppfGroups.length ? ppfGroups : materialGroups).flatMap(g => g.items.map(it => ({ value: it, label: it, group: g.label })));
+    const purchased = order.cutting_services || [];
     const rollOptions = rolls.map(r => ({ value: r.id, label: `${r.nombre} · ${fmtM(r.metros_restantes || 0)} disp. · ${r.codigo}` }));
+    const ppfRefs = new Set(ppfGroups.flatMap(g => g.items));
+    const ppfRollOptions = ppfRefs.size ? rollOptions.filter(o => ppfRefs.has(rollById(o.value)?.tipo_rollo)) : rollOptions;
 
     return (
         <Dialog open={!!order} onOpenChange={(v) => !v && !saving && onClose?.()}>
@@ -250,14 +305,38 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                     <DialogDescription>{order.plate} · {order.brand} {order.model} · {order.client_name}</DialogDescription>
                 </DialogHeader>
 
+                {purchased.length > 0 && (
+                    <div className="space-y-2" data-testid="cut-purchased-services">
+                        {purchased.map((s, i) => {
+                            const kind = serviceKind(s);
+                            return (
+                                <div key={i} className={`rounded-lg border px-3 py-2 ${KIND_STYLE[kind]}`}>
+                                    <p className="text-[11px] uppercase tracking-wider opacity-80">
+                                        {[KIND_LABEL[kind], splitService(s).category && splitService(s).category.toLowerCase() !== KIND_LABEL[kind].toLowerCase() ? splitService(s).category : null, 'servicio comprado'].filter(Boolean).join(' · ')}
+                                    </p>
+                                    <p className="font-heading text-2xl md:text-3xl leading-tight text-foreground">{serviceTitle(s)}</p>
+                                    {kind === 'ppf' && s.ppf_scope === 'partes' && (s.ppf_parts || []).length > 0 && (
+                                        <p className="text-sm mt-0.5">Partes: {s.ppf_parts.join(' · ')}</p>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
                 {step === 'form' ? (
                     <div className="space-y-4">
-                        <div className="rounded-xl border overflow-hidden bg-[radial-gradient(ellipse_at_center,_#4b4f56_0%,_#2b2e33_55%,_#18191c_100%)] p-1">
-                            <Suspense fallback={<div className="h-[260px] flex items-center justify-center text-sm text-slate-300">Cargando carro 3D…</div>}>
-                                <Vehicle3D status={status} active={active} onSelect={(z) => status[z] !== 'na' && setActive(z)} className="w-full" />
-                            </Suspense>
-                        </div>
-                        <TechMeasurementsSummary order={order} />
+                        {/* Solo PPF: no hay vidrios que medir, se registra directo el corte PPF */}
+                        {(zones.length > 0 || ppfKeys.length === 0) && (
+                            <>
+                                <div className="rounded-xl border overflow-hidden bg-[radial-gradient(ellipse_at_center,_#4b4f56_0%,_#2b2e33_55%,_#18191c_100%)] p-1">
+                                    <Suspense fallback={<div className="h-[260px] flex items-center justify-center text-sm text-slate-300">Cargando carro 3D…</div>}>
+                                        <Vehicle3D status={status} active={active} onSelect={(z) => status[z] !== 'na' && setActive(z)} className="w-full" />
+                                    </Suspense>
+                                </div>
+                                <TechMeasurementsSummary order={order} />
+                            </>
+                        )}
 
                         {isPPF && (
                             <div className="grid grid-cols-2 gap-3 p-3 rounded-lg border border-purple-500/30 bg-purple-500/5">
@@ -312,8 +391,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                                     <TypeAheadSelect value={l.material} onChange={(v) => updateLine(z.id, l.key, {
                                                         material: v,
                                                         reusable_piece_id: '',
-                                                        // Cada referencia tiene su rollo: se selecciona solo si la línea no tenía uno
-                                                        inventory_item_id: l.inventory_item_id || rolls.find(r => r.tipo_rollo === v)?.id || '',
+                                                        inventory_item_id: rollForMaterial(l, v),
                                                     })} options={materialOptions} placeholder="Seleccionar material… (escribe)"
                                                         className={selectClass} data-testid={`cut-material-${z.id}-${idx}`} />
                                                 </div>
@@ -356,6 +434,52 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                             })}
                         </div>
 
+                        {ppfKeys.length > 0 && (
+                            <div className="p-3 rounded-lg border border-purple-500/40 bg-purple-500/5 space-y-3" data-testid="cut-ppf-section">
+                                <div>
+                                    <p className="font-medium text-sm text-purple-300">
+                                        {ppfPlan.scope === 'full' ? 'PPF Full · un corte aproximado para todo el carro' : `PPF por partes · corte lineal de cada parte (${ppfKeys.length})`}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {ppfPlan.scope === 'full'
+                                            ? 'Registra el material, el rollo y los metros aproximados que se usaron en todo el vehículo.'
+                                            : 'Registra el material, el rollo y los metros lineales de cada parte que compró el cliente.'}
+                                    </p>
+                                </div>
+                                {ppfKeys.map(k => (cuts[k] || []).map(l => (
+                                    <div key={l.key} className="grid grid-cols-1 sm:grid-cols-[1fr_1.3fr_1.3fr_1fr] gap-2 items-end" data-testid={`cut-line-${k}`}>
+                                        <p className="text-sm font-medium sm:pb-2">{ppfLabel(k)}</p>
+                                        <div className="space-y-1">
+                                            <Label className="text-[11px]">Material PPF</Label>
+                                            <TypeAheadSelect value={l.material} onChange={(v) => updateLine(k, l.key, {
+                                                material: v, reusable_piece_id: '',
+                                                inventory_item_id: rollForMaterial(l, v),
+                                            })} options={ppfMaterialOptions} placeholder="Seleccionar PPF… (escribe)"
+                                                className={selectClass} data-testid={`cut-material-${k}`} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-[11px]">Rollo</Label>
+                                            <TypeAheadSelect value={l.inventory_item_id} onChange={(v) => updateLine(k, l.key, { inventory_item_id: v, reusable_piece_id: '' })}
+                                                options={ppfRollOptions} placeholder="Sin rollo (reutilizable)"
+                                                className={selectClass} data-testid={`cut-roll-${k}`} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-[11px]">{k === PPF_FULL ? 'Metros aprox.' : 'Corte lineal'}</Label>
+                                            <LinearMeasureInput value={l.cm} onChange={(cm) => updateLine(k, l.key, { cm })} testId={`cut-meters-${k}`} />
+                                        </div>
+                                        <ReusablePiecesAlert
+                                            line={l}
+                                            options={l.material ? piecesFor(l) : []}
+                                            piece={pieceById(l.reusable_piece_id)}
+                                            onUse={(p) => updateLine(k, l.key, { reusable_piece_id: p.id, inventory_item_id: '' })}
+                                            onRelease={() => updateLine(k, l.key, { reusable_piece_id: '', inventory_item_id: rolls.find(r => r.tipo_rollo === l.material)?.id || '' })}
+                                            testId={`cut-reusable-${k}`}
+                                        />
+                                    </div>
+                                )))}
+                            </div>
+                        )}
+
                         <div className="space-y-1">
                             <Label>Observaciones del corte</Label>
                             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Opcional" />
@@ -380,7 +504,6 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
 
                         <div className="space-y-2">
                             {allLines.map(l => {
-                                const z = allZones.find(x => x.id === l.zone);
                                 const roll = rollById(l.inventory_item_id);
                                 return (
                                     <label key={l.key} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer ${reuse[l.key] ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}`} data-testid={`cut-confirm-line-${l.zone}`}>
@@ -393,7 +516,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             data-testid={`cut-reuse-${l.key}`}
                                         />
                                         <div className="flex-1 min-w-0 text-sm">
-                                            <p className="font-medium">{z.n}. {z.label} · {formatLinear(parseFloat(l.cm))}{zoneOpacityText(order, l.zone) ? ` · ${zoneOpacityText(order, l.zone)}` : ''}</p>
+                                            <p className="font-medium">{lineTitle(l.zone)} · {formatLinear(parseFloat(l.cm))}{zoneOpacityText(order, l.zone) ? ` · ${zoneOpacityText(order, l.zone)}` : ''}</p>
                                             <p className="text-xs text-muted-foreground truncate">
                                                 {l.material} · {l.reusable_piece_id ? `pieza reutilizable ${pieceById(l.reusable_piece_id)?.codigo || ''}` : roll ? `${roll.codigo} ${roll.nombre}` : 'sin rollo'}
                                             </p>

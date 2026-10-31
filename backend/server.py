@@ -3480,13 +3480,20 @@ async def get_cutting_pending(current_user: dict = Depends(require_roles([UserRo
                 has_cutting_service = True
                 cutting_service_names.append({
                     "name": svc.get("description") or svc.get("service") or "Servicio",
+                    "service": svc.get("service"),
+                    "film_label": svc.get("film_label"),
                     "parts": svc.get("parts", []),
                     "part_percentages": svc.get("part_percentages") or {},
+                    "ppf_scope": svc.get("ppf_scope"),
+                    "ppf_parts": svc.get("ppf_parts") or [],
+                    "ppf_finish": svc.get("ppf_finish"),
+                    "ppf_color": svc.get("ppf_color"),
                     "price": svc.get("price", 0)
                 })
         
         if has_cutting_service:
             order["cutting_services"] = cutting_service_names
+            order["ppf_plan"] = _order_ppf_plan(order)
             order["cutting_status"] = order.get("cutting_status", "pendiente")
             cutting_orders.append(order)
     
@@ -3570,15 +3577,51 @@ ZONE_LABELS = {
 }
 
 
+# PPF: "ppf_full" = un corte aproximado para todo el carro; "ppf:<parte>" = corte lineal de cada parte comprada
+PPF_FULL_ZONE = "ppf_full"
+
+
+def _is_ppf_zone(zone: str) -> bool:
+    return zone == PPF_FULL_ZONE or zone.startswith("ppf:")
+
+
+def _zone_label(zone: str) -> str:
+    if zone == PPF_FULL_ZONE:
+        return "PPF full (corte aproximado)"
+    if zone.startswith("ppf:"):
+        return f"PPF · {zone[4:]}"
+    return ZONE_LABELS.get(zone, zone)
+
+
+def _order_ppf_plan(order: dict) -> Optional[dict]:
+    """Qué PPF compró el cliente: {"scope": "full"} o {"scope": "partes", "parts": [...]}; None si no hay PPF."""
+    parts, full = [], False
+    for svc in order.get("services") or []:
+        sid = (svc.get("service") or "").lower()
+        scope = svc.get("ppf_scope") or ("full" if sid == "ppf_full_body" else "partes" if sid == "ppf_partes" else None)
+        if scope == "full":
+            full = True
+        elif scope == "partes":
+            parts += [p for p in (svc.get("ppf_parts") or []) if p and p not in parts]
+    if full:
+        return {"scope": "full", "parts": []}
+    if parts:
+        return {"scope": "partes", "parts": parts}
+    return None
+
+
 async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, Any]:
     """Valida los cortes por zona (límites de materiales/rollos y stock) antes de descontar nada."""
     lines = []
     per_roll: Dict[str, float] = {}
     for zone, zlines in (zone_cuts or {}).items():
-        if zone not in ZONE_CUT_LIMITS:
+        if _is_ppf_zone(zone):
+            max_mat, max_rolls = (1, 1)
+        elif zone in ZONE_CUT_LIMITS:
+            max_mat, max_rolls = ZONE_CUT_LIMITS[zone]
+        else:
             raise HTTPException(status_code=400, detail=f"Zona desconocida: {zone}")
-        max_mat, max_rolls = ZONE_CUT_LIMITS[zone]
-        label = ZONE_LABELS[zone]
+        label = _zone_label(zone)
         if len(zlines) > max_mat:
             raise HTTPException(status_code=400, detail=f"{label} admite máximo {max_mat} material(es)")
         rolls = {ln.inventory_item_id for ln in zlines if ln.inventory_item_id and not ln.reutilizable}
@@ -3628,7 +3671,7 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, 
         ln["rollo_codigo"] = roll.get("codigo") if roll else None
         ln["rollo_nombre"] = roll.get("nombre") if roll else None
     summary = "; ".join(
-        f"{ZONE_LABELS[ln['zone']]}: {ln['metros']} m {ln['material']}"
+        f"{_zone_label(ln['zone'])}: {ln['metros']} m {ln['material']}"
         + ((f" (pieza reutilizable {ln['reusable_piece_codigo']})" if ln.get("reusable_piece_codigo") else " (reutilizable)")
            if ln["reutilizable"] else f" · {ln['rollo_codigo']}")
         for ln in lines
@@ -3656,14 +3699,27 @@ async def complete_cutting(
             status_code=400,
             detail=f"Solo se puede completar corte si la orden está en estado 'en_corte'. Estado actual: {order.get('status')}"
         )
-    if not (order.get("tech_measurements") or {}).get("confirmed_at"):
+    p = payload or CuttingCompleteRequest()
+    # El PPF se corta sin las medidas de vidrios del técnico; los vidrios sí las necesitan
+    window_zones = [z for z in (p.zone_cuts or {}) if not _is_ppf_zone(z)]
+    if (window_zones or not p.zone_cuts) and not (order.get("tech_measurements") or {}).get("confirmed_at"):
         raise HTTPException(
             status_code=400,
             detail="El técnico aún no ha colocado las medidas. No se puede completar el corte."
         )
-    
+    ppf_plan = _order_ppf_plan(order)
+    ppf_zones = {z for z in (p.zone_cuts or {}) if _is_ppf_zone(z)}
+    if p.zone_cuts and ppf_plan:
+        expected = {PPF_FULL_ZONE} if ppf_plan["scope"] == "full" else {f"ppf:{x}" for x in ppf_plan["parts"]}
+        missing = expected - ppf_zones
+        if missing:
+            raise HTTPException(status_code=400, detail="Registra el corte de PPF: " + ", ".join(_zone_label(z) for z in sorted(missing)))
+        if ppf_zones - expected:
+            raise HTTPException(status_code=400, detail="Hay cortes de PPF que no corresponden a lo que compró el cliente")
+    elif ppf_zones:
+        raise HTTPException(status_code=400, detail="Esta orden no tiene servicio PPF")
+
     # Resolve fields with body taking precedence over query params
-    p = payload or CuttingCompleteRequest()
     zone_plan = await _plan_zone_cuts(p.zone_cuts) if p.zone_cuts else None
     final_measurements = p.measurements or measurements or (zone_plan["summary"] if zone_plan else None)
     final_notes = p.notes or notes
