@@ -157,7 +157,7 @@ export const AutoAsignar = () => {
                 <div>
                     <h1 className="font-heading text-3xl md:text-4xl">Autos por Asignar</h1>
                     <p className="text-muted-foreground">
-                        Asigna 2 técnicos (principal y apoyo). Con Polarizado, PPF o Ultrasecure el vehículo pasa a Corte y de Corte a Instalación.
+                        Asigna hasta 6 técnicos y el servicio de cada uno (Polarizado, PPF, Ultrasecure, Accesorios o Detailing). Con Polarizado, PPF o Ultrasecure el vehículo pasa a Corte y de Corte a Instalación.
                     </p>
                 </div>
                 <Button variant="outline" onClick={fetchAll} data-testid="refresh-btn">

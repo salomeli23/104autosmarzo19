@@ -8,14 +8,16 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { toast } from 'sonner';
 import { homeFor } from '../lib/utils';
-import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
+import { Sun, Moon, Eye, EyeOff, Wrench } from 'lucide-react';
+import { TechnicianPinLogin } from '../components/TechnicianPinLogin';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
 const BG_IMAGE = "https://images.unsplash.com/photo-1647649641463-724358c4387e?w=1920&q=80";
 
 export const Login = () => {
     const navigate = useNavigate();
-    const { login } = useAuth();
+    const { login, loginWithPin } = useAuth();
+    const [pinMode, setPinMode] = useState(false);
     const { theme, toggleTheme } = useTheme();
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
@@ -33,6 +35,12 @@ export const Login = () => {
         } finally {
             setLoading(false);
         }
+    };
+
+    const handlePinLogin = async (userId, pin) => {
+        const loggedUser = await loginWithPin(userId, pin);
+        toast.success(`¡Bienvenido, ${loggedUser.name}!`);
+        navigate(homeFor(loggedUser?.role));
     };
 
     return (
@@ -81,12 +89,16 @@ export const Login = () => {
 
                 <Card className="w-full max-w-md card-hover">
                     <CardHeader className="text-center">
-                        <CardTitle className="font-heading text-2xl">Bienvenido</CardTitle>
+                        <CardTitle className="font-heading text-2xl">{pinMode ? 'Ingreso de técnicos' : 'Bienvenido'}</CardTitle>
                         <CardDescription>
-                            Ingresa a tu cuenta para continuar
+                            {pinMode ? 'Escoge tu nombre y marca tu PIN de 4 dígitos' : 'Ingresa a tu cuenta para continuar'}
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
+                        {pinMode ? (
+                            <TechnicianPinLogin onLogin={handlePinLogin} onBack={() => setPinMode(false)} />
+                        ) : (
+                        <>
                         <form onSubmit={handleLogin} className="space-y-4">
                             <div className="space-y-2">
                                 <Label htmlFor="login-email">Correo Electrónico</Label>
@@ -132,6 +144,15 @@ export const Login = () => {
                                 {loading ? 'Ingresando...' : 'Ingresar'}
                             </Button>
                         </form>
+                        <div className="relative my-5">
+                            <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                            <span className="relative mx-auto block w-fit bg-card px-2 text-xs text-muted-foreground">o</span>
+                        </div>
+                        <Button type="button" variant="outline" className="w-full h-12 text-base" onClick={() => setPinMode(true)} data-testid="login-technicians-btn">
+                            <Wrench className="w-5 h-5 mr-2" /> Ingreso de técnicos con PIN
+                        </Button>
+                        </>
+                        )}
                     </CardContent>
                 </Card>
             </div>

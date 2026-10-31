@@ -47,6 +47,18 @@ export const AuthProvider = ({ children }) => {
         return userData;
     };
 
+    // Ingreso de técnicos con PIN de 4 dígitos
+    const loginWithPin = async (userId, pin) => {
+        const response = await authAPI.pinLogin({ user_id: userId, pin });
+        const { access_token, user: userData } = response.data;
+
+        localStorage.setItem('token', access_token);
+        localStorage.setItem('user', JSON.stringify(userData));
+        setUser(userData);
+
+        return userData;
+    };
+
     const register = async (data) => {
         const response = await authAPI.register(data);
         const { access_token, user: userData } = response.data;
@@ -68,6 +80,7 @@ export const AuthProvider = ({ children }) => {
         user,
         loading,
         login,
+        loginWithPin,
         register,
         logout,
         isAuthenticated: !!user,

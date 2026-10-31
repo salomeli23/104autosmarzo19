@@ -31,6 +31,8 @@ export const authAPI = {
     login: (data) => api.post('/auth/login', data),
     register: (data) => api.post('/auth/register', data),
     me: () => api.get('/auth/me'),
+    pinUsers: () => api.get('/auth/pin-users'),
+    pinLogin: (data) => api.post('/auth/pin-login', data),
 };
 
 // Users
@@ -39,6 +41,7 @@ export const usersAPI = {
     getTechnicians: () => api.get('/users/technicians'),
     updateRole: (userId, role) => api.put(`/users/${userId}/role`, { role }),
     resetPassword: (userId, newPassword) => api.put(`/users/${userId}/password`, { new_password: newPassword }),
+    setPin: (userId, pin) => api.put(`/users/${userId}/pin`, { pin: pin || null }),
 };
 
 // Orders (nuevo flujo completo)

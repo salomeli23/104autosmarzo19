@@ -254,6 +254,7 @@ class UserCreate(BaseModel):
     name: str
     role: UserRole = UserRole.ASESOR
     phone: Optional[str] = None
+    pin: Optional[str] = None  # técnicos: PIN de 4 dígitos para el ingreso rápido
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -268,6 +269,7 @@ class UserResponse(BaseModel):
     sede_id: Optional[str] = None
     sede_nombre: Optional[str] = None
     tecnico_roles: List[str] = []  # roles funcionales del técnico
+    has_pin: bool = False  # el técnico puede ingresar con PIN
     created_at: str
 
 class TokenResponse(BaseModel):
@@ -361,6 +363,7 @@ class OrderResponse(BaseModel):
     assigned_technician_name: Optional[str] = None
     assigned_technician_2_id: Optional[str] = None  # técnico de apoyo
     assigned_technician_2_name: Optional[str] = None
+    assigned_technicians: Optional[List[Dict[str, Any]]] = None  # hasta 6: [{id, name, services}]
     service_time_minutes: Optional[int] = None
     assigned_at: Optional[str] = None
     # Service data
@@ -484,9 +487,44 @@ class AssignTechnician(BaseModel):
     service_time_minutes: Optional[int] = None
 
 
+class TechnicianAssignment(BaseModel):
+    technician_id: str
+    services: List[str] = []  # polarizado | ppf | ultrasecure | accesorios | detailing
+
+
 class AssignTechnicians(BaseModel):
-    technician_ids: List[str]  # técnico principal y técnico de apoyo (1 o 2)
+    technician_ids: List[str] = []  # compatibilidad: solo ids (sin servicio)
+    assignments: Optional[List[TechnicianAssignment]] = None  # hasta 6 técnicos con el servicio de cada uno
     service_time_minutes: Optional[int] = None
+
+
+# Hasta 6 técnicos por vehículo; cada uno se asigna a uno o varios servicios
+MAX_TECHNICIANS = 6
+TECH_SERVICE_AREAS = {"polarizado": "Polarizado", "ppf": "PPF", "ultrasecure": "Ultrasecure",
+                      "accesorios": "Accesorios", "detailing": "Detailing"}
+
+
+def _order_techs(order: dict) -> List[Dict[str, Any]]:
+    """Técnicos de la orden: la lista nueva (hasta 6) o el principal y el de apoyo de las órdenes anteriores."""
+    if order.get("assigned_technicians"):
+        return order["assigned_technicians"]
+    return [{"id": order[k], "name": order.get(n), "services": []}
+            for k, n in (("assigned_technician_id", "assigned_technician_name"),
+                         ("assigned_technician_2_id", "assigned_technician_2_name")) if order.get(k)]
+
+
+def _order_tech_ids(order: dict) -> List[str]:
+    return [t["id"] for t in _order_techs(order)]
+
+
+def _techs_label(order: dict, sep: str = " · ") -> str:
+    return sep.join(t.get("name") or "" for t in _order_techs(order) if t.get("name"))
+
+
+def _partners_of(order: dict, uid: str) -> Optional[str]:
+    """Los demás técnicos del vehículo (para cobros y el historial del técnico)."""
+    others = [t.get("name") for t in _order_techs(order) if t["id"] != uid and t.get("name")]
+    return ", ".join(others) or None
 
 class TechnicianReport(BaseModel):
     order_id: str
@@ -616,6 +654,85 @@ async def _resolve_discount_code(code: str) -> Optional[dict]:
     return doc
 
 # ==================== AUTH ENDPOINTS ====================
+# ==================== INGRESO DE TÉCNICOS CON PIN ====================
+PIN_MAX_FAILS = 5
+PIN_LOCK_MINUTES = 5
+
+
+def _valid_pin(pin: str) -> str:
+    pin = (pin or "").strip()
+    if not re.fullmatch(r"\d{4}", pin):
+        raise HTTPException(status_code=400, detail="El PIN debe tener 4 dígitos")
+    return pin
+
+
+class PinLogin(BaseModel):
+    user_id: str
+    pin: str
+
+
+class PinUpdate(BaseModel):
+    pin: Optional[str] = None  # vacío = quitar el PIN
+
+
+@api_router.get("/auth/pin-users")
+async def pin_users():
+    """Técnicos que pueden ingresar con PIN (solo nombre e id, para el botón del login)."""
+    users = await db.users.find({"role": UserRole.TECNICO.value, "pin_hash": {"$exists": True, "$ne": None}},
+                                {"_id": 0, "id": 1, "name": 1}).to_list(200)
+    return sorted(users, key=lambda u: u["name"].lower())
+
+
+@api_router.post("/auth/pin-login", response_model=TokenResponse)
+async def pin_login(data: PinLogin):
+    """Ingreso de técnicos con PIN de 4 dígitos. Tras 5 intentos fallidos el técnico queda bloqueado 5 minutos."""
+    user = await db.users.find_one({"id": data.user_id, "role": UserRole.TECNICO.value}, {"_id": 0})
+    if not user or not user.get("pin_hash"):
+        raise HTTPException(status_code=401, detail="PIN incorrecto")
+    now = datetime.now(timezone.utc)
+    locked_until = user.get("pin_locked_until")
+    if locked_until and datetime.fromisoformat(locked_until) > now:
+        mins = max(1, int((datetime.fromisoformat(locked_until) - now).total_seconds() // 60) + 1)
+        raise HTTPException(status_code=429, detail=f"Demasiados intentos. Intenta de nuevo en {mins} minuto(s)")
+    pin = (data.pin or "").strip()
+    if not re.fullmatch(r"\d{4}", pin) or not verify_password(pin, user["pin_hash"]):
+        fails = int(user.get("pin_fails") or 0) + 1
+        upd: Dict[str, Any] = {"pin_fails": fails}
+        if fails >= PIN_MAX_FAILS:
+            upd = {"pin_fails": 0, "pin_locked_until": (now + timedelta(minutes=PIN_LOCK_MINUTES)).isoformat()}
+        await db.users.update_one({"id": user["id"]}, {"$set": upd})
+        if fails >= PIN_MAX_FAILS:
+            raise HTTPException(status_code=429, detail=f"Demasiados intentos. Intenta de nuevo en {PIN_LOCK_MINUTES} minutos")
+        raise HTTPException(status_code=401, detail=f"PIN incorrecto ({PIN_MAX_FAILS - fails} intento(s) más)")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"pin_fails": 0, "pin_locked_until": None,
+                                                           "last_pin_login_at": now.isoformat()}})
+    token = create_token(user["id"], user["email"], user["role"])
+    return TokenResponse(
+        access_token=token,
+        user=UserResponse(
+            id=user["id"], email=user["email"], name=user["name"], role=UserRole(user["role"]),
+            phone=user.get("phone"), tecnico_roles=user.get("tecnico_roles") or [], has_pin=True,
+            created_at=user["created_at"],
+        ),
+    )
+
+
+@api_router.put("/users/{user_id}/pin")
+async def set_user_pin(user_id: str, data: PinUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Asigna, cambia o quita el PIN de ingreso de un técnico."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "role": 1, "name": 1})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user["role"] != UserRole.TECNICO.value:
+        raise HTTPException(status_code=400, detail="El PIN es solo para técnicos")
+    if data.pin:
+        await db.users.update_one({"id": user_id}, {"$set": {"pin_hash": hash_password(_valid_pin(data.pin)),
+                                                            "pin_fails": 0, "pin_locked_until": None}})
+        return {"message": f"PIN de {user['name']} actualizado", "has_pin": True}
+    await db.users.update_one({"id": user_id}, {"$unset": {"pin_hash": ""}})
+    return {"message": f"{user['name']} ya no ingresa con PIN", "has_pin": False}
+
+
 @api_router.post("/auth/register", response_model=TokenResponse)
 async def register(user_data: UserCreate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     existing = await db.users.find_one({"email": user_data.email})
@@ -632,6 +749,10 @@ async def register(user_data: UserCreate, current_user: dict = Depends(require_r
         "phone": user_data.phone,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
+    if user_data.pin:
+        if user_data.role != UserRole.TECNICO:
+            raise HTTPException(status_code=400, detail="El PIN es solo para técnicos")
+        user_doc["pin_hash"] = hash_password(_valid_pin(user_data.pin))
     await db.users.insert_one(user_doc)
     
     token = create_token(user_id, user_data.email, user_data.role.value)
@@ -639,7 +760,8 @@ async def register(user_data: UserCreate, current_user: dict = Depends(require_r
         access_token=token,
         user=UserResponse(
             id=user_id, email=user_data.email, name=user_data.name,
-            role=user_data.role, phone=user_data.phone, created_at=user_doc["created_at"]
+            role=user_data.role, phone=user_data.phone, has_pin=bool(user_doc.get("pin_hash")),
+            created_at=user_doc["created_at"]
         )
     )
 
@@ -677,6 +799,7 @@ async def get_users(role: Optional[str] = None, current_user: dict = Depends(get
         role=UserRole(u["role"]), phone=u.get("phone"),
         sede_id=u.get("sede_id"), sede_nombre=u.get("sede_nombre"),
         tecnico_roles=u.get("tecnico_roles") or [],
+        has_pin=bool(u.get("pin_hash")),
         created_at=u["created_at"]
     ) for u in users]
 
@@ -688,6 +811,7 @@ async def get_technicians(current_user: dict = Depends(get_current_user)):
         role=UserRole(u["role"]), phone=u.get("phone"),
         sede_id=u.get("sede_id"), sede_nombre=u.get("sede_nombre"),
         tecnico_roles=u.get("tecnico_roles") or [],
+        has_pin=bool(u.get("pin_hash")),
         created_at=u["created_at"]
     ) for u in users]
 
@@ -1369,6 +1493,7 @@ async def get_orders(status: Optional[str] = None, date: Optional[str] = None, c
         query["$or"] = [
             {"assigned_technician_id": current_user["id"]},
             {"assigned_technician_2_id": current_user["id"]},
+            {"assigned_technicians.id": current_user["id"]},
             {"route_slots.technician_id": current_user["id"]},
         ]
     
@@ -2445,10 +2570,28 @@ def _order_needs_cutting(order: dict) -> bool:
     return False
 
 
-async def _assign_technicians(order: dict, technician_ids: List[str], minutes: Optional[int], current_user: dict) -> dict:
-    ids = [t for t in dict.fromkeys(i.strip() for i in technician_ids if i and i.strip())]
-    if not 1 <= len(ids) <= 2:
-        raise HTTPException(status_code=400, detail="Asigna el técnico principal y, si aplica, el técnico de apoyo (máximo 2)")
+async def _assign_technicians(order: dict, technician_ids: List[str], minutes: Optional[int], current_user: dict,
+                              assignments: Optional[List[TechnicianAssignment]] = None) -> dict:
+    services_by_id: Dict[str, List[str]] = {}
+    if assignments:
+        for a in assignments:
+            tid = (a.technician_id or "").strip()
+            if not tid:
+                continue
+            if tid in services_by_id:
+                raise HTTPException(status_code=400, detail="Un técnico está repetido en la asignación")
+            areas = [x for x in dict.fromkeys(a.services or []) if x]
+            bad = [x for x in areas if x not in TECH_SERVICE_AREAS]
+            if bad:
+                raise HTTPException(status_code=400, detail=f"Servicio no válido: {', '.join(bad)}")
+            if not areas:
+                raise HTTPException(status_code=400, detail="Elige el servicio de cada técnico (Polarizado, PPF, Ultrasecure, Accesorios o Detailing)")
+            services_by_id[tid] = areas
+        ids = list(services_by_id)
+    else:
+        ids = [t for t in dict.fromkeys(i.strip() for i in technician_ids if i and i.strip())]
+    if not 1 <= len(ids) <= MAX_TECHNICIANS:
+        raise HTTPException(status_code=400, detail=f"Asigna entre 1 y {MAX_TECHNICIANS} técnicos")
     status = order["status"]
     if status == OrderStatus.INGRESADO.value:
         raise HTTPException(status_code=400, detail="Primero completa la Revisión 360° del vehículo")
@@ -2468,6 +2611,8 @@ async def _assign_technicians(order: dict, technician_ids: List[str], minutes: O
     now = datetime.now(timezone.utc).isoformat()
     second = techs[1] if len(techs) > 1 else None
     update = {
+        "assigned_technicians": [{"id": t["id"], "name": t["name"], "services": services_by_id.get(t["id"], [])} for t in techs],
+        # Principal y apoyo se mantienen para las pantallas y reportes anteriores
         "assigned_technician_id": techs[0]["id"],
         "assigned_technician_name": techs[0]["name"],
         "assigned_technician_2_id": second["id"] if second else None,
@@ -2484,11 +2629,13 @@ async def _assign_technicians(order: dict, technician_ids: List[str], minutes: O
         update["cutting_status"] = "pendiente"
     await db.orders.update_one({"id": order["id"]}, {"$set": update})
 
-    names = " y ".join(t["name"] for t in techs)
+    names = ", ".join(t["name"] for t in techs)
     await log_order_history(
         order["id"], "TECNICOS_ASIGNADOS", status, new_status,
         current_user["id"], current_user["name"],
-        {"technicians": [t["name"] for t in techs], "next_step": "corte" if new_status == OrderStatus.EN_CORTE.value else "instalacion"},
+        {"technicians": [t["name"] + (f" ({', '.join(TECH_SERVICE_AREAS[x] for x in services_by_id.get(t['id'], []))})"
+                                      if services_by_id.get(t["id"]) else "") for t in techs],
+         "next_step": "corte" if new_status == OrderStatus.EN_CORTE.value else "instalacion"},
     )
     if status == OrderStatus.EN_REVISION.value and new_status == OrderStatus.EN_CORTE.value:
         await create_alert(
@@ -2500,11 +2647,12 @@ async def _assign_technicians(order: dict, technician_ids: List[str], minutes: O
     step = "Pasa a Corte; te avisaremos cuando esté listo para instalar" if new_status == OrderStatus.EN_CORTE.value \
         else "Listo para instalación"
     for t in techs:
+        mine = ", ".join(TECH_SERVICE_AREAS[x] for x in services_by_id.get(t["id"], []))
         await db.alerts.insert_one({
             "id": str(uuid.uuid4()),
             "recipient_id": t["id"],
             "alert_type": AlertType.SERVICIO_ASIGNADO.value,
-            "title": "Nuevo servicio asignado",
+            "title": "Nuevo servicio asignado" + (f" · {mine}" if mine else ""),
             "message": f"Vehículo {order.get('plate')} con {names}. {step}.",
             "order_id": order["id"],
             "read": False,
@@ -2520,7 +2668,7 @@ async def assign_technicians(order_id: str, data: AssignTechnicians, current_use
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    return await _assign_technicians(order, data.technician_ids, data.service_time_minutes, current_user)
+    return await _assign_technicians(order, data.technician_ids, data.service_time_minutes, current_user, data.assignments)
 
 
 @api_router.post("/orders/assign")
@@ -2540,8 +2688,7 @@ async def start_service(order_id: str, current_user: dict = Depends(require_role
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     if order["status"] != OrderStatus.ASIGNADO.value:
         raise HTTPException(status_code=400, detail="La orden debe estar lista para instalación")
-    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in (
-            order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in _order_tech_ids(order):
         raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
     
     update_data = {
@@ -2572,8 +2719,7 @@ async def complete_service(data: TechnicianReport, current_user: dict = Depends(
     if order["status"] != OrderStatus.EN_PROCESO.value:
         raise HTTPException(status_code=400, detail="La orden debe estar en estado EN_PROCESO")
     
-    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in (
-            order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in _order_tech_ids(order):
         raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
     
     is_postventa = bool(order.get("is_postventa"))
@@ -3407,8 +3553,7 @@ async def save_tech_measurements(
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in (
-            order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in _order_tech_ids(order):
         raise HTTPException(status_code=403, detail="Este vehículo no está asignado a ti")
     if order.get("status") != OrderStatus.EN_CORTE.value:
         raise HTTPException(status_code=400, detail="Las medidas se colocan cuando el vehículo está en Corte")
@@ -3944,12 +4089,12 @@ async def deliver_cut_material(order_id: str, current_user: dict = Depends(requi
         "material_delivered_by_name": user_name,
         "updated_at": now,
     }})
-    techs = [t for t in (order.get("assigned_technician_name"), order.get("assigned_technician_2_name")) if t]
+    techs = [t.get("name") for t in _order_techs(order) if t.get("name")]
     await log_order_history(
         order_id, "MATERIAL_ENTREGADO", OrderStatus.EN_CORTE.value, OrderStatus.ASIGNADO.value,
         current_user["id"], user_name, {"technicians": techs},
     )
-    for tid in (order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+    for tid in _order_tech_ids(order):
         if tid:
             await db.alerts.insert_one({
                 "id": str(uuid.uuid4()),
@@ -5314,6 +5459,7 @@ def _quality_order_summary(o: dict) -> dict:
         "profile_photo_url": o.get("profile_photo_url"),
         "assigned_technician_name": o.get("assigned_technician_name"),
         "assigned_technician_2_name": o.get("assigned_technician_2_name"),
+        "assigned_technicians": o.get("assigned_technicians"),
         "service_completed_at": o.get("service_completed_at"),
         "quality_sent_at": o.get("quality_sent_at"),
         "quality_status": o.get("quality_status"),
@@ -5491,7 +5637,7 @@ async def submit_quality(order_id: str, data: QualityReview, current_user: dict 
                 "paid": paid, "balance": b["balance"]}
 
     detail = "; ".join(labels[k][1] for k in failed) or notes
-    for tech_id in [t for t in (order.get("assigned_technician_id"), order.get("assigned_technician_2_id")) if t]:
+    for tech_id in _order_tech_ids(order):
         await db.alerts.insert_one({
             "id": str(uuid.uuid4()), "recipient_id": tech_id,
             "alert_type": AlertType.CALIDAD_RECHAZADA.value,
@@ -5678,7 +5824,7 @@ async def technician_history(current_user: dict = Depends(require_roles([UserRol
     uid = current_user["id"]
     cursor = db.orders.find(
         {"status": {"$in": FINISHED_FOR_TECH},
-         "$or": [{"assigned_technician_id": uid}, {"assigned_technician_2_id": uid}]},
+         "$or": [{"assigned_technician_id": uid}, {"assigned_technician_2_id": uid}, {"assigned_technicians.id": uid}]},
         {"_id": 0, "quality_photos": 0, "service_completion_photos": 0, "inspection_photos": 0, "signature_url": 0},
     ).sort("service_completed_at", -1).limit(200)
     orders = [o async for o in cursor]
@@ -5697,7 +5843,7 @@ async def technician_history(current_user: dict = Depends(require_roles([UserRol
         "service_completed_at": o.get("service_completed_at"),
         "installed_services": _tech_service_names(o),
         "role": "principal" if o.get("assigned_technician_id") == uid else "apoyo",
-        "partner_name": o.get("assigned_technician_2_name") if o.get("assigned_technician_id") == uid else o.get("assigned_technician_name"),
+        "partner_name": _partners_of(o, uid),
         "charge": charges.get(o["id"]),
         **_quality_summary(o),
     } for o in orders]
@@ -5764,8 +5910,7 @@ async def quote_technician_charge(data: TechnicianChargeQuote, current_user: dic
     order = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in (
-            order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+    if current_user["role"] == UserRole.TECNICO.value and current_user["id"] not in _order_tech_ids(order):
         raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
     tariff = _charge_tariff(order, data)
     tariff["taken"] = await _claims_taken_by_others(order["id"], current_user["id"])
@@ -5779,7 +5924,7 @@ async def create_technician_charge(data: TechnicianChargeCreate, current_user: d
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     uid = current_user["id"]
-    if uid not in (order.get("assigned_technician_id"), order.get("assigned_technician_2_id")):
+    if uid not in _order_tech_ids(order):
         raise HTTPException(status_code=403, detail="Este servicio no está asignado a ti")
     if order.get("status") not in FINISHED_FOR_TECH:
         raise HTTPException(status_code=400, detail="Solo puedes cobrar servicios terminados")
@@ -5819,8 +5964,7 @@ async def create_technician_charge(data: TechnicianChargeCreate, current_user: d
         "amount": amount,
         "tariff": tariff,
         "other_amount": other_amount or None,
-        "partner_name": (order.get("assigned_technician_2_name") if order.get("assigned_technician_id") == uid
-                         else order.get("assigned_technician_name")) if order.get("assigned_technician_2_id") else None,
+        "partner_name": _partners_of(order, uid),
         "notes": (data.notes or "").strip() or None,
         "status": "pendiente",
         "created_at": now,
@@ -6114,7 +6258,7 @@ _C = lambda h, k, kind="text", w=16: (h, k, kind, w)  # noqa: E731  columna de r
 
 
 def _techs(o: dict) -> str:
-    return " · ".join(t for t in (o.get("assigned_technician_name"), o.get("assigned_technician_2_name")) if t)
+    return _techs_label(o)
 
 
 def _services_text(o: dict) -> str:
@@ -6336,7 +6480,7 @@ async def _report_agendamiento(start: str, end: str) -> List[dict]:
 async def _report_calidad(start: str, end: str) -> List[dict]:
     orders = await db.orders.find({"quality_reviews.at": {"$gte": start, "$lt": end}},
                                   {"_id": 0, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "client_name": 1, "services": 1,
-                                   "assigned_technician_name": 1, "assigned_technician_2_name": 1, "quality_reviews": 1,
+                                   "assigned_technician_name": 1, "assigned_technician_2_name": 1, "assigned_technicians": 1, "quality_reviews": 1,
                                    "installed_by_name": 1}).to_list(5000)
     rows = []
     for o in orders:
@@ -6347,7 +6491,7 @@ async def _report_calidad(start: str, end: str) -> List[dict]:
                 "fecha": rv.get("at"), "orden": o.get("order_code"), "placa": o.get("plate"),
                 "vehiculo": f"{o.get('brand') or ''} {o.get('model') or ''}".strip(), "servicios": _services_text(o),
                 "tecnico": o.get("assigned_technician_name") or o.get("installed_by_name") or "Sin técnico",
-                "apoyo": o.get("assigned_technician_2_name"), "resultado": (rv.get("result") or "").capitalize(),
+                "apoyo": _partners_of(o, o.get("assigned_technician_id")), "resultado": (rv.get("result") or "").capitalize(),
                 "calificacion": rv.get("rating"), "novedades": " | ".join(f"{f['label']}{': ' + f['note'] if f.get('note') else ''}" for f in rv.get("failed") or []),
                 "comentarios": rv.get("notes"), "revisor": rv.get("by_name"),
             })

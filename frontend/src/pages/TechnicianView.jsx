@@ -374,7 +374,7 @@ export const TechnicianView = () => {
             const res = await ordersAPI.getAll();
             const uid = user?.id;
             const mine = (res.data || []).filter(o =>
-                o.assigned_technician_id === uid || o.assigned_technician_2_id === uid ||
+                orderTechnicians(o).some(t => t.id === uid) ||
                 (Array.isArray(o.route_slots) && o.route_slots.some(s => s.technician_id === uid))
             );
             setOrders(mine);
@@ -425,7 +425,7 @@ export const TechnicianView = () => {
         const map = {};
         STAGES.forEach(st => { map[st.id] = []; });
         (orders || []).forEach(o => {
-            if ((o.assigned_technician_id === uid || o.assigned_technician_2_id === uid) && map[o.status]) {
+            if (orderTechnicians(o).some(t => t.id === uid) && map[o.status]) {
                 map[o.status].push(o);
             }
         });

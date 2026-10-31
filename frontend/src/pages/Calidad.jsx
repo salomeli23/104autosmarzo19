@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { orderTechnicians } from '../lib/workflow';
 import { qualityAPI } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -59,7 +60,7 @@ const serviceName = (s) => (typeof s === 'object' ? (s.description || s.service)
 
 const QualityCard = ({ order, onReview }) => {
     const waited = minutesSince(order.quality_sent_at || order.service_completed_at);
-    const techs = [order.assigned_technician_name, order.assigned_technician_2_name].filter(Boolean).join(' · ');
+    const techs = orderTechnicians(order).map(t => t.name).filter(Boolean).join(' · ');
     return (
         <Card className={cn('card-hover', order.balance > 0.01 ? 'border-red-500/40' : 'border-violet-500/40')} data-testid={`quality-card-${order.id}`}>
             <CardContent className="p-4 space-y-3">

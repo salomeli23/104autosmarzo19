@@ -391,7 +391,7 @@ export const Vehicles = () => {
                                             data-testid={`assign-btn-${vehicle.id}`}
                                         >
                                             <UserPlus className="w-4 h-4 mr-2" />
-                                            {vehicle.assigned_technician_id ? 'Cambiar técnicos' : 'Asignar 2 técnicos'}
+                                            {vehicle.assigned_technician_id ? 'Cambiar técnicos' : 'Asignar técnicos'}
                                         </Button>
                                     </div>
                                 )}
