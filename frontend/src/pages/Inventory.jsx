@@ -34,6 +34,8 @@ export const Inventory = () => {
     const [stockDialog, setStockDialog] = useState(null); // { item } o { item: null } para leer cualquier caja
     const [stockFilter, setStockFilter] = useState('all'); // all | corte | bodega
     const [resetting, setResetting] = useState(false);
+    const [oneEachOpen, setOneEachOpen] = useState(false);
+    const [oneEachBusy, setOneEachBusy] = useState(false);
     const [items, setItems] = useState([]);
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -113,6 +115,20 @@ export const Inventory = () => {
             toast.error(e.response?.data?.detail || 'No se pudo cargar el inventario de corte');
         } finally {
             setResetting(false);
+        }
+    };
+
+    const handleOneRollEach = async () => {
+        setOneEachBusy(true);
+        try {
+            const res = await inventoryAPI.oneRollPerReference();
+            toast.success(res.data.message);
+            setOneEachOpen(false);
+            fetchAll();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'No se pudo mover los rollos al stock de corte');
+        } finally {
+            setOneEachBusy(false);
         }
     };
 
@@ -247,6 +263,11 @@ export const Inventory = () => {
                     {isAdmin && (
                         <Button variant="outline" onClick={() => setResetOpen(true)} data-testid="reset-cutting-rolls-btn">
                             <RefreshCw className="w-4 h-4 mr-2" /> Cargar inventario de corte
+                        </Button>
+                    )}
+                    {isAdmin && (
+                        <Button variant="outline" onClick={() => setOneEachOpen(true)} data-testid="one-roll-each-btn">
+                            <Scissors className="w-4 h-4 mr-2" /> 1 rollo de cada referencia a stock
                         </Button>
                     )}
                     <Button variant="outline" onClick={() => setStockDialog({ item: null })} data-testid="move-to-cutting-stock-btn">
@@ -652,6 +673,26 @@ export const Inventory = () => {
                     onDone={() => { setStockDialog(null); fetchAll(); }}
                 />
             )}
+
+            {/* Activar 1 rollo por referencia en el stock de corte */}
+            <Dialog open={oneEachOpen} onOpenChange={(v) => !oneEachBusy && setOneEachOpen(v)}>
+                <DialogContent data-testid="one-roll-each-dialog">
+                    <DialogHeader>
+                        <DialogTitle>1 rollo de cada referencia al stock de corte</DialogTitle>
+                        <DialogDescription>
+                            Cada una de las <b>{rollGroups.reduce((n, g) => n + g.items.length, 0)} referencias</b> queda con un rollo activo para elegir en el campo <b>Rollo</b> de Corte de piezas.
+                            Si la referencia ya tiene un rollo en corte no cambia; si tiene uno en bodega se mueve (sin foto de la caja); si no tiene ninguno se crea uno de {defaultRollMeters} m.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setOneEachOpen(false)} disabled={oneEachBusy}>Cancelar</Button>
+                        <Button onClick={handleOneRollEach} disabled={oneEachBusy} data-testid="confirm-one-roll-each">
+                            {oneEachBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Scissors className="w-4 h-4 mr-2" />}
+                            Mover a stock de corte
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Reemplazar el inventario de corte por las referencias oficiales */}
             <Dialog open={resetOpen} onOpenChange={(v) => !resetting && setResetOpen(v)}>

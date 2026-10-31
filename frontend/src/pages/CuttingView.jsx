@@ -5,10 +5,11 @@ import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
-import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package, HandHelping } from 'lucide-react';
+import { Scissors, Car, Clock, CheckCircle, Play, AlertCircle, Ruler, FileText, Package, HandHelping, Recycle } from 'lucide-react';
 import { LiveTimer } from '../components/LiveTimer';
 import { TechMeasurementsSummary } from '../components/TechMeasurements';
 import { CompleteCuttingDialog } from '../components/CompleteCuttingDialog';
+import { ReusablePiecesDialog } from '../components/ReusablePiecesDialog';
 import { partLabel } from '../lib/opacity';
 
 const CuttingView = () => {
@@ -16,6 +17,8 @@ const CuttingView = () => {
     const [loading, setLoading] = useState(true);
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [completeDialog, setCompleteDialog] = useState(false);
+    const [piecesOpen, setPiecesOpen] = useState(false);
+    const [pieces, setPieces] = useState([]);
 
     const fetchOrders = useCallback(async () => {
         try {
@@ -28,6 +31,10 @@ const CuttingView = () => {
             setLoading(false);
         }
     }, []);
+
+    useEffect(() => {
+        cuttingAPI.reusablePieces().then(res => setPieces(res.data || [])).catch(() => {});
+    }, [completeDialog]);
 
     useEffect(() => {
         fetchOrders();
@@ -88,7 +95,7 @@ const CuttingView = () => {
     return (
         <div className="space-y-6" data-testid="cutting-view">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 className="font-heading text-2xl md:text-3xl flex items-center gap-3">
                         <Scissors className="w-8 h-8 text-primary" />
@@ -98,10 +105,26 @@ const CuttingView = () => {
                         Gestión de corte de piezas para polarizado y PPF
                     </p>
                 </div>
-                <Button variant="outline" onClick={fetchOrders}>
-                    Actualizar
-                </Button>
+                <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setPiecesOpen(true)} className="border-emerald-500/40" data-testid="reusable-pieces-btn">
+                        <Recycle className="w-4 h-4 mr-2 text-emerald-400" /> Piezas reutilizables
+                        {pieces.length > 0 && <Badge className="ml-2 bg-emerald-500/20 text-emerald-300 border-emerald-500/40">{pieces.length}</Badge>}
+                    </Button>
+                    <Button variant="outline" onClick={fetchOrders}>
+                        Actualizar
+                    </Button>
+                </div>
             </div>
+
+            {pieces.length > 0 && (
+                <div className="p-3 rounded-lg border border-emerald-500/40 bg-emerald-500/5 text-sm flex items-start gap-2" data-testid="reusable-pieces-banner">
+                    <Recycle className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <p>
+                        ♻ Hay <b>{pieces.length}</b> pieza(s) reutilizable(s) en {new Set(pieces.map(p => p.referencia)).size} referencia(s).
+                        Al completar un corte te avisamos si la referencia tiene piezas que puedes usar antes de cortar del rollo.
+                    </p>
+                </div>
+            )}
 
             {/* Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -398,6 +421,7 @@ const CuttingView = () => {
                 onClose={() => { setCompleteDialog(false); setSelectedOrder(null); }}
                 onCompleted={fetchOrders}
             />
+            <ReusablePiecesDialog open={piecesOpen} onOpenChange={setPiecesOpen} onChanged={setPieces} />
         </div>
     );
 };

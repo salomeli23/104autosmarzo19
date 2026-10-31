@@ -11,6 +11,7 @@ import { zoneOpacityText } from '../lib/opacity';
 import { cuttingAPI, inventoryAPI, cuttingCatalogAPI } from '../lib/api';
 import { toast } from 'sonner';
 import { Scissors, Plus, Trash2, Recycle, CheckCircle2, ArrowLeft, Gauge, AlertTriangle } from 'lucide-react';
+import { TypeAheadSelect } from './TypeAheadSelect';
 
 const Vehicle3D = React.lazy(() => import('./Vehicle3D'));
 
@@ -32,12 +33,46 @@ const selectClass = 'w-full h-9 rounded-md border border-input bg-background px-
 const fmtM = (m) => `${(Math.round(m * 100) / 100).toFixed(2).replace('.', ',')} m`;
 
 let lineKey = 1;
-const newLine = (cm = '') => ({ key: `l${lineKey++}`, material: '', inventory_item_id: '', cm });
+const newLine = (cm = '') => ({ key: `l${lineKey++}`, material: '', inventory_item_id: '', reusable_piece_id: '', cm });
+const pieceSize = (p) => `${p.largo_cm}${p.ancho_cm ? ` × ${p.ancho_cm}` : ''} cm`;
 
 const orderHasPPF = (order) => (order?.cutting_services || order?.services || []).some(s => {
     const txt = `${s.name || ''} ${s.description || ''} ${s.service || ''}`.toLowerCase();
     return txt.includes('ppf') || txt.includes('proteccion') || txt.includes('protección');
 });
+
+/** Alerta de piezas reutilizables de la referencia elegida: permite cortar de una pieza en vez del rollo */
+const ReusablePiecesAlert = ({ line, options, piece, onUse, onRelease, testId }) => {
+    if (piece) {
+        return (
+            <div className="sm:col-span-4 flex flex-wrap items-center gap-2 text-xs p-2 rounded-md border border-emerald-500/50 bg-emerald-500/10" data-testid={testId}>
+                <Recycle className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="flex-1 min-w-0">Cortando de la pieza reutilizable <b>{piece.codigo}</b> ({pieceSize(piece)}) · no descuenta del rollo</span>
+                <Button type="button" size="sm" variant="ghost" className="h-7" onClick={(e) => { e.stopPropagation(); onRelease(); }}>Usar rollo</Button>
+            </div>
+        );
+    }
+    if (!options.length) return null;
+    const fitting = options.filter(p => p.fits);
+    return (
+        <div className="sm:col-span-4 text-xs p-2 rounded-md border border-amber-500/50 bg-amber-500/10 space-y-1.5" data-testid={testId}>
+            <p className="flex items-center gap-1.5 font-medium text-amber-300">
+                <Recycle className="w-4 h-4 shrink-0" />
+                ♻ Hay {options.length} pieza(s) reutilizable(s) de {line.material}
+                {parseFloat(line.cm) > 0 ? ` · ${fitting.length} alcanza(n) para ${formatLinear(parseFloat(line.cm))}` : ''}. Úsala antes de cortar del rollo.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+                {options.slice(0, 6).map(p => (
+                    <button key={p.id} type="button" onClick={(e) => { e.stopPropagation(); onUse(p); }}
+                        className={`px-2 py-1 rounded border ${p.fits ? 'border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/15' : 'border-border text-muted-foreground hover:bg-muted/40'}`}
+                        title={p.notes || ''} data-testid={`use-piece-${p.codigo}`}>
+                        Usar {p.codigo} · {pieceSize(p)}{p.fits ? '' : ' (corta)'}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+};
 
 /**
  * Completar corte con las medidas del técnico: por zona se elige material, rollo y metros
@@ -53,6 +88,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const [ppfSerial, setPpfSerial] = useState('');
     const [ppfModel, setPpfModel] = useState('');
     const [rolls, setRolls] = useState([]);
+    const [pieces, setPieces] = useState([]);
     const [catalog, setCatalog] = useState(null);
     const [carAverage, setCarAverage] = useState(null);
     const [saving, setSaving] = useState(false);
@@ -78,8 +114,12 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         setPpfModel(order.ppf_vehicle_model || '');
         inventoryAPI.list({ tipo_articulo: 'rollo' })
             // Solo rollos activos en el stock de corte (los de bodega se activan desde Inventario)
-            .then(res => setRolls((res.data || []).filter(r => (r.metros_restantes ?? 0) > 0 && r.en_stock_corte !== false)))
+            // Ordenados por referencia: en el select se escoge escribiendo las primeras letras
+            .then(res => setRolls((res.data || [])
+                .filter(r => (r.metros_restantes ?? 0) > 0 && r.en_stock_corte !== false)
+                .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es', { sensitivity: 'base' }) || (a.seq || 0) - (b.seq || 0))))
             .catch(() => setRolls([]));
+        cuttingAPI.reusablePieces().then(res => setPieces(res.data || [])).catch(() => setPieces([]));
         if (!catalog) cuttingCatalogAPI.getMaterials().then(res => setCatalog(res.data)).catch(() => {});
         cuttingCatalogAPI.getCarAverage(order.brand || '', order.model || '')
             .then(res => setCarAverage(res.data?.found ? res.data : null))
@@ -91,6 +131,13 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
 
     const isPPF = orderHasPPF(order);
     const rollById = (id) => rolls.find(r => r.id === id);
+    const pieceById = (id) => pieces.find(p => p.id === id);
+    const usedPieceIds = new Set(zones.flatMap(z => (cuts[z.id] || []).map(l => l.reusable_piece_id).filter(Boolean)));
+    // Piezas reutilizables de la referencia que sirven para la línea: primero las que alcanzan el largo
+    const piecesFor = (l) => pieces
+        .filter(p => p.referencia === l.material && (!usedPieceIds.has(p.id) || p.id === l.reusable_piece_id))
+        .map(p => ({ ...p, fits: !(parseFloat(l.cm) > 0) || p.largo_cm >= parseFloat(l.cm) }))
+        .sort((a, b) => (b.fits - a.fits) || a.largo_cm - b.largo_cm);
     const allLines = zones.flatMap(z => (cuts[z.id] || []).map(l => ({ ...l, zone: z.id })));
 
     const zoneDone = (zoneId) => {
@@ -136,7 +183,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         }
         // Un corte sin rollo solo puede salir de material reutilizable
         const initialReuse = {};
-        allLines.forEach(l => { initialReuse[l.key] = !l.inventory_item_id; });
+        allLines.forEach(l => { initialReuse[l.key] = !l.inventory_item_id || !!l.reusable_piece_id; });
         setReuse(initialReuse);
         setStep('confirm');
     };
@@ -156,7 +203,8 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                 material: l.material,
                 inventory_item_id: reuse[l.key] ? (l.inventory_item_id || null) : l.inventory_item_id,
                 metros: Math.round((parseFloat(l.cm) || 0)) / 100,
-                reutilizable: !!reuse[l.key],
+                reutilizable: !!reuse[l.key] || !!l.reusable_piece_id,
+                reusable_piece_id: l.reusable_piece_id || null,
             }));
         });
         setSaving(true);
@@ -188,6 +236,8 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const materialGroups = catalog?.groups?.length
         ? catalog.groups
         : catalog ? ['material_1', 'material_2', 'material_3'].filter(k => catalog[k]).map(k => catalog[k]) : [];
+    const materialOptions = materialGroups.flatMap(g => g.items.map(it => ({ value: it, label: it, group: g.label })));
+    const rollOptions = rolls.map(r => ({ value: r.id, label: `${r.nombre} · ${fmtM(r.metros_restantes || 0)} disp. · ${r.codigo}` }));
 
     return (
         <Dialog open={!!order} onOpenChange={(v) => !v && !saving && onClose?.()}>
@@ -259,27 +309,19 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             <div key={l.key} className="grid grid-cols-1 sm:grid-cols-[1.3fr_1.3fr_1fr_auto] gap-2 items-end" data-testid={`cut-line-${z.id}-${idx}`}>
                                                 <div className="space-y-1">
                                                     <Label className="text-[11px]">Material {ls.length > 1 ? idx + 1 : ''}</Label>
-                                                    <select value={l.material} onChange={(e) => updateLine(z.id, l.key, {
-                                                        material: e.target.value,
+                                                    <TypeAheadSelect value={l.material} onChange={(v) => updateLine(z.id, l.key, {
+                                                        material: v,
+                                                        reusable_piece_id: '',
                                                         // Cada referencia tiene su rollo: se selecciona solo si la línea no tenía uno
-                                                        inventory_item_id: l.inventory_item_id || rolls.find(r => r.tipo_rollo === e.target.value)?.id || '',
-                                                    })} className={selectClass} data-testid={`cut-material-${z.id}-${idx}`}>
-                                                        <option value="">Seleccionar material…</option>
-                                                        {materialGroups.map(g => (
-                                                            <optgroup key={g.label} label={g.label}>
-                                                                {g.items.map(it => <option key={it} value={it}>{it}</option>)}
-                                                            </optgroup>
-                                                        ))}
-                                                    </select>
+                                                        inventory_item_id: l.inventory_item_id || rolls.find(r => r.tipo_rollo === v)?.id || '',
+                                                    })} options={materialOptions} placeholder="Seleccionar material… (escribe)"
+                                                        className={selectClass} data-testid={`cut-material-${z.id}-${idx}`} />
                                                 </div>
                                                 <div className="space-y-1">
                                                     <Label className="text-[11px]">Rollo</Label>
-                                                    <select value={l.inventory_item_id} onChange={(e) => updateLine(z.id, l.key, { inventory_item_id: e.target.value })} className={selectClass} data-testid={`cut-roll-${z.id}-${idx}`}>
-                                                        <option value="">Sin rollo (reutilizable)</option>
-                                                        {rolls.map(r => (
-                                                            <option key={r.id} value={r.id}>{r.codigo} · {r.nombre} · {fmtM(r.metros_restantes || 0)} disp.</option>
-                                                        ))}
-                                                    </select>
+                                                    <TypeAheadSelect value={l.inventory_item_id} onChange={(v) => updateLine(z.id, l.key, { inventory_item_id: v, reusable_piece_id: '' })}
+                                                        options={rollOptions} placeholder="Sin rollo (reutilizable)"
+                                                        className={selectClass} data-testid={`cut-roll-${z.id}-${idx}`} />
                                                 </div>
                                                 <div className="space-y-1">
                                                     <Label className="text-[11px]">Metros a cortar</Label>
@@ -290,6 +332,17 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                                         <Trash2 className="w-4 h-4" />
                                                     </Button>
                                                 ) : <span />}
+                                                <ReusablePiecesAlert
+                                                    line={l}
+                                                    options={l.material ? piecesFor(l) : []}
+                                                    piece={pieceById(l.reusable_piece_id)}
+                                                    onUse={(p) => updateLine(z.id, l.key, { reusable_piece_id: p.id, inventory_item_id: '' })}
+                                                    onRelease={() => updateLine(z.id, l.key, {
+                                                        reusable_piece_id: '',
+                                                        inventory_item_id: rolls.find(r => r.tipo_rollo === l.material)?.id || '',
+                                                    })}
+                                                    testId={`cut-reusable-${z.id}-${idx}`}
+                                                />
                                             </div>
                                         ))}
                                         {err && <p className="text-xs text-red-500">{err}</p>}
@@ -334,7 +387,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                         <input
                                             type="checkbox"
                                             checked={!!reuse[l.key]}
-                                            disabled={!l.inventory_item_id}
+                                            disabled={!l.inventory_item_id || !!l.reusable_piece_id}
                                             onChange={(e) => setReuse(prev => ({ ...prev, [l.key]: e.target.checked }))}
                                             className="w-4 h-4 accent-emerald-500"
                                             data-testid={`cut-reuse-${l.key}`}
@@ -342,7 +395,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                         <div className="flex-1 min-w-0 text-sm">
                                             <p className="font-medium">{z.n}. {z.label} · {formatLinear(parseFloat(l.cm))}{zoneOpacityText(order, l.zone) ? ` · ${zoneOpacityText(order, l.zone)}` : ''}</p>
                                             <p className="text-xs text-muted-foreground truncate">
-                                                {l.material} · {roll ? `${roll.codigo} ${roll.nombre}` : 'sin rollo'}
+                                                {l.material} · {l.reusable_piece_id ? `pieza reutilizable ${pieceById(l.reusable_piece_id)?.codigo || ''}` : roll ? `${roll.codigo} ${roll.nombre}` : 'sin rollo'}
                                             </p>
                                         </div>
                                         <span className={`text-xs whitespace-nowrap ${reuse[l.key] ? 'text-emerald-400' : 'text-muted-foreground'}`}>

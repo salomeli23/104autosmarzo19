@@ -3547,6 +3547,7 @@ class ZoneCutLine(BaseModel):
     inventory_item_id: Optional[str] = None  # rollo del que sale el corte
     metros: float
     reutilizable: bool = False  # material reutilizable: no descuenta del rollo
+    reusable_piece_id: Optional[str] = None  # pieza reutilizable registrada de la que sale el corte
 
 
 CuttingCompleteRequest.model_rebuild()
@@ -3588,14 +3589,28 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, 
                 raise HTTPException(status_code=400, detail=f"Elige el material de {label}")
             if not ln.metros or ln.metros <= 0 or ln.metros > 60:
                 raise HTTPException(status_code=400, detail=f"Metros inválidos en {label}")
+            if ln.reusable_piece_id:
+                ln.reutilizable = True
             if not ln.reutilizable and not ln.inventory_item_id:
                 raise HTTPException(status_code=400, detail=f"Elige el rollo de {label} o márcalo como reutilizable")
             if not ln.reutilizable:
                 per_roll[ln.inventory_item_id] = round(per_roll.get(ln.inventory_item_id, 0) + ln.metros, 2)
             lines.append({"zone": zone, "material": ln.material.strip(), "inventory_item_id": ln.inventory_item_id,
-                          "metros": round(ln.metros, 2), "reutilizable": bool(ln.reutilizable)})
+                          "metros": round(ln.metros, 2), "reutilizable": bool(ln.reutilizable),
+                          "reusable_piece_id": ln.reusable_piece_id})
     if not lines:
         raise HTTPException(status_code=400, detail="Registra al menos un corte")
+    piece_ids = [ln["reusable_piece_id"] for ln in lines if ln["reusable_piece_id"]]
+    if len(piece_ids) != len(set(piece_ids)):
+        raise HTTPException(status_code=400, detail="Una pieza reutilizable solo se puede usar en un corte")
+    pieces = {p["id"]: p for p in await db.reusable_pieces.find(
+        {"id": {"$in": piece_ids}, "status": "disponible"}, {"_id": 0}).to_list(50)} if piece_ids else {}
+    for ln in lines:
+        if ln["reusable_piece_id"]:
+            piece = pieces.get(ln["reusable_piece_id"])
+            if not piece:
+                raise HTTPException(status_code=400, detail="La pieza reutilizable elegida ya no está disponible")
+            ln["reusable_piece_codigo"] = piece["codigo"]
     rolls_info = {}
     for inv_id, meters in per_roll.items():
         roll = await db.inventory.find_one({"id": inv_id, "active": True}, {"_id": 0})
@@ -3614,7 +3629,8 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, 
         ln["rollo_nombre"] = roll.get("nombre") if roll else None
     summary = "; ".join(
         f"{ZONE_LABELS[ln['zone']]}: {ln['metros']} m {ln['material']}"
-        + (" (reutilizable)" if ln["reutilizable"] else f" · {ln['rollo_codigo']}")
+        + ((f" (pieza reutilizable {ln['reusable_piece_codigo']})" if ln.get("reusable_piece_codigo") else " (reutilizable)")
+           if ln["reutilizable"] else f" · {ln['rollo_codigo']}")
         for ln in lines
     )
     return {"lines": lines, "per_roll": per_roll, "summary": summary}
@@ -3712,6 +3728,8 @@ async def complete_cutting(
                 "meters": ln["metros"],
                 "tipo_rollo": ln["material"],
                 "source_inventory_item_id": ln.get("inventory_item_id"),
+                "reusable_piece_id": ln.get("reusable_piece_id"),
+                "reusable_piece_codigo": ln.get("reusable_piece_codigo"),
                 "plate": order.get("plate"),
                 "client_name": order.get("client_name"),
                 "user_id": current_user["id"],
@@ -3720,6 +3738,11 @@ async def complete_cutting(
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             await db.aprovechamientos.insert_one(aprov_doc)
+            if ln.get("reusable_piece_id"):
+                await db.reusable_pieces.update_one({"id": ln["reusable_piece_id"], "status": "disponible"}, {"$set": {
+                    "status": "usada", "used_at": aprov_doc["created_at"], "used_by_name": aprov_doc["user_name"],
+                    "used_order_id": order_id, "used_order_code": order.get("order_code"), "used_plate": order.get("plate"),
+                    "used_zone": ln["zone"], "used_metros": ln["metros"]}})
             aprovechamientos_created.append({"part_id": ln["zone"], "measurement": aprov_doc["measurement"],
                                              "meters": ln["metros"], "tipo_rollo": ln["material"]})
     elif p.part_materials:
@@ -3881,6 +3904,61 @@ async def deliver_cut_material(order_id: str, current_user: dict = Depends(requi
                 "created_at": now,
             })
     return {"message": "Material entregado al técnico", "status": OrderStatus.ASIGNADO.value}
+
+
+# ==================== PIEZAS REUTILIZABLES (retazos de rollo para próximos cortes) ====================
+REUSABLE_PIECE_ROLES = [UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]
+
+
+class ReusablePieceCreate(BaseModel):
+    referencia: str
+    largo_cm: float
+    ancho_cm: Optional[float] = None
+    notes: Optional[str] = None
+
+
+@api_router.get("/cutting/reusable-pieces")
+async def list_reusable_pieces(status: str = "disponible", current_user: dict = Depends(require_roles(REUSABLE_PIECE_ROLES))):
+    """Piezas reutilizables registradas en Corte (por defecto las disponibles)."""
+    query = {} if status == "todas" else {"status": status}
+    return await db.reusable_pieces.find(query, {"_id": 0}).sort("seq", -1).to_list(1000)
+
+
+@api_router.post("/cutting/reusable-pieces")
+async def create_reusable_piece(data: ReusablePieceCreate, current_user: dict = Depends(require_roles(REUSABLE_PIECE_ROLES))):
+    if data.referencia not in ROLLS_LIST:
+        raise HTTPException(status_code=400, detail="Elige una referencia del inventario de corte")
+    if not data.largo_cm or data.largo_cm <= 0:
+        raise HTTPException(status_code=400, detail="El largo de la pieza debe ser mayor a 0")
+    if data.ancho_cm is not None and data.ancho_cm <= 0:
+        raise HTTPException(status_code=400, detail="El ancho de la pieza debe ser mayor a 0")
+    counter = await db.counters.find_one_and_update(
+        {"id": "reusable_piece"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
+    seq = int(counter["seq"])
+    group = next(g for g in CUTTING_REFERENCE_GROUPS if data.referencia in g["items"])
+    doc = {
+        "id": str(uuid.uuid4()), "seq": seq, "codigo": f"PR-{seq:04d}",
+        "referencia": data.referencia, "grupo": group["label"],
+        "largo_cm": round(float(data.largo_cm), 1),
+        "ancho_cm": round(float(data.ancho_cm), 1) if data.ancho_cm else None,
+        "notes": (data.notes or "").strip() or None,
+        "status": "disponible",
+        "created_by_id": current_user["id"], "created_by_name": current_user["name"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.reusable_pieces.insert_one(dict(doc))
+    return doc
+
+
+@api_router.put("/cutting/reusable-pieces/{piece_id}/discard")
+async def discard_reusable_piece(piece_id: str, current_user: dict = Depends(require_roles(REUSABLE_PIECE_ROLES))):
+    res = await db.reusable_pieces.update_one(
+        {"id": piece_id, "status": "disponible"},
+        {"$set": {"status": "descartada", "discarded_at": datetime.now(timezone.utc).isoformat(),
+                  "discarded_by_name": current_user["name"]}})
+    if not res.modified_count:
+        raise HTTPException(status_code=404, detail="La pieza no está disponible")
+    return {"message": "Pieza descartada"}
 
 
 @api_router.get("/aprovechamientos")
@@ -4390,6 +4468,50 @@ async def move_to_cutting_stock(data: CuttingStockMove, current_user: dict = Dep
     item.update(update)
     item.pop("_id", None)
     return {"message": f"Rollo {item['codigo']} activo en el stock de corte", "item": item}
+
+
+@api_router.post("/inventory/cutting-stock/one-per-reference")
+async def activate_one_roll_per_reference(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Deja 1 rollo activo en el stock de corte por cada referencia (sin foto de la caja).
+    Si la referencia ya tiene un rollo en corte con metros, no cambia; si tiene uno en bodega, lo mueve;
+    si no tiene ninguno, crea un rollo nuevo de DEFAULT_ROLL_METERS."""
+    now = datetime.now(timezone.utc).isoformat()
+    rolls = await db.inventory.find(
+        {"active": True, "tipo_articulo": "rollo", "tipo_rollo": {"$in": ROLLS_LIST}, "metros_restantes": {"$gt": 0}},
+        {"_id": 0, "id": 1, "tipo_rollo": 1, "en_stock_corte": 1, "seq": 1},
+    ).sort("seq", 1).to_list(2000)
+    in_stock = {r["tipo_rollo"] for r in rolls if r.get("en_stock_corte") is not False}
+    last = await db.inventory.find_one({}, {"_id": 0, "seq": 1}, sort=[("seq", -1)])
+    seq = int((last or {}).get("seq") or 0)
+    stamp = {"en_stock_corte": True, "stock_corte_at": now, "stock_corte_by_id": current_user["id"],
+             "stock_corte_by_name": current_user["name"], "stock_corte_sin_foto": True, "updated_at": now}
+    moved, created, already = [], [], []
+    for group in CUTTING_REFERENCE_GROUPS:
+        for ref in group["items"]:
+            if ref in in_stock:
+                already.append(ref)
+                continue
+            bodega = next((r for r in rolls if r["tipo_rollo"] == ref and r.get("en_stock_corte") is False), None)
+            if bodega:
+                await db.inventory.update_one({"id": bodega["id"]}, {"$set": stamp})
+                moved.append(ref)
+                continue
+            seq += 1
+            await db.inventory.insert_one({
+                "id": str(uuid.uuid4()), "seq": seq, "codigo": f"INV-{seq:05d}",
+                "nombre": ref, "categoria": group["categoria"], "grupo_corte": group["label"],
+                "tipo_articulo": "rollo", "tipo_rollo": ref, "factura_compra": None,
+                "metros_iniciales": DEFAULT_ROLL_METERS, "metros_restantes": DEFAULT_ROLL_METERS,
+                "cantidad_inicial": None, "cantidad_restante": None, "costo": 0.0, "linked_service": None,
+                "sede_id": None, "sede_nombre": None, "fecha_ingreso": now,
+                "notes": "1 rollo por referencia · activado en el stock de corte", "stock_minimo": None,
+                "active": True, "created_by": current_user["id"], "created_at": now, **stamp,
+            })
+            created.append(ref)
+    return {
+        "message": f"Stock de corte: {len(moved)} rollos movidos de bodega, {len(created)} creados, {len(already)} ya estaban",
+        "moved": moved, "created": created, "already": already,
+    }
 
 
 @api_router.get("/inventory/{item_id}/box-photo")

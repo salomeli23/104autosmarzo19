@@ -146,6 +146,9 @@ export const cuttingAPI = {
     complete: (orderId, body) => api.put(`/cutting/${orderId}/complete`, body || {}),
     // Corte confirma que entregó el material al técnico → Por Instalar
     deliver: (orderId) => api.put(`/cutting/${orderId}/deliver`),
+    reusablePieces: (status = 'disponible') => api.get('/cutting/reusable-pieces', { params: { status } }),
+    createReusablePiece: (data) => api.post('/cutting/reusable-pieces', data),
+    discardReusablePiece: (id) => api.put(`/cutting/reusable-pieces/${id}/discard`),
 };
 
 // Seed data
@@ -169,6 +172,7 @@ export const inventoryAPI = {
     resetCuttingRolls: () => api.post('/inventory/cutting-rolls/reset'),
     readRollBox: (photo) => api.post('/inventory/cutting-stock/read-box', { photo }, { timeout: 120000 }),
     moveToCuttingStock: (data) => api.post('/inventory/cutting-stock', data),
+    oneRollPerReference: () => api.post('/inventory/cutting-stock/one-per-reference'),
     boxPhoto: (id) => api.get(`/inventory/${id}/box-photo`, { responseType: 'blob' }),
 };
 
