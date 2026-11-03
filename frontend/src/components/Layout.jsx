@@ -45,6 +45,7 @@ import {
     BadgeDollarSign,
     FileSpreadsheet,
     FileCheck2,
+    BellRing,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
@@ -55,7 +56,12 @@ const navItems = [
     { path: '/checkin', label: 'Check-in / Ingreso', icon: QrCode, roles: ['admin', 'asesor'] },
     { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'coordinador'] },
     { path: '/auto-asignar', label: 'Autos por Asignar', icon: UserPlus, roles: ['admin', 'coordinador'] },
-    { path: '/cutting', label: 'Corte de Piezas', icon: Scissors, roles: ['admin', 'corte', 'coordinador'] },
+    {
+        path: '/cutting', label: 'Corte de Piezas', icon: Scissors, roles: ['admin', 'corte', 'coordinador'],
+        children: [
+            { path: '/cutting/alertas', label: 'Alertas de rollos', icon: BellRing, roles: ['admin', 'corte', 'coordinador'] },
+        ],
+    },
     { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
     // Facturación (/billing) oculta del menú; la ruta sigue disponible
     {

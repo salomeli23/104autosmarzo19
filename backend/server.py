@@ -124,6 +124,9 @@ class AlertType(str, Enum):
     COBRO_REVISADO = "cobro_revisado"  # Liquidaciones aprobó, rechazó o pagó el cobro
     COMISION_ASESOR = "comision_asesor"  # Un asesor pidió el cobro de su comisión
     COMPROBANTE_PAGO = "comprobante_pago"  # Gerencia confirmó o rechazó el comprobante de un pago
+    ROLLO_BAJO = "rollo_bajo"  # Al rollo le quedan 5 m o 3 m
+    ROLLO_AGOTADO = "rollo_agotado"  # El rollo se acabó (o quedó en negativo por el corte extradimensional) y se dio de baja
+    ROLLO_FALTANTE = "rollo_faltante"  # La referencia se quedó sin rollos disponibles
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -175,8 +178,9 @@ def require_roles(allowed_roles: List[UserRole]):
         return current_user
     return role_checker
 
-async def create_alert(recipient_role: str, alert_type: AlertType, title: str, message: str, order_id: str = None):
-    """Create alert for users with specific role"""
+async def create_alert(recipient_role: str, alert_type: AlertType, title: str, message: str, order_id: str = None,
+                       extra: Optional[Dict[str, Any]] = None):
+    """Create alert for users with specific role. extra: datos adicionales (p. ej. rollo, metros, severidad)."""
     users = await db.users.find({"role": recipient_role}, {"_id": 0}).to_list(100)
     for user in users:
         alert_doc = {
@@ -187,7 +191,8 @@ async def create_alert(recipient_role: str, alert_type: AlertType, title: str, m
             "message": message,
             "order_id": order_id,
             "read": False,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **(extra or {}),
         }
         await db.alerts.insert_one(alert_doc)
 
@@ -565,6 +570,13 @@ class AlertResponse(BaseModel):
     order_id: Optional[str] = None
     read: bool
     created_at: str
+    # Alertas de rollos
+    category: Optional[str] = None  # 'rollos'
+    severity: Optional[str] = None  # 'warning' | 'high' | 'critical'
+    inventory_item_id: Optional[str] = None
+    rollo_codigo: Optional[str] = None
+    tipo_rollo: Optional[str] = None
+    metros_restantes: Optional[float] = None
 
 class NotificationRequest(BaseModel):
     order_id: str
@@ -3024,9 +3036,20 @@ async def process_desistimiento(order_id: str, current_user: dict = Depends(requ
 
 # ==================== ALERTS ENDPOINTS ====================
 @api_router.get("/alerts", response_model=List[AlertResponse])
-async def get_alerts(current_user: dict = Depends(get_current_user)):
-    alerts = await db.alerts.find({"recipient_id": current_user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+async def get_alerts(category: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    query = {"recipient_id": current_user["id"]}
+    if category:
+        query["category"] = category
+    alerts = await db.alerts.find(query, {"_id": 0}).sort("created_at", -1).to_list(100 if not category else 200)
     return [AlertResponse(**a) for a in alerts]
+
+@api_router.put("/alerts/read-all")
+async def mark_all_alerts_read(category: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    query = {"recipient_id": current_user["id"], "read": False}
+    if category:
+        query["category"] = category
+    res = await db.alerts.update_many(query, {"$set": {"read": True}})
+    return {"message": "Alertas marcadas como leídas", "count": res.modified_count}
 
 @api_router.put("/alerts/{alert_id}/read")
 async def mark_alert_read(alert_id: str, current_user: dict = Depends(get_current_user)):
@@ -3821,6 +3844,8 @@ class CuttingCompleteRequest(BaseModel):
     part_materials: Optional[Dict[str, Dict[str, Any]]] = None
     # Cortes por zona de las medidas del técnico: {zona: [{material, inventory_item_id, metros, reutilizable}]}
     zone_cuts: Optional[Dict[str, List["ZoneCutLine"]]] = None
+    # El cortador confirmó el corte extradimensional (el rollo queda en negativo y se da de baja)
+    confirm_extra_cut: bool = False
 
 
 class ZoneCutLine(BaseModel):
@@ -3936,9 +3961,7 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, 
         if roll.get("en_stock_corte") is False:
             raise HTTPException(status_code=400,
                                 detail=f"El rollo {roll.get('codigo')} está en bodega: muévelo al stock de corte desde Inventario")
-        if (roll.get("metros_restantes") or 0) + 1e-6 < meters:
-            raise HTTPException(status_code=400,
-                                detail=f"El rollo {roll.get('codigo')} ({roll.get('nombre')}) solo tiene {roll.get('metros_restantes') or 0} m y se necesitan {meters} m")
+        _check_roll_cut(roll, meters)
         rolls_info[inv_id] = roll
     for ln in lines:
         roll = rolls_info.get(ln["inventory_item_id"]) if not ln["reutilizable"] else None
@@ -4124,35 +4147,32 @@ async def complete_cutting(
         if meters_used and meters_used > 0:
             deductions_per_rollo[p.inventory_item_id] = meters_used
 
-    deduction_results = []
+    # Validar todos los rollos antes de descontar: solo un corte extradimensional por rollo, y confirmado
+    rollos_to_use = {}
     for inv_id, meters_used in deductions_per_rollo.items():
-        rollo = await db.inventory.find_one({"id": inv_id})
+        rollo = await db.inventory.find_one({"id": inv_id}, {"_id": 0})
         if rollo and rollo.get("tipo_articulo") == "rollo":
-            new_remaining = max(0, (rollo.get("metros_restantes") or 0) - meters_used)
-            await db.inventory.update_one(
-                {"id": inv_id},
-                {"$set": {"metros_restantes": new_remaining, "updated_at": datetime.now(timezone.utc).isoformat()}}
-            )
-            await db.inventory_movements.insert_one({
-                "id": str(uuid.uuid4()),
-                "inventory_item_id": inv_id,
-                "type": "deduct_auto_cutting",
-                "metros": round(meters_used, 2),
-                "cantidad": None,
-                "reason": f"Corte completado - Orden {order.get('order_code','')}",
-                "order_id": order_id,
-                "user_id": current_user["id"],
-                "user_name": current_user.get("name") or current_user.get("email"),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-            deduction_results.append({
-                "item_id": inv_id,
-                "rollo_codigo": rollo.get("codigo"),
-                "rollo_nombre": rollo.get("nombre"),
-                "tipo_rollo": rollo.get("tipo_rollo"),
-                "meters_used": round(meters_used, 2),
-                "new_remaining": round(new_remaining, 2),
-            })
+            if _check_roll_cut(rollo, meters_used) and not p.confirm_extra_cut:
+                raise HTTPException(status_code=400, detail=(
+                    f"El rollo {rollo.get('codigo')} solo tiene {rollo.get('metros_restantes') or 0} m: confirma el corte "
+                    "extradimensional (el rollo quedará en negativo y se dará de baja)"))
+            rollos_to_use[inv_id] = (rollo, meters_used)
+
+    deduction_results = []
+    for inv_id, (rollo, meters_used) in rollos_to_use.items():
+        res = await _consume_roll(rollo, meters_used, current_user, {
+            "type": "deduct_auto_cutting", "reason": f"Corte completado - Orden {order.get('order_code','')}",
+            "order_id": order_id}, order)
+        deduction_results.append({
+            "item_id": inv_id,
+            "rollo_codigo": rollo.get("codigo"),
+            "rollo_nombre": rollo.get("nombre"),
+            "tipo_rollo": rollo.get("tipo_rollo"),
+            "meters_used": round(meters_used, 2),
+            "new_remaining": res["new_remaining"],
+            "extra_cut": res["extra_cut"],
+            "dado_de_baja": res["retired"],
+        })
 
     if deduction_results:
         # legacy single-rollo fields kept for backward compatibility
@@ -4551,6 +4571,117 @@ async def delete_inventory_item(
 
 
 ROLL_LOW_METERS = 5  # alerta cuando a una referencia le quedan menos metros que esto
+ROLL_ALERT_THRESHOLDS = (5, 3)  # alerta a corte y coordinadores cuando a un rollo le quedan estos metros
+ROLL_ALERT_ROLES = ("corte", "coordinador")
+
+
+def _check_roll_cut(roll: dict, meters: float) -> bool:
+    """Valida un corte sobre un rollo. Devuelve True si es el corte extradimensional: el rollo trae más
+    material del nominal, así que se permite UN solo corte que lo deje en negativo; después se da de baja."""
+    remaining = float(roll.get("metros_restantes") or 0)
+    if remaining + 1e-6 >= meters:
+        return False
+    name = f"{roll.get('codigo')} ({roll.get('nombre')})"
+    if remaining <= 0:
+        raise HTTPException(status_code=400, detail=f"El rollo {name} está agotado: elige otro rollo")
+    if roll.get("extra_cut_used"):
+        raise HTTPException(status_code=400,
+                            detail=f"El rollo {name} ya tuvo su corte extradimensional: solo tiene {remaining} m y se necesitan {meters} m")
+    return True
+
+
+async def _roll_alert(alert_type: AlertType, title: str, message: str, roll: dict, remaining: float,
+                      severity: str, order_id: Optional[str] = None):
+    extra = {"category": "rollos", "severity": severity, "inventory_item_id": roll.get("id"),
+             "rollo_codigo": roll.get("codigo"), "tipo_rollo": roll.get("tipo_rollo"),
+             "metros_restantes": round(remaining, 2)}
+    for role in ROLL_ALERT_ROLES:
+        await create_alert(role, alert_type, title, message, order_id, extra)
+
+
+async def _consume_roll(roll: dict, meters: float, user: dict, movement: dict, order: Optional[dict] = None) -> dict:
+    """Descuenta metros de un rollo, avisa a corte y coordinadores al llegar a 5 m, 3 m o al agotarse,
+    y da de baja el rollo cuando se acaba o queda en negativo por el corte extradimensional."""
+    now = datetime.now(timezone.utc).isoformat()
+    prev = float(roll.get("metros_restantes") or 0)
+    extra_cut = _check_roll_cut(roll, meters)
+    new_remaining = round(prev - meters, 2)
+    update = {"metros_restantes": new_remaining, "updated_at": now}
+    order_code = (order or {}).get("order_code")
+    if extra_cut:
+        update.update({"extra_cut_used": True, "extra_cut_metros": round(-new_remaining, 2), "extra_cut_at": now,
+                       "extra_cut_order_code": order_code, "extra_cut_by_name": user.get("name")})
+    retired = new_remaining <= 1e-6
+    if retired:
+        update.update({"active": False, "agotado": True, "dado_de_baja_at": now, "deactivated_at": now,
+                       "deactivated_reason": "Rollo agotado: dado de baja automáticamente"})
+    sent = set(roll.get("low_alerts_sent") or [])
+    crossed = [t for t in ROLL_ALERT_THRESHOLDS if prev > t >= new_remaining and t not in sent]
+    if crossed:
+        update["low_alerts_sent"] = sorted(sent | set(crossed), reverse=True)
+    await db.inventory.update_one({"id": roll["id"]}, {"$set": update})
+    await db.inventory_movements.insert_one({
+        "id": str(uuid.uuid4()), "inventory_item_id": roll["id"], "metros": round(meters, 2), "cantidad": None,
+        "user_id": user["id"], "user_name": user.get("name") or user.get("email"), "created_at": now,
+        "extra_cut": extra_cut, **movement,
+    })
+
+    name = f"{roll.get('codigo')} · {roll.get('nombre') or roll.get('tipo_rollo')}"
+    order_id = (order or {}).get("id")
+    if retired:
+        detail = (f"Corte extradimensional de {round(meters, 2)} m: quedó en {new_remaining} m" if extra_cut
+                  else "Se usaron todos sus metros")
+        await _roll_alert(AlertType.ROLLO_AGOTADO, f"Rollo agotado: {roll.get('codigo')}",
+                          f"{name}. {detail}{f' (orden {order_code})' if order_code else ''}. El rollo se dio de baja del inventario.",
+                          roll, new_remaining, "critical", order_id)
+        ref = roll.get("tipo_rollo")
+        if ref:
+            left = await db.inventory.find({"active": True, "tipo_articulo": "rollo", "tipo_rollo": ref,
+                                            "metros_restantes": {"$gt": 0}}, {"_id": 0, "en_stock_corte": 1}).to_list(200)
+            in_cut = sum(1 for r in left if r.get("en_stock_corte") is not False)
+            if in_cut == 0:
+                where = (f"Hay {len(left)} rollo(s) en bodega: muévelo al stock de corte." if left
+                         else "No quedan rollos en inventario: hay que comprar.")
+                await _roll_alert(AlertType.ROLLO_FALTANTE, f"Falta rollo de {ref}",
+                                  f"El stock de corte se quedó sin rollos de {ref}. {where}", roll, 0,
+                                  "critical" if not left else "high", order_id)
+    elif crossed:
+        t = min(crossed)
+        await _roll_alert(AlertType.ROLLO_BAJO, f"Al rollo {roll.get('codigo')} le quedan {new_remaining} m",
+                          f"{name}: quedan {new_remaining} m (alerta de {t} m). Ten listo el siguiente rollo de esta referencia.",
+                          roll, new_remaining, "high" if t <= 3 else "warning", order_id)
+    return {"new_remaining": new_remaining, "extra_cut": extra_cut, "retired": retired}
+
+
+@api_router.get("/inventory/roll-status")
+async def get_roll_status(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    """Módulo de alertas de rollos: rollos por agotarse (5 m / 3 m), rollos dados de baja y referencias que faltan."""
+    fields = {"_id": 0, "id": 1, "codigo": 1, "nombre": 1, "tipo_rollo": 1, "grupo_corte": 1, "metros_restantes": 1,
+              "metros_iniciales": 1, "en_stock_corte": 1, "extra_cut_used": 1, "extra_cut_metros": 1,
+              "extra_cut_order_code": 1, "dado_de_baja_at": 1, "updated_at": 1}
+    low = await db.inventory.find(
+        {"active": True, "tipo_articulo": "rollo", "metros_restantes": {"$gt": 0, "$lte": ROLL_ALERT_THRESHOLDS[0]}},
+        fields).sort("metros_restantes", 1).to_list(500)
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    retired = await db.inventory.find({"agotado": True, "dado_de_baja_at": {"$gte": since}}, fields) \
+        .sort("dado_de_baja_at", -1).to_list(200)
+    stock = {}
+    async for r in db.inventory.find({"active": True, "tipo_articulo": "rollo", "metros_restantes": {"$gt": 0}},
+                                     {"_id": 0, "tipo_rollo": 1, "en_stock_corte": 1, "metros_restantes": 1}):
+        s = stock.setdefault(r.get("tipo_rollo"), {"corte": 0, "bodega": 0, "metros_corte": 0.0})
+        if r.get("en_stock_corte") is False:
+            s["bodega"] += 1
+        else:
+            s["corte"] += 1
+            s["metros_corte"] += float(r.get("metros_restantes") or 0)
+    missing = []
+    for group in CUTTING_REFERENCE_GROUPS:
+        for ref in group["items"]:
+            s = stock.get(ref, {"corte": 0, "bodega": 0})
+            if s["corte"] == 0:
+                missing.append({"tipo_rollo": ref, "grupo": group["label"], "en_bodega": s["bodega"],
+                                "severity": "high" if s["bodega"] else "critical"})
+    return {"thresholds": list(ROLL_ALERT_THRESHOLDS), "low": low, "retired": retired, "missing": missing}
 
 
 @api_router.get("/inventory/alerts")
@@ -4885,8 +5016,10 @@ async def deduct_inventory(
     if item["tipo_articulo"] == "rollo":
         if metros is None or metros <= 0:
             raise HTTPException(status_code=400, detail="metros > 0 requerido")
-        new_remaining = max(0, (item.get("metros_restantes") or 0) - metros)
-        update["metros_restantes"] = new_remaining
+        order = await db.orders.find_one({"id": order_id}, {"_id": 0, "id": 1, "order_code": 1}) if order_id else None
+        res = await _consume_roll(item, metros, current_user, {"type": "deduct", "reason": reason, "order_id": order_id}, order)
+        return {"message": "Descuento registrado", "remaining": res["new_remaining"],
+                "extra_cut": res["extra_cut"], "dado_de_baja": res["retired"]}
     else:
         if cantidad is None or cantidad <= 0:
             raise HTTPException(status_code=400, detail="cantidad > 0 requerida")

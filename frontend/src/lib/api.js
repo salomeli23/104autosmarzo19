@@ -98,8 +98,10 @@ export const ordersAPI = {
 
 // Alerts
 export const alertsAPI = {
-    getAll: () => api.get('/alerts'),
+    getAll: (params) => api.get('/alerts', { params }),
     markRead: (id) => api.put(`/alerts/${id}/read`),
+    markAllRead: (params) => api.put('/alerts/read-all', null, { params }),
+    rollStatus: () => api.get('/inventory/roll-status'),
     getUnreadCount: () => api.get('/alerts/unread-count'),
 };
 

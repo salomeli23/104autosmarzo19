@@ -125,6 +125,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const [catalog, setCatalog] = useState(null);
     const [carAverage, setCarAverage] = useState(null);
     const [saving, setSaving] = useState(false);
+    const [extraCutOk, setExtraCutOk] = useState(false);
 
     const tm = useMemo(() => order?.tech_measurements || {}, [order]);
     // Incluye las zonas anteriores (laterales por lado) si el técnico midió con ellas
@@ -243,7 +244,11 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         if (reuse[l.key] || !l.inventory_item_id) return;
         perRoll[l.inventory_item_id] = (perRoll[l.inventory_item_id] || 0) + (parseFloat(l.cm) || 0) / 100;
     });
-    const stockProblem = Object.entries(perRoll).find(([id, m]) => (rollById(id)?.metros_restantes ?? 0) + 1e-6 < m);
+    // El rollo no alcanza: se permite UN corte extradimensional (rollos que traen más material del nominal);
+    // el rollo queda en negativo y se da de baja. Si ya lo usó, no se puede.
+    const overRolls = Object.entries(perRoll).filter(([id, m]) => (rollById(id)?.metros_restantes ?? 0) + 1e-6 < m);
+    const stockProblem = overRolls.find(([id]) => rollById(id)?.extra_cut_used || (rollById(id)?.metros_restantes ?? 0) <= 0);
+    const needsExtraConfirm = overRolls.length > 0 && !stockProblem;
 
     const submit = async () => {
         const zone_cuts = {};
@@ -263,12 +268,15 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                 notes: notes.trim() || null,
                 ppf_vehicle_serial: isPPF ? ppfSerial.trim() : null,
                 ppf_vehicle_model: isPPF ? ppfModel.trim() : null,
+                confirm_extra_cut: needsExtraConfirm && extraCutOk,
             });
             const d = res.data?.inventory_deduction;
             const list = d?.multi || (d ? [d] : []);
             toast.success(list.length
                 ? `Corte completado · ${list.map(x => `${x.rollo_codigo}: -${x.meters_used} m (quedan ${x.new_remaining} m)`).join(' · ')}`
                 : 'Corte completado');
+            list.filter(x => x.dado_de_baja).forEach(x => toast.warning(
+                `Rollo ${x.rollo_codigo} agotado (${x.new_remaining} m): se dio de baja y se avisó a corte y coordinadores`));
             const aprovs = res.data?.aprovechamientos || [];
             if (aprovs.length) toast.info(`♻ ${aprovs.length} corte(s) reutilizable(s) registrados sin descontar stock`);
             onCompleted?.();
@@ -537,16 +545,26 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                 const r = rollById(id);
                                 const left = (r?.metros_restantes ?? 0) - m;
                                 return (
-                                    <p key={id} className={`text-xs flex justify-between gap-2 ${left < 0 ? 'text-red-500' : ''}`}>
+                                    <p key={id} className={`text-xs flex justify-between gap-2 ${left < 0 ? 'text-orange-400' : ''}`}>
                                         <span>{r?.codigo} · {r?.nombre}</span>
-                                        <span className="font-mono">-{fmtM(m)} · quedan {fmtM(Math.max(left, 0))}</span>
+                                        <span className="font-mono">-{fmtM(m)} · quedan {left < 0 ? `-${fmtM(-left)}` : fmtM(left)}</span>
                                     </p>
                                 );
                             })}
                             {stockProblem && (
                                 <p className="text-xs text-red-500 flex items-center gap-1 pt-1">
-                                    <AlertTriangle className="w-3.5 h-3.5" /> Un rollo no tiene metros suficientes. Cambia el rollo o marca el corte como reutilizable.
+                                    <AlertTriangle className="w-3.5 h-3.5" /> Un rollo está agotado o ya tuvo su corte extradimensional. Cambia el rollo o marca el corte como reutilizable.
                                 </p>
+                            )}
+                            {needsExtraConfirm && (
+                                <label className="mt-2 flex items-start gap-2 rounded-md border border-orange-500/50 bg-orange-500/10 p-2 text-xs cursor-pointer" data-testid="cut-extra-confirm">
+                                    <input type="checkbox" checked={extraCutOk} onChange={(e) => setExtraCutOk(e.target.checked)} className="mt-0.5 w-4 h-4 accent-orange-500" />
+                                    <span>
+                                        <b className="text-orange-300">Corte extradimensional.</b> {overRolls.map(([id]) => rollById(id)?.codigo).join(', ')} no
+                                        alcanza{overRolls.length > 1 ? 'n' : ''} por metros, pero el rollo trae material extra. Solo se permite 1 corte así por rollo:
+                                        quedará en negativo, se dará de baja y se avisará que falta.
+                                    </span>
+                                </label>
                             )}
                         </div>
 
@@ -554,7 +572,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                             <Button variant="outline" className="sm:flex-1" onClick={() => setStep('form')} disabled={saving}>
                                 <ArrowLeft className="w-4 h-4 mr-2" /> Volver
                             </Button>
-                            <Button className="sm:flex-1 bg-green-600 hover:bg-green-700" onClick={submit} disabled={saving || !!stockProblem} data-testid="cut-confirm">
+                            <Button className="sm:flex-1 bg-green-600 hover:bg-green-700" onClick={submit} disabled={saving || !!stockProblem || (needsExtraConfirm && !extraCutOk)} data-testid="cut-confirm">
                                 <Scissors className="w-4 h-4 mr-2" />
                                 {saving ? 'Guardando...' : 'Confirmar corte'}
                             </Button>

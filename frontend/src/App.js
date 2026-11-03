@@ -31,6 +31,7 @@ import { Retenciones } from './pages/Retenciones';
 import { MisComisiones } from './pages/MisComisiones';
 import { Reportes } from './pages/Reportes';
 import { Comprobantes } from './pages/Comprobantes';
+import { AlertasRollos } from './pages/AlertasRollos';
 import { homeFor } from './lib/utils';
 import './App.css';
 
@@ -226,6 +227,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['admin', 'facturacion', 'coordinador']}>
                         <Pagos />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/cutting/alertas" 
+                element={
+                    <ProtectedRoute allowedRoles={['admin', 'corte', 'coordinador']}>
+                        <AlertasRollos />
                     </ProtectedRoute>
                 } 
             />
