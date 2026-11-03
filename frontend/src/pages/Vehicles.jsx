@@ -20,6 +20,7 @@ import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
 import { CheckinByTag } from '../components/CheckinByTag';
 import { OrderTimers } from '../components/OrderTimers';
 import { UpdateOrderButton } from '../components/UpdateOrderButton';
+import { ServiceInfoButton } from '../components/ServiceInfoButton';
 
 // Lista de marcas y modelos
 const CAR_BRANDS = [
@@ -378,6 +379,7 @@ export const Vehicles = () => {
                                     ))}
                                 </div>
 
+                                <ServiceInfoButton orderId={vehicle.id} className="w-full mt-3" />
                                 <UpdateOrderButton order={vehicle} onUpdated={fetchData} className="w-full mt-3" />
 
                                 {/* Action buttons */}

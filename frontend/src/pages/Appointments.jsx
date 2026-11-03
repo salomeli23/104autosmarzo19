@@ -15,6 +15,7 @@ import { QRDisplay } from '../components/QRDisplay';
 import { PlateBadge } from '../components/PlateBadge';
 import { ItemDiscountInput, itemDiscountAmount, itemDiscountFields } from '../components/ItemDiscountInput';
 import { RemovalCostInput } from '../components/RemovalCostInput';
+import { ServiceInfoButton } from '../components/ServiceInfoButton';
 import { allowsRemoval, removalAmount, withRemovalExtra, REMOVAL_LABEL } from '../lib/removal';
 import { CarAvatar } from '../components/CarAvatar';
 import { PlateInput } from '../components/PlateInput';
@@ -2067,6 +2068,7 @@ export const Appointments = () => {
                                                                             Reasignar
                                                                         </Button>
                                                                     )}
+                                                                    <ServiceInfoButton orderId={order.id} />
                                                                     <UpdateOrderButton order={order} onUpdated={() => fetchOrders(selectedDate)} />
                                                                     <OrderStatusBadge status={order.status} />
                                                                 </div>

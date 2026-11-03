@@ -3361,6 +3361,53 @@ async def get_current_colombia_time():
     }
 
 # ==================== ORDER HISTORY ====================
+@api_router.get("/orders/{order_id}/service-info")
+async def get_order_service_info(order_id: str, current_user: dict = Depends(get_current_user)):
+    """Ver servicio: quién atendió la orden (asesor que agendó y que hizo el check-in, técnicos con su servicio,
+    corte, calidad y entrega) con las fechas de cada etapa."""
+    o = await db.orders.find_one({"id": order_id}, {"_id": 0, "qr_code": 0, "signature_url": 0, "inspection_photos": 0,
+                                                    "profile_photo_url": 0, "service_completion_photos": 0})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if current_user.get("role") == UserRole.TECNICO.value and current_user["id"] not in _order_tech_ids(o):
+        raise HTTPException(status_code=403, detail="Esta orden no es tuya")
+    ids = {o.get(k) for k in ("cutting_started_by", "cutting_completed_by", "created_by", "checkin_by_id") if o.get(k)}
+    names = {u["id"]: u.get("name") for u in await db.users.find({"id": {"$in": list(ids)}}, {"_id": 0, "id": 1, "name": 1}).to_list(20)}
+    assigned = await db.order_history.find_one({"order_id": order_id, "new_status": OrderStatus.EN_CORTE.value},
+                                               {"_id": 0, "changed_by_name": 1, "created_at": 1}, sort=[("created_at", 1)])
+    techs = [{"id": t.get("id"), "name": t.get("name"),
+              "services": [TECH_SERVICE_AREAS.get(x, x) for x in (t.get("services") or [])]} for t in _order_techs(o)]
+    who = lambda name, when, label: {"label": label, "name": name, "at": when}
+    stages = [
+        who(o.get("created_by_name") or names.get(o.get("created_by")), o.get("created_at"), "Agendó la cita (asesor)"),
+        who(o.get("checkin_by_name") or names.get(o.get("checkin_by_id")), o.get("ingreso_at"), "Check-in (asesor)"),
+        who((assigned or {}).get("changed_by_name"), o.get("assigned_at") or (assigned or {}).get("created_at"), "Asignó los técnicos"),
+        who(names.get(o.get("cutting_completed_by")) or names.get(o.get("cutting_started_by")), o.get("cutting_completed_at"), "Corte de piezas"),
+        who(o.get("material_delivered_by_name"), o.get("material_delivered_at"), "Entregó el material"),
+        who(None, o.get("service_completed_at"), "Instalación terminada"),
+        who(o.get("quality_by_name"), o.get("quality_checked_at"), "Control de calidad"),
+        who(o.get("delivered_by_name"), o.get("delivered_at"), "Entregó el vehículo"),
+    ]
+    return {
+        "id": o["id"], "order_code": o.get("order_code"), "status": o.get("status"),
+        "client_name": o.get("client_name"), "client_phone": o.get("client_phone"),
+        "plate": o.get("plate"), "brand": o.get("brand"), "model": o.get("model"),
+        "date": o.get("date"), "scheduled_time": o.get("scheduled_time"),
+        "services": [{"description": x.get("description") or x.get("service"), "price": x.get("price"),
+                      "discount": x.get("discount"), "no_charge": x.get("no_charge")}
+                     for x in (o.get("services") or []) if isinstance(x, dict)],
+        "total": o.get("final_value") if o.get("final_value") is not None else o.get("negotiated_value"),
+        "asesor": o.get("created_by_name") or names.get(o.get("created_by")),
+        "asesor_checkin": o.get("checkin_by_name") or names.get(o.get("checkin_by_id")),
+        "technicians": techs,
+        "service_time_minutes": o.get("service_time_minutes"),
+        "stages": [x for x in stages if x["name"] or x["at"]],
+        "extra_ppf_cuts": [{"by": c.get("created_by_name"), "at": c.get("created_at"), "reason": c.get("reason"),
+                            "lines": [f"{l['part']} {l['metros']} m" for l in c.get("lines") or []]}
+                           for c in o.get("extra_ppf_cuts") or []],
+    }
+
+
 @api_router.get("/orders/{order_id}/history")
 async def get_order_history(order_id: str, current_user: dict = Depends(get_current_user)):
     """Get complete history of an order for traceability"""

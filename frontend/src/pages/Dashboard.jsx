@@ -6,6 +6,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { formatDateTime } from '../lib/utils';
 import { PostventaBadge } from '../components/PostventaBadge';
+import { ServiceInfoButton } from '../components/ServiceInfoButton';
 import { 
     Calendar, 
     Car, 
@@ -204,6 +205,7 @@ export const Dashboard = () => {
                                         <div className="flex items-center gap-2 shrink-0">
                                             <PostventaBadge order={order} />
                                             <StatusBadge status={order.status} />
+                                            <ServiceInfoButton orderId={order.id} />
                                         </div>
                                     </div>
                                 ))}
