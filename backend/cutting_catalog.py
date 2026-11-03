@@ -220,8 +220,10 @@ CUTTING_REFERENCE_GROUPS = [
     {"id": "huperoptik", "label": "Huperoptik", "categoria": "polarizado", "items": [
         "HUPEROPTIK METALIZADO 20% 60X100", "HUPEROPTIK METALIZADO 30% 36X100",
     ]},
-    {"id": "asfw", "label": "ASWF", "categoria": "polarizado", "items": [
-        "ASWF CHARCOAL 7%", "ASWF CHARCOAL 12%", "ASWF CHARCOAL 35%", "ASWF NANO S IR 15%", "ASWF CLEAR PLEX",
+    # Antes "ASWF" (renombrado a HÜPER OPTIK; el id se conserva)
+    {"id": "asfw", "label": "HÜPER OPTIK", "categoria": "polarizado", "items": [
+        "HÜPER OPTIK CHARCOAL 7%", "HÜPER OPTIK CHARCOAL 12%", "HÜPER OPTIK CHARCOAL 35%",
+        "HÜPER OPTIK NANO S IR 15%", "HÜPER OPTIK CLEAR PLEX",
     ]},
     {"id": "nano_spectra", "label": "Nano Spectra", "categoria": "polarizado", "items": [
         "NANOCERAMICA SPECTRA 5% ULTRACARBON", "NANOCERAMICA SPECTRA 20% ULTRACARBON",

@@ -3108,6 +3108,8 @@ ACCESSORY_GROUPS = [
         "Cámara 4K", "Cámara estándar"])},
     {"id": "guayas_camaras", "name": "Guayas cámaras", "type": "multi", "options": _acc_options("guayas_camaras", [
         "Guayas para cámaras"])},
+    {"id": "seguros_luna", "name": "Seguros de luna", "type": "single", "options": _acc_options("seguros_luna", [
+        "Seguros de luna"])},
 ]
 
 
@@ -3117,7 +3119,7 @@ SERVICES_CATALOG = {
         "services": [
             {"id": "nanooptik", "name": "Nanooptik"},
             {"id": "black_ceramic_autobahn", "name": "Black Ceramic Autobahn"},
-            {"id": "ultraoptik_aswf", "name": "Ultraoptik ASWF"},
+            {"id": "ultraoptik_aswf", "name": "Ultraoptik HÜPER OPTIK"},
             {"id": "ceramic_i3_autobahn", "name": "Ceramic i3 Autobahn"},
             {"id": "ceramic_i3_plus_autobahn", "name": "Ceramic i3+ Autobahn"},
             {"id": "huperoptik", "name": "Huperoptik"},
@@ -8058,6 +8060,34 @@ async def rolls_per_reference_once():
     except Exception as e:
         await db.migrations.delete_one({"_id": "rolls_corte_y_bodega_2026_10_31"})
         logging.getLogger(__name__).warning(f"No se pudieron preparar los rollos por referencia: {e}")
+
+ASWF_RENAME_MIGRATION = "rename_aswf_huper_optik_2026_11_03"
+
+@app.on_event("startup")
+async def rename_aswf_to_huper_optik_once():
+    """Una sola vez: las referencias de rollo "ASWF ..." pasan a llamarse "HÜPER OPTIK ..." en el inventario
+    y en las piezas reutilizables (el historial de órdenes ya cortadas conserva el nombre con que se registró)."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": ASWF_RENAME_MIGRATION, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    def renamed(fields):
+        return [{"$set": {f: {"$cond": [{"$eq": [{"$type": f"${f}"}, "string"]},
+                                        {"$replaceAll": {"input": f"${f}", "find": "ASWF", "replacement": "HÜPER OPTIK"}},
+                                        f"${f}"]} for f in fields}}]
+    try:
+        inv_fields = ["nombre", "name", "tipo_rollo", "grupo_corte"]
+        inv = await db.inventory.update_many({"$or": [{f: {"$regex": "ASWF"}} for f in inv_fields]}, renamed(inv_fields))
+        pieces = await db.reusable_pieces.update_many(
+            {"$or": [{f: {"$regex": "ASWF"}} for f in ("referencia", "grupo")]}, renamed(["referencia", "grupo"]))
+        message = f"{inv.modified_count} artículo(s) de inventario y {pieces.modified_count} pieza(s) renombrados a HÜPER OPTIK"
+        await db.migrations.update_one({"_id": ASWF_RENAME_MIGRATION},
+                                       {"$set": {"finished_at": datetime.now(timezone.utc).isoformat(), "message": message}})
+        logging.getLogger(__name__).info(f"[rollos] {message}")
+    except Exception as e:
+        await db.migrations.delete_one({"_id": ASWF_RENAME_MIGRATION})
+        logging.getLogger(__name__).warning(f"No se pudieron renombrar las referencias ASWF: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
