@@ -8,6 +8,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ROLE_LABELS } from '../lib/utils';
 import { BulkTechniciansCard } from '../components/BulkTechniciansCard';
+import { CoordinatorPinCard } from '../components/CoordinatorPinCard';
 import { toast } from 'sonner';
 import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff, UserPlus, LockKeyhole, Hash } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
@@ -417,6 +418,7 @@ export const Settings = () => {
 
             <DiscountCodesSection />
 
+            <CoordinatorPinCard />
             <BulkTechniciansCard onDone={() => usersAPI.getAll().then(res => setUsers(res.data)).catch(() => {})} />
 
             {/* Crear usuario */}

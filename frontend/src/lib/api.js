@@ -149,6 +149,8 @@ export const cuttingAPI = {
     getPending: () => api.get('/cutting/pending'),
     start: (orderId) => api.put(`/cutting/${orderId}/start`),
     complete: (orderId, body) => api.put(`/cutting/${orderId}/complete`, body || {}),
+    ppfInService: () => api.get('/cutting/ppf-in-service'),
+    extraPpfCut: (orderId, body) => api.post(`/cutting/${orderId}/extra-ppf-cut`, body),
     // Corte confirma que entregó el material al técnico → Por Instalar
     deliver: (orderId) => api.put(`/cutting/${orderId}/deliver`),
     reusablePieces: (status = 'disponible') => api.get('/cutting/reusable-pieces', { params: { status } }),
@@ -191,6 +193,8 @@ export const accessoryRequestsAPI = {
 // Settings (admin)
 export const settingsAPI = {
     getBookingPin: () => api.get('/settings/booking-pin'),
+    getCoordinatorPin: () => api.get('/settings/coordinator-pin'),
+    updateCoordinatorPin: (pin) => api.put('/settings/coordinator-pin', { pin }),
     updateBookingPin: (pin) => api.put('/settings/booking-pin', { pin }),
     getCompletionPin: () => api.get('/settings/completion-pin'),
     updateCompletionPin: (pin) => api.put('/settings/completion-pin', { pin }),

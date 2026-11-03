@@ -127,6 +127,7 @@ class AlertType(str, Enum):
     ROLLO_BAJO = "rollo_bajo"  # Al rollo le quedan 5 m o 3 m
     ROLLO_AGOTADO = "rollo_agotado"  # El rollo se acabó (o quedó en negativo por el corte extradimensional) y se dio de baja
     ROLLO_FALTANTE = "rollo_faltante"  # La referencia se quedó sin rollos disponibles
+    CORTE_PPF_ADICIONAL = "corte_ppf_adicional"  # Corte de PPF adicional aprobado con PIN de coordinador
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -393,6 +394,7 @@ class OrderResponse(BaseModel):
     discount_applied_at: Optional[str] = None
     discount_applied_stage: Optional[str] = None  # 'appointment' | 'checkin'
     items_discount_amount: Optional[float] = None  # suma de descuentos por ítem (antes de IVA)
+    extra_ppf_cuts: Optional[List[Dict[str, Any]]] = None  # cortes de PPF adicionales aprobados con PIN de coordinador
     paid_at: Optional[str] = None
     # Entrega data
     delivery_photo_url: Optional[str] = None
@@ -3411,6 +3413,53 @@ async def update_completion_pin(data: BookingPinUpdate, current_user: dict = Dep
     )
     return {"message": "PIN de completar servicio actualizado correctamente", "pin": pin}
 
+# ==================== PIN DE COORDINADOR: CORTES ADICIONALES DE PPF ====================
+COORD_PIN_KEY = "ppf_extra_cut_pin"
+COORD_PIN_MAX_FAILS = 5
+COORD_PIN_LOCK_MINUTES = 5
+
+
+@api_router.get("/settings/coordinator-pin")
+async def get_coordinator_pin_status(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Si el PIN de coordinador (aprueba cortes adicionales de PPF) está configurado. El PIN no se muestra."""
+    doc = await db.settings.find_one({"key": COORD_PIN_KEY}, {"_id": 0, "value_hash": 1, "updated_at": 1, "updated_by_name": 1})
+    return {"configured": bool((doc or {}).get("value_hash")), "updated_at": (doc or {}).get("updated_at"),
+            "updated_by_name": (doc or {}).get("updated_by_name")}
+
+
+@api_router.put("/settings/coordinator-pin")
+async def update_coordinator_pin(data: BookingPinUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Cambia el PIN de coordinador (4 a 10 dígitos). Se guarda cifrado."""
+    pin = (data.pin or "").strip()
+    if not pin.isdigit() or not 4 <= len(pin) <= 10:
+        raise HTTPException(status_code=400, detail="El PIN debe ser numérico de 4 a 10 dígitos")
+    await db.settings.update_one({"key": COORD_PIN_KEY}, {"$set": {
+        "key": COORD_PIN_KEY, "value_hash": hash_password(pin), "fails": 0, "locked_until": None,
+        "updated_at": datetime.now(timezone.utc).isoformat(), "updated_by": current_user["id"],
+        "updated_by_name": current_user.get("name")}}, upsert=True)
+    return {"message": "PIN de coordinador actualizado", "configured": True}
+
+
+async def _verify_coordinator_pin(pin: str):
+    """Valida el PIN de coordinador con bloqueo de 5 minutos tras 5 intentos fallidos."""
+    doc = await db.settings.find_one({"key": COORD_PIN_KEY}, {"_id": 0})
+    if not (doc or {}).get("value_hash"):
+        raise HTTPException(status_code=400, detail="Falta configurar el PIN de coordinador en Configuración")
+    now = datetime.now(timezone.utc)
+    locked = doc.get("locked_until")
+    if locked and datetime.fromisoformat(locked) > now:
+        raise HTTPException(status_code=429, detail="PIN de coordinador bloqueado por intentos fallidos: espera unos minutos")
+    if not pin or not verify_password(str(pin).strip(), doc["value_hash"]):
+        fails = int(doc.get("fails") or 0) + 1
+        upd = {"fails": fails}
+        if fails >= COORD_PIN_MAX_FAILS:
+            upd = {"fails": 0, "locked_until": (now + timedelta(minutes=COORD_PIN_LOCK_MINUTES)).isoformat()}
+        await db.settings.update_one({"key": COORD_PIN_KEY}, {"$set": upd})
+        raise HTTPException(status_code=400, detail="PIN de coordinador incorrecto")
+    if doc.get("fails"):
+        await db.settings.update_one({"key": COORD_PIN_KEY}, {"$set": {"fails": 0, "locked_until": None}})
+
+
 # ==================== SEED DATA ====================
 def _require_seed_enabled():
     # Public seed endpoints only work when ALLOW_SEED=true (keep it off in production)
@@ -3974,6 +4023,127 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, 
         for ln in lines
     )
     return {"lines": lines, "per_roll": per_roll, "summary": summary}
+
+
+# Cortes de PPF adicionales: durante todo el servicio (desde el ingreso hasta antes de la entrega)
+EXTRA_PPF_CUT_CLOSED = {OrderStatus.AGENDADO.value, OrderStatus.ENTREGADO.value, OrderStatus.DESISTIMIENTO.value}
+
+
+class ExtraPpfCutLine(BaseModel):
+    part: str  # parte del vehículo (Capot, Bomper…) o "Full Body"
+    material: str
+    inventory_item_id: Optional[str] = None
+    metros: float
+    reutilizable: bool = False
+    reusable_piece_id: Optional[str] = None
+
+
+class ExtraPpfCutRequest(BaseModel):
+    pin: str  # PIN de coordinador
+    reason: str  # por qué se necesita (pieza dañada, parte adicional…)
+    lines: List[ExtraPpfCutLine]
+    confirm_extra_cut: bool = False
+
+
+def _ppf_order_summary(o: dict) -> dict:
+    return {k: o.get(k) for k in ("id", "order_code", "plate", "brand", "model", "client_name", "status",
+                                  "cutting_status", "assigned_technicians", "extra_ppf_cuts")} | {"ppf_plan": _order_ppf_plan(o)}
+
+
+@api_router.get("/cutting/ppf-in-service")
+async def list_ppf_in_service(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    """Vehículos con PPF en servicio (ingresados y aún no entregados): se les puede agregar un corte de PPF."""
+    orders = await db.orders.find({"status": {"$nin": list(EXTRA_PPF_CUT_CLOSED)}}, {"_id": 0}).sort("ingreso_at", -1).to_list(300)
+    return [_ppf_order_summary(o) for o in orders if _order_ppf_plan(o)]
+
+
+@api_router.post("/cutting/{order_id}/extra-ppf-cut")
+async def add_extra_ppf_cut(order_id: str, data: ExtraPpfCutRequest,
+                            current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    """Registra un corte de PPF adicional en cualquier momento del servicio, aprobado con el PIN de coordinador.
+    Descuenta los rollos (con las mismas alertas de 5 m / 3 m / agotado y el corte extradimensional)."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") in EXTRA_PPF_CUT_CLOSED:
+        raise HTTPException(status_code=400, detail="Solo se agregan cortes a vehículos en servicio (ingresados y sin entregar)")
+    if not _order_ppf_plan(order):
+        raise HTTPException(status_code=400, detail="Esta orden no tiene servicio de PPF")
+    reason = (data.reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="Escribe el motivo del corte adicional")
+    if not data.lines:
+        raise HTTPException(status_code=400, detail="Registra al menos un corte")
+
+    per_roll, lines = {}, []
+    for ln in data.lines:
+        part, material = (ln.part or "").strip(), (ln.material or "").strip()
+        if not part or not material:
+            raise HTTPException(status_code=400, detail="Cada corte necesita la parte y el material")
+        if not ln.metros or ln.metros <= 0 or ln.metros > 60:
+            raise HTTPException(status_code=400, detail=f"Metros inválidos en {part}")
+        reusable = bool(ln.reutilizable or ln.reusable_piece_id)
+        if not reusable:
+            if not ln.inventory_item_id:
+                raise HTTPException(status_code=400, detail=f"Elige el rollo de {part} o márcalo como reutilizable")
+            per_roll[ln.inventory_item_id] = round(per_roll.get(ln.inventory_item_id, 0) + ln.metros, 2)
+        lines.append({"part": part, "material": material, "metros": round(ln.metros, 2), "reutilizable": reusable,
+                      "inventory_item_id": None if reusable else ln.inventory_item_id,
+                      "reusable_piece_id": ln.reusable_piece_id})
+    piece_ids = [ln["reusable_piece_id"] for ln in lines if ln["reusable_piece_id"]]
+    pieces = {p["id"]: p for p in await db.reusable_pieces.find(
+        {"id": {"$in": piece_ids}, "status": "disponible"}, {"_id": 0}).to_list(50)} if piece_ids else {}
+    if len(pieces) != len(set(piece_ids)) or len(piece_ids) != len(set(piece_ids)):
+        raise HTTPException(status_code=400, detail="Una pieza reutilizable elegida ya no está disponible")
+    rolls = {}
+    for inv_id, meters in per_roll.items():
+        roll = await db.inventory.find_one({"id": inv_id, "active": True}, {"_id": 0})
+        if not roll or roll.get("tipo_articulo") != "rollo":
+            raise HTTPException(status_code=400, detail="Rollo no válido")
+        if roll.get("en_stock_corte") is False:
+            raise HTTPException(status_code=400, detail=f"El rollo {roll.get('codigo')} está en bodega: muévelo al stock de corte")
+        if _check_roll_cut(roll, meters) and not data.confirm_extra_cut:
+            raise HTTPException(status_code=400, detail=(
+                f"El rollo {roll.get('codigo')} solo tiene {roll.get('metros_restantes') or 0} m: confirma el corte "
+                "extradimensional (el rollo quedará en negativo y se dará de baja)"))
+        rolls[inv_id] = roll
+
+    # Todo válido: ahora sí se pide la aprobación del coordinador
+    await _verify_coordinator_pin(data.pin)
+
+    now = datetime.now(timezone.utc).isoformat()
+    cut_id = str(uuid.uuid4())
+    results = []
+    for inv_id, meters in per_roll.items():
+        roll = rolls[inv_id]
+        res = await _consume_roll(roll, meters, current_user, {
+            "type": "deduct_extra_ppf_cut", "order_id": order_id,
+            "reason": f"Corte PPF adicional - Orden {order.get('order_code', '')}: {reason}"}, order)
+        results.append({"item_id": inv_id, "rollo_codigo": roll.get("codigo"), "rollo_nombre": roll.get("nombre"),
+                        "meters_used": meters, "new_remaining": res["new_remaining"],
+                        "extra_cut": res["extra_cut"], "dado_de_baja": res["retired"]})
+        for ln in lines:
+            if ln["inventory_item_id"] == inv_id:
+                ln["rollo_codigo"] = roll.get("codigo")
+    for ln in lines:
+        if ln["reusable_piece_id"]:
+            p = pieces[ln["reusable_piece_id"]]
+            ln["reusable_piece_codigo"] = p["codigo"]
+            await db.reusable_pieces.update_one({"id": p["id"], "status": "disponible"}, {"$set": {
+                "status": "usada", "used_at": now, "used_by_name": current_user.get("name"), "used_order_id": order_id,
+                "used_order_code": order.get("order_code"), "used_plate": order.get("plate"),
+                "used_zone": f"PPF adicional: {ln['part']}", "used_metros": ln["metros"]}})
+    entry = {"id": cut_id, "lines": lines, "reason": reason, "total_metros": round(sum(l["metros"] for l in lines), 2),
+             "order_status": order.get("status"), "approved_with": "pin_coordinador",
+             "created_by_id": current_user["id"], "created_by_name": current_user.get("name"), "created_at": now}
+    await db.orders.update_one({"id": order_id}, {"$push": {"extra_ppf_cuts": entry}, "$set": {"updated_at": now}})
+    await log_order_history(order_id, "CORTE_PPF_ADICIONAL", order.get("status"), order.get("status"),
+                            current_user["id"], current_user.get("name"),
+                            {"reason": reason, "lines": [f"{l['part']}: {l['metros']} m {l['material']}" for l in lines]})
+    summary = "; ".join(f"{l['part']} {l['metros']} m" for l in lines)
+    await create_alert("coordinador", AlertType.CORTE_PPF_ADICIONAL, f"Corte PPF adicional · {order.get('plate')}",
+                       f"{current_user.get('name')} registró con PIN de coordinador: {summary}. Motivo: {reason}", order_id)
+    return {"message": "Corte adicional de PPF registrado", "cut": entry, "inventory_deduction": results}
 
 
 @api_router.put("/cutting/{order_id}/complete")

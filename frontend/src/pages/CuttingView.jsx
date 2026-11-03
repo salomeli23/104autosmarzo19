@@ -10,6 +10,9 @@ import { LiveTimer } from '../components/LiveTimer';
 import { TechMeasurementsSummary } from '../components/TechMeasurements';
 import { CompleteCuttingDialog } from '../components/CompleteCuttingDialog';
 import { ReusablePiecesDialog } from '../components/ReusablePiecesDialog';
+import { ExtraPpfCutDialog } from '../components/ExtraPpfCutDialog';
+import { CoordinatorPinCard } from '../components/CoordinatorPinCard';
+import { useAuth } from '../context/AuthContext';
 import { partLabel } from '../lib/opacity';
 
 // Solo PPF: se corta sin las medidas de vidrios del técnico
@@ -24,8 +27,14 @@ const CuttingView = () => {
     const [completeDialog, setCompleteDialog] = useState(false);
     const [piecesOpen, setPiecesOpen] = useState(false);
     const [pieces, setPieces] = useState([]);
+    const [ppfOrders, setPpfOrders] = useState([]);
+    const [extraOrder, setExtraOrder] = useState(null);
+    const [showCoordPin, setShowCoordPin] = useState(false);
+    const { user } = useAuth();
+    const canManageCoordPin = ['admin', 'coordinador'].includes(user?.role);
 
     const fetchOrders = useCallback(async () => {
+        cuttingAPI.ppfInService().then(res => setPpfOrders(res.data || [])).catch(() => setPpfOrders([]));
         try {
             const response = await cuttingAPI.getPending();
             setOrders(response.data);
@@ -421,6 +430,61 @@ const CuttingView = () => {
                 </Card>
             )}
 
+            {/* PPF durante el servicio: cortes adicionales aprobados con PIN de coordinador */}
+            <div className="space-y-3" data-testid="ppf-in-service">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <h2 className="font-heading text-xl flex items-center gap-2">
+                        <Scissors className="w-5 h-5 text-purple-400" />
+                        PPF en servicio · cortes adicionales
+                    </h2>
+                    {canManageCoordPin && (
+                        <Button variant="ghost" size="sm" onClick={() => setShowCoordPin(v => !v)}>
+                            {showCoordPin ? 'Ocultar PIN de coordinador' : 'PIN de coordinador'}
+                        </Button>
+                    )}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                    Si en cualquier momento del servicio hace falta más PPF (pieza dañada, parte extra), regístralo aquí. Lo aprueba un coordinador con su PIN.
+                </p>
+                {showCoordPin && canManageCoordPin && <CoordinatorPinCard />}
+                {ppfOrders.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No hay vehículos con PPF en servicio.</p>
+                ) : (
+                    <div className="grid gap-3 md:grid-cols-2">
+                        {ppfOrders.map(o => {
+                            const extras = o.extra_ppf_cuts || [];
+                            return (
+                                <Card key={o.id} className="border-purple-500/30" data-testid={`ppf-service-${o.id}`}>
+                                    <CardContent className="pt-5 space-y-2">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                                <p className="font-heading text-lg">{o.plate}</p>
+                                                <p className="text-sm text-muted-foreground truncate">{o.brand} {o.model} · {o.client_name}</p>
+                                                <p className="text-xs text-purple-300 mt-1">
+                                                    PPF {o.ppf_plan?.scope === 'full' ? 'Full Body' : (o.ppf_plan?.parts || []).join(' · ')}
+                                                </p>
+                                            </div>
+                                            <Badge variant="outline" className="shrink-0">{o.status?.replace(/_/g, ' ')}</Badge>
+                                        </div>
+                                        {extras.length > 0 && (
+                                            <div className="text-xs text-muted-foreground border-t pt-2 space-y-0.5">
+                                                {extras.map(x => (
+                                                    <p key={x.id}>+ {x.lines.map(l => `${l.part} ${l.metros} m`).join(', ')} · {x.reason}</p>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <Button size="sm" className="w-full bg-purple-600 hover:bg-purple-700" onClick={() => setExtraOrder(o)} data-testid={`extra-cut-btn-${o.id}`}>
+                                            <Scissors className="w-4 h-4 mr-2" /> Agregar corte de PPF
+                                        </Button>
+                                    </CardContent>
+                                </Card>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+
+            <ExtraPpfCutDialog order={extraOrder} onClose={() => setExtraOrder(null)} onDone={fetchOrders} />
             <CompleteCuttingDialog
                 order={completeDialog ? selectedOrder : null}
                 onClose={() => { setCompleteDialog(false); setSelectedOrder(null); }}
