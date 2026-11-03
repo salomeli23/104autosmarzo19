@@ -21,18 +21,21 @@ export const TECH_SERVICE_AREAS = [
 export const MAX_TECHNICIANS = 6;
 export const techAreaLabel = (id) => TECH_SERVICE_AREAS.find(a => a.id === id)?.label || id;
 
+/** Área de un servicio ({service, description, ppf_scope}): polarizado, ppf, ultrasecure, accesorios, detailing o null */
+export const serviceArea = (s) => {
+    if (!s || typeof s !== 'object') return null;
+    const t = `${s.service || ''} ${s.description || ''}`.toLowerCase();
+    if (s.ppf_scope || t.includes('ppf')) return 'ppf';
+    if (t.includes('ultrasecure') || t.includes('seguridad') || t.includes('micras')) return 'ultrasecure';
+    if (t.includes('accesorio')) return 'accesorios';
+    if (t.includes('detailing') || t.includes('lavado') || t.includes('ceramico') || t.includes('cerámico')) return 'detailing';
+    if (CUTTING_KEYWORDS.some(k => t.includes(k)) || t.includes('ceramic') || t.includes('nano')) return 'polarizado';
+    return null;
+};
+
 /** Áreas que compró el cliente según los servicios de la orden */
 export const orderServiceAreas = (order) => {
-    const areas = new Set();
-    (order?.services || []).forEach(s => {
-        if (!s || typeof s !== 'object') return;
-        const t = `${s.service || ''} ${s.description || ''}`.toLowerCase();
-        if (s.ppf_scope || t.includes('ppf')) areas.add('ppf');
-        else if (t.includes('ultrasecure') || t.includes('seguridad') || t.includes('micras')) areas.add('ultrasecure');
-        else if (t.includes('accesorio')) areas.add('accesorios');
-        else if (t.includes('detailing') || t.includes('lavado') || t.includes('ceramico') || t.includes('cerámico')) areas.add('detailing');
-        else if (CUTTING_KEYWORDS.some(k => t.includes(k)) || t.includes('ceramic') || t.includes('nano')) areas.add('polarizado');
-    });
+    const areas = new Set((order?.services || []).map(serviceArea).filter(Boolean));
     return TECH_SERVICE_AREAS.map(a => a.id).filter(id => areas.has(id));
 };
 

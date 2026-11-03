@@ -14,6 +14,8 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
 import { PlateBadge } from '../components/PlateBadge';
 import { ItemDiscountInput, itemDiscountAmount, itemDiscountFields } from '../components/ItemDiscountInput';
+import { RemovalCostInput } from '../components/RemovalCostInput';
+import { allowsRemoval, removalAmount, withRemovalExtra, REMOVAL_LABEL } from '../lib/removal';
 import { CarAvatar } from '../components/CarAvatar';
 import { PlateInput } from '../components/PlateInput';
 import { PostventaServicesTable, newPostventaRow } from '../components/PostventaServicesTable';
@@ -150,12 +152,16 @@ export const Appointments = () => {
         if (formData.appointment_type === 'postventa') {
             return postventaServices.reduce((sum, row) => sum + (row.no_charge ? 0 : (parseFloat(row.price) || 0)), 0);
         }
-        const servicesSum = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
+        const servicesSum = selectedServices.reduce((sum, svc) => sum + (svc.price || 0) + removalAmount(svc), 0);
         return servicesSum + (sunroof.enabled ? (parseFloat(sunroof.price) || 0) : 0);
     };
+    const removalTotal = () => (formData.appointment_type === 'postventa' ? 0
+        : selectedServices.reduce((sum, svc) => sum + removalAmount(svc), 0));
+    // Valor de un ítem para su descuento: el servicio más su retiro (sin IVA)
+    const svcLineBase = (svc) => (svc.price || 0) + removalAmount(svc);
     // Descuentos de cada ítem (antes de IVA)
     const itemsDiscountTotal = () => (formData.appointment_type === 'postventa' ? 0
-        : selectedServices.reduce((sum, svc) => sum + itemDiscountAmount(svc.price, svc.discount_type, svc.discount_value), 0));
+        : selectedServices.reduce((sum, svc) => sum + itemDiscountAmount(svcLineBase(svc), svc.discount_type, svc.discount_value), 0));
     // Total después de los descuentos por ítem (el código de descuento se aplica sobre este valor)
     const calculateTotal = () => Math.max(calculateGross() - itemsDiscountTotal(), 0);
     const codeDiscountAmount = () => {
@@ -566,7 +572,7 @@ export const Appointments = () => {
             price: svc.price,
             description: serviceDescription(svc.category, svc.serviceName, svc.film_label),
             parts: svc.parts || [],
-            extras: [],
+            extras: withRemovalExtra([], removalAmount(svc)),
             film: svc.film || null,
             film_label: svc.film_label || null,
             list_price: svc.list_price ?? null,
@@ -770,11 +776,12 @@ export const Appointments = () => {
                         ? buildServicesData().map(svc => ({ label: svc.description.replace(/^Postventa - /, ''), value: svc.no_charge ? 'Sin pago' : formatCurrency(svc.price) }))
                         : [
                             ...selectedServices.map(svc => {
-                                const disc = itemDiscountAmount(svc.price, svc.discount_type, svc.discount_value);
+                                const disc = itemDiscountAmount(svcLineBase(svc), svc.discount_type, svc.discount_value);
                                 return { label: svc.film_label ? `${svc.serviceName} · ${svc.film_label}` : svc.serviceName,
                                     value: disc > 0 ? `${formatCurrency(svc.price || 0)} (-${formatCurrency(disc)})` : formatCurrency(svc.price || 0) };
                             }),
                             ...(sunroof.enabled ? [{ label: 'Sunroof (adicional)', value: formatCurrency(parseFloat(sunroof.price) || 0) }] : []),
+                            ...(removalTotal() > 0 ? [{ label: REMOVAL_LABEL, value: formatCurrency(removalTotal()) }] : []),
                         ]),
                     { label: 'Descuentos por ítem (antes de IVA)', value: itemsDiscountTotal() > 0 ? `-${formatCurrency(itemsDiscountTotal())}` : null },
                     { label: `Descuento ${discountApplied?.code || ''}`, value: discountApplied ? `-${formatCurrency(codeDiscountAmount())}` : null },
@@ -1611,9 +1618,18 @@ export const Appointments = () => {
                                                             </Button>
                                                         </div>
                                                     </div>
+                                                    {allowsRemoval(svc) && (
+                                                        <div className="mt-1.5 flex sm:justify-end">
+                                                            <RemovalCostInput
+                                                                value={svc.removal_cost}
+                                                                onChange={(v) => handleServiceDiscountChange(svc.serviceId, { removal_cost: v })}
+                                                                testId={`appointment-removal-${svc.serviceId}`}
+                                                            />
+                                                        </div>
+                                                    )}
                                                     <div className="mt-1.5 flex sm:justify-end">
                                                         <ItemDiscountInput
-                                                            base={svc.price}
+                                                            base={svcLineBase(svc)}
                                                             type={svc.discount_type}
                                                             value={svc.discount_value}
                                                             onChange={(patch) => handleServiceDiscountChange(svc.serviceId, patch)}
@@ -1643,6 +1659,12 @@ export const Appointments = () => {
                                             <div className="flex justify-between text-sm text-amber-400" data-testid="summary-sunroof">
                                                 <span>+ Sunroof (adicional)</span>
                                                 <span className="font-mono">{formatCurrency(parseFloat(sunroof.price) || 0)}</span>
+                                            </div>
+                                        )}
+                                        {removalTotal() > 0 && (
+                                            <div className="flex justify-between text-sm text-orange-300" data-testid="summary-removal">
+                                                <span>+ {REMOVAL_LABEL}</span>
+                                                <span className="font-mono">{formatCurrency(removalTotal())}</span>
                                             </div>
                                         )}
                                         {itemsDiscountTotal() > 0 && (

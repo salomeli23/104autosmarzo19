@@ -178,6 +178,8 @@ export const generateOrderPDF = async (order, { download = true } = {}) => {
             doc.setFontSize(7);
             detailLines = doc.splitTextToSize(`Opacidad / partes: ${detail}`, pageWidth - 80);
         }
+        const removal = (svc.extras || []).find(e => e?.id === 'retiro');
+        if (removal?.price > 0) detailLines.push(`Retiro de película: $${Math.round(removal.price).toLocaleString('es-CO')}`);
         if (svc.discount > 0) {
             const pct = svc.discount_type === 'percentage' ? ` (${svc.discount_value}%)` : '';
             detailLines.push(`Descuento${pct}: -$${Math.round(svc.discount).toLocaleString('es-CO')} (antes de IVA)`);

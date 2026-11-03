@@ -15,6 +15,8 @@ import { AccessoryGroups, applyAccessoryGroup } from './AccessoryGroups';
 import { PpfPartsPicker, ppfZonesFor, ppfPartsDescription } from './PpfPartsPicker';
 import { findCatalogService, defaultServicePrice, serviceDescription, stripFilmFromName } from '../lib/servicePricing';
 import { ItemDiscountInput, itemDiscountAmount, itemDiscountFields } from './ItemDiscountInput';
+import { RemovalCostInput } from './RemovalCostInput';
+import { allowsRemoval, removalAmount, removalFromExtras, withRemovalExtra, REMOVAL_EXTRA_ID } from '../lib/removal';
 import { toast } from 'sonner';
 import { FilePenLine, Plus, PlusCircle, Trash2, Lock, Package, Car, CheckCircle } from 'lucide-react';
 
@@ -58,12 +60,15 @@ const rowFromService = (svc) => {
     no_charge: !!svc.no_charge,
     discount_type: svc.discount_type || null,
     discount_value: svc.discount_value ?? '',
+    removal_cost: removalFromExtras(svc.extras),
     parts: svc.parts || [],
     part_percentages: svc.part_percentages || {},
     isCustom: svc.service === 'personalizado' || String(svc.service || '').startsWith('custom_'),
     };
 };
-const extrasSum = (svc) => (svc?.extras || []).reduce((s, e) => s + (parseFloat(e?.price) || 0), 0);
+// Extras de la fila: los que ya traía el servicio (sin el retiro guardado) más el costo de retiro que se está editando
+const rowExtras = (r) => (r.base?.extras || []).filter(e => e?.id !== REMOVAL_EXTRA_ID)
+    .reduce((s, e) => s + (parseFloat(e?.price) || 0), 0) + (r.no_charge ? 0 : removalAmount(r));
 const showsParts = (r) => SERVICES_WITH_PARTS.includes(r.serviceId) || (r.parts || []).length > 0;
 
 const Check = ({ on }) => (
@@ -116,10 +121,10 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
 
     const isPostventa = !!order.is_postventa;
     const servicesTotal = rows.reduce((sum, r) => sum + (r.no_charge ? 0 : (parseFloat(r.price) || 0)), 0);
-    const extrasTotal = rows.reduce((sum, r) => sum + extrasSum(r.base), 0);
+    const extrasTotal = rows.reduce((sum, r) => sum + rowExtras(r), 0);
     const sunroofTotal = sunroof.enabled ? (parseFloat(sunroof.price) || 0) : 0;
     const rowDiscount = (r) => (r.no_charge ? 0
-        : itemDiscountAmount((parseFloat(r.price) || 0) + extrasSum(r.base), r.discount_type, r.discount_value));
+        : itemDiscountAmount((parseFloat(r.price) || 0) + rowExtras(r), r.discount_type, r.discount_value));
     const itemsDiscount = rows.reduce((sum, r) => sum + rowDiscount(r), 0);
     const total = servicesTotal + extrasTotal + sunroofTotal - itemsDiscount;
 
@@ -216,6 +221,7 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                 price,
                 no_charge: isPostventa ? r.no_charge : null,
                 ...(r.no_charge ? { discount_type: null, discount_value: null } : itemDiscountFields(r)),
+                extras: withRemovalExtra(r.base?.extras, r.no_charge ? 0 : removalAmount(r)),
                 parts: r.parts,
                 part_percentages: r.part_percentages,
             };
@@ -285,7 +291,7 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                                 </div>
                                                 <p className="text-xs text-muted-foreground truncate">
                                                     {r.category}
-                                                    {extrasSum(r.base) > 0 && ` · extras ${formatCurrency(extrasSum(r.base))}`}
+                                                    {rowExtras(r) > 0 && ` · extras ${formatCurrency(rowExtras(r))}`}
                                                 </p>
                                             </div>
                                             <div className="flex items-center gap-2">
@@ -323,10 +329,19 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                                 </Button>
                                             </div>
                                         </div>
+                                        {!r.no_charge && allowsRemoval(r) && (
+                                            <div className="mt-2 flex justify-end">
+                                                <RemovalCostInput
+                                                    value={r.removal_cost}
+                                                    onChange={(v) => updateRow(r.key, { removal_cost: v })}
+                                                    testId={`update-order-removal-${idx}`}
+                                                />
+                                            </div>
+                                        )}
                                         {!r.no_charge && (
                                             <div className="mt-2 flex justify-end">
                                                 <ItemDiscountInput
-                                                    base={(parseFloat(r.price) || 0) + extrasSum(r.base)}
+                                                    base={(parseFloat(r.price) || 0) + rowExtras(r)}
                                                     type={r.discount_type}
                                                     value={r.discount_value}
                                                     onChange={(patch) => updateRow(r.key, patch)}

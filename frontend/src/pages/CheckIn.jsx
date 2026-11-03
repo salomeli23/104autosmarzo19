@@ -34,6 +34,8 @@ import { PostventaBadge } from '../components/PostventaBadge';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 import { CheckinConfirmDialog } from '../components/CheckinConfirmDialog';
 import { ItemDiscountInput, itemDiscountAmount, itemDiscountFields } from '../components/ItemDiscountInput';
+import { RemovalCostInput } from '../components/RemovalCostInput';
+import { allowsRemoval, removalAmount, removalFromExtras, withRemovalExtra, REMOVAL_LABEL } from '../lib/removal';
 
 // El sunroof nunca va dentro de un servicio: es un adicional con valor personalizable
 const SERVICE_PARTS = VEHICLE_PARTS.filter(p => p.id !== 'sunroof');
@@ -148,6 +150,7 @@ export const CheckIn = () => {
                 no_charge: !!s.no_charge,
                 discount_type: s.discount_type || null,
                 discount_value: s.discount_value ?? '',
+                removal_cost: removalFromExtras(s.extras),
                 parts: s.parts,
                 part_percentages: s.part_percentages,
                 extras: s.extras,
@@ -426,13 +429,19 @@ export const CheckIn = () => {
 
     // Valor de un ítem para su descuento: el servicio más sus extras (sin IVA)
     const svcLineBase = (svc, extras) => (svc.price || 0)
-        + extras.filter(e => svc.parts?.includes(e.trigger_part)).reduce((t, e) => t + (e.price || 0), 0);
+        + extras.filter(e => e.serviceId === svc.serviceId || (e.trigger_part && svc.parts?.includes(e.trigger_part)))
+            .reduce((t, e) => t + (e.price || 0), 0);
 
     // Calculate total (IVA 19% si aplica factura). El recargo por tarjeta fue removido por decisión de negocio.
     const calculateBreakdown = () => {
         const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
         const extras = applicableExtras();
         if (sunroof.enabled) extras.push({ id: SUNROOF_ID, nombre: 'Sunroof (adicional)', price: sunroofPrice() });
+        // Retiro de película de cada servicio de polarizado, PPF o ultrasecure
+        selectedServices.forEach(svc => {
+            const price = svc.no_charge ? 0 : removalAmount(svc);
+            if (price > 0) extras.push({ id: `retiro-${svc.serviceId}`, nombre: `${REMOVAL_LABEL} · ${svc.serviceName}`, price, serviceId: svc.serviceId });
+        });
         const extrasSum = extras.reduce((s, e) => s + (e.price || 0), 0);
         const baseSurcharge = subtotal + extrasSum;
         const cardSurcharge = 0; // ← eliminado 5% tarjeta
@@ -612,9 +621,12 @@ export const CheckIn = () => {
                     ppf_color: isPPFService(svc) ? (svc.ppf_color || null) : null,
                     ppf_zones: isPPFService(svc) ? (svc.ppf_zones || []) : null,
                     ppf_parts: isPPFService(svc) ? (svc.ppf_parts || []) : null,
-                    extras: isPPFService(svc) || svc.parts?.some(p => bk.extras.find(e => e.trigger_part === p))
-                        ? bk.extras.filter(e => svc.parts?.includes(e.trigger_part)).map(e => ({ id: e.id, nombre: e.nombre, price: e.price }))
-                        : null,
+                    extras: (() => {
+                        const triggered = bk.extras.filter(e => e.trigger_part && svc.parts?.includes(e.trigger_part))
+                            .map(e => ({ id: e.id, nombre: e.nombre, price: e.price }));
+                        const all = withRemovalExtra(triggered, svc.no_charge ? 0 : removalAmount(svc));
+                        return all.length || isPPFService(svc) ? all : null;
+                    })(),
                 };
             });
             const sunroofData = sunroofLine();
@@ -1261,10 +1273,19 @@ export const CheckIn = () => {
                                                         </Button>
                                                     </div>
                                                 </div>
+                                                {!svc.no_charge && allowsRemoval(svc) && (
+                                                    <div className="mt-2 flex justify-end">
+                                                        <RemovalCostInput
+                                                            value={svc.removal_cost}
+                                                            onChange={(v) => handleServiceDiscountChange(svc.serviceId, { removal_cost: v })}
+                                                            testId={`checkin-removal-${svc.serviceId}`}
+                                                        />
+                                                    </div>
+                                                )}
                                                 {!svc.no_charge && (
                                                     <div className="mt-2 flex justify-end">
                                                         <ItemDiscountInput
-                                                            base={svcLineBase(svc, applicableExtras())}
+                                                            base={svcLineBase(svc, calculateBreakdown().extras)}
                                                             type={svc.discount_type}
                                                             value={svc.discount_value}
                                                             onChange={(patch) => handleServiceDiscountChange(svc.serviceId, patch)}
