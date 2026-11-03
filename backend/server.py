@@ -301,6 +301,10 @@ class ServiceItem(BaseModel):
     film: Optional[str] = None
     film_label: Optional[str] = None
     list_price: Optional[float] = None
+    # Descuento de este ítem, antes de IVA: 'percentage' | 'fixed' y su valor; discount es el monto calculado
+    discount_type: Optional[str] = None
+    discount_value: Optional[float] = None
+    discount: Optional[float] = None
 
 class OrderCreate(BaseModel):
     client_name: str
@@ -383,6 +387,7 @@ class OrderResponse(BaseModel):
     discount_value: Optional[float] = None
     discount_applied_at: Optional[str] = None
     discount_applied_stage: Optional[str] = None  # 'appointment' | 'checkin'
+    items_discount_amount: Optional[float] = None  # suma de descuentos por ítem (antes de IVA)
     paid_at: Optional[str] = None
     # Entrega data
     delivery_photo_url: Optional[str] = None
@@ -630,14 +635,35 @@ def _compute_discount_amount(subtotal: float, dtype: str, dvalue: float) -> floa
     return round(min(dvalue, subtotal), 2)
 
 
-def _price_with_discount_and_iva(base: float, dtype: Optional[str], dvalue: Optional[float], with_iva: bool) -> Dict[str, float]:
-    """Valor de la orden: el descuento se aplica sobre la base (sin IVA) y el IVA 19% sobre lo que queda.
-    Es el mismo cálculo que muestran el check-in y el PDF de la orden. Redondeo al peso."""
+def _apply_item_discounts(services) -> float:
+    """Descuento por ítem: se calcula sobre el valor del servicio + sus extras (sin IVA) y queda guardado
+    en cada servicio. Devuelve la suma de los descuentos de los ítems."""
+    total = 0.0
+    for s in services:
+        dtype = (s.discount_type or "").lower()
+        amount = 0
+        if dtype in ("percentage", "fixed") and not s.no_charge and float(s.discount_value or 0) > 0:
+            line = float(s.price or 0) + sum(float((e or {}).get("price") or 0) for e in (s.extras or []))
+            amount = _round_peso(_compute_discount_amount(line, dtype, s.discount_value))
+        if amount:
+            s.discount_type, s.discount = dtype, amount
+        else:
+            s.discount_type = s.discount_value = s.discount = None
+        total += amount
+    return total
+
+
+def _price_with_discount_and_iva(base: float, dtype: Optional[str], dvalue: Optional[float], with_iva: bool,
+                                 items_discount: float = 0) -> Dict[str, float]:
+    """Valor de la orden: los descuentos (primero los de cada ítem, luego el código) se aplican sobre la base
+    sin IVA, y el IVA 19% sobre lo que queda. Es el mismo cálculo que muestran el check-in y el PDF. Redondeo al peso."""
     base = float(base or 0)
-    discount = _round_peso(_compute_discount_amount(base, dtype, dvalue)) if dtype else 0
-    tax_base = max(base - discount, 0)
+    after_items = max(base - float(items_discount or 0), 0)
+    discount = _round_peso(_compute_discount_amount(after_items, dtype, dvalue)) if dtype else 0
+    tax_base = max(after_items - discount, 0)
     iva = _round_peso(tax_base * IVA_RATE) if with_iva else 0
-    return {"base": base, "discount": discount, "tax_base": tax_base, "iva": iva, "total": tax_base + iva}
+    return {"base": base, "items_discount": float(items_discount or 0), "discount": discount,
+            "tax_base": tax_base, "iva": iva, "total": tax_base + iva}
 
 async def _resolve_discount_code(code: str) -> Optional[dict]:
     """Busca un código activo y vigente. Devuelve el documento o None."""
@@ -1474,7 +1500,9 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     order_code = generate_order_code()
     qr_code = generate_qr_code(order_code)
     
-    # Resolver código de descuento (si se envió)
+    # Descuentos por ítem (antes de IVA), luego el código de descuento sobre lo que queda
+    items_disc = _apply_item_discounts(order.services)
+    value_after_items = max(float(order.negotiated_value) - items_disc, 0)
     disc_doc = None
     disc_amount = 0.0
     if order.discount_code:
@@ -1482,11 +1510,11 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         if not disc_doc:
             raise HTTPException(status_code=400, detail="Código de descuento inválido, inactivo, vencido o agotado")
         disc_amount = _compute_discount_amount(
-            order.negotiated_value, disc_doc.get("discount_type"), disc_doc.get("discount_value")
+            value_after_items, disc_doc.get("discount_type"), disc_doc.get("discount_value")
         )
     
-    # Valor negociado neto (ya con descuento aplicado)
-    net_value = round(max(float(order.negotiated_value) - disc_amount, 0), 2)
+    # Valor negociado neto (ya con descuentos aplicados)
+    net_value = round(max(value_after_items - disc_amount, 0), 2)
     
     # Cita por PRIORIDAD: se agenda con la hora actual de Colombia y se
     # habilita el check-in inmediato (no se aplica gate de scheduled_time).
@@ -1519,6 +1547,7 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "services": [s.model_dump() for s in order.services],
         "negotiated_value": net_value,
         "negotiated_value_before_discount": float(order.negotiated_value),
+        "items_discount_amount": items_disc or None,
         "final_value": None,
         "status": OrderStatus.AGENDADO.value,
         "notes": order.notes,
@@ -2284,6 +2313,7 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
                 svc.price = 0
     if data.payment_method == "sin_pago" and not order.get("is_postventa"):
         raise HTTPException(status_code=400, detail="Solo las órdenes de postventa pueden ir sin pago")
+    items_disc = _apply_item_discounts(data.services)
     
     # ===== Código de descuento en check-in =====
     # Si la orden ya tiene un código aplicado (desde agendamiento), no se puede aplicar otro.
@@ -2313,14 +2343,16 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
     disc_src = disc_doc_ci or (order if existing_disc else {})
     raw_base = _round_peso(final_value_raw / (1 + IVA_RATE)) if data.requires_invoice else final_value_raw
     price = _price_with_discount_and_iva(raw_base, disc_src.get("discount_type"), disc_src.get("discount_value"),
-                                         bool(data.requires_invoice))
+                                         bool(data.requires_invoice), items_disc)
     disc_amount_ci = price["discount"]
-    net_final_value = round(price["total"], 2) if (disc_doc_ci or existing_disc) else final_value_raw
+    has_discount = bool(disc_doc_ci or existing_disc or items_disc)
+    net_final_value = round(price["total"], 2) if has_discount else final_value_raw
     
     update_data = {
         "services": [s.model_dump() for s in data.services],
         "final_value": net_final_value,
-        "final_value_before_discount": final_value_raw if (disc_doc_ci or existing_disc) else order.get("final_value_before_discount"),
+        "final_value_before_discount": final_value_raw if has_discount else order.get("final_value_before_discount"),
+        "items_discount_amount": items_disc or None,
         "tax_base": price["tax_base"],
         "iva_amount": price["iva"],
         "signature_url": data.signature_url,
@@ -7007,11 +7039,12 @@ async def update_order_services(
             s.price = 0
 
     gross = _services_gross(data.services)
+    items_disc = _apply_item_discounts(data.services)
     now = datetime.now(timezone.utc).isoformat()
     checked_in = order.get("final_value") is not None
     with_iva = bool(checked_in and order.get("requires_invoice"))
-    # Descuento sobre la base sin IVA y luego IVA 19% (igual que el check-in y el PDF)
-    price = _price_with_discount_and_iva(gross, order.get("discount_type"), order.get("discount_value"), with_iva)
+    # Descuentos sobre la base sin IVA y luego IVA 19% (igual que el check-in y el PDF)
+    price = _price_with_discount_and_iva(gross, order.get("discount_type"), order.get("discount_value"), with_iva, items_disc)
     disc_amount = price["discount"]
     net = round(price["total"], 2)
     if with_iva:
@@ -7023,12 +7056,13 @@ async def update_order_services(
         "last_updated_by_name": current_user["name"],
         "last_updated_at": now,
         "updated_at": now,
+        "items_discount_amount": items_disc or None,
     }
     if order.get("discount_type"):
         update_data["discount_amount"] = disc_amount
     if checked_in:
         update_data["final_value"] = net
-        update_data["final_value_before_discount"] = gross if order.get("discount_type") else order.get("final_value_before_discount")
+        update_data["final_value_before_discount"] = gross if (order.get("discount_type") or items_disc) else order.get("final_value_before_discount")
         update_data["tax_base"] = price["tax_base"]
         update_data["iva_amount"] = price["iva"]
     else:

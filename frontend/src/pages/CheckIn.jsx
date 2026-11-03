@@ -33,6 +33,7 @@ import api from '../lib/api';
 import { PostventaBadge } from '../components/PostventaBadge';
 import { ServiceCatalogLabel } from '../components/ServiceCatalogLabel';
 import { CheckinConfirmDialog } from '../components/CheckinConfirmDialog';
+import { ItemDiscountInput, itemDiscountAmount, itemDiscountFields } from '../components/ItemDiscountInput';
 
 // El sunroof nunca va dentro de un servicio: es un adicional con valor personalizable
 const SERVICE_PARTS = VEHICLE_PARTS.filter(p => p.id !== 'sunroof');
@@ -145,6 +146,8 @@ export const CheckIn = () => {
                 film_label: s.film_label || null,
                 list_price: s.list_price ?? null,
                 no_charge: !!s.no_charge,
+                discount_type: s.discount_type || null,
+                discount_value: s.discount_value ?? '',
                 parts: s.parts,
                 part_percentages: s.part_percentages,
                 extras: s.extras,
@@ -277,6 +280,11 @@ export const CheckIn = () => {
         setSelectedServices(prev => 
             prev.map(s => s.serviceId === serviceId ? { ...s, price: parseFloat(price) || 0 } : s)
         );
+    };
+
+    // Descuento de un ítem (antes de IVA)
+    const handleServiceDiscountChange = (serviceId, patch) => {
+        setSelectedServices(prev => prev.map(s => s.serviceId === serviceId ? { ...s, ...patch } : s));
     };
 
     // Solo postventa: marcar un servicio sin pago (valor 0)
@@ -416,6 +424,10 @@ export const CheckIn = () => {
         updateSvcPPF(serviceId, { ppf_parts: parts, ppf_zones: ppfZonesFor(parts) });
     };
 
+    // Valor de un ítem para su descuento: el servicio más sus extras (sin IVA)
+    const svcLineBase = (svc, extras) => (svc.price || 0)
+        + extras.filter(e => svc.parts?.includes(e.trigger_part)).reduce((t, e) => t + (e.price || 0), 0);
+
     // Calculate total (IVA 19% si aplica factura). El recargo por tarjeta fue removido por decisión de negocio.
     const calculateBreakdown = () => {
         const subtotal = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
@@ -424,20 +436,23 @@ export const CheckIn = () => {
         const extrasSum = extras.reduce((s, e) => s + (e.price || 0), 0);
         const baseSurcharge = subtotal + extrasSum;
         const cardSurcharge = 0; // ← eliminado 5% tarjeta
-        // Aplicar descuento antes de IVA (descuento sobre subtotal+extras)
+        // Descuentos antes de IVA: primero el de cada ítem y luego el código sobre lo que queda
+        const itemsDiscount = selectedServices.reduce((sum, svc) => sum + (svc.no_charge ? 0
+            : itemDiscountAmount(svcLineBase(svc, extras), svc.discount_type, svc.discount_value)), 0);
+        const afterItems = Math.max(baseSurcharge - itemsDiscount, 0);
         let discountAmount = 0;
         if (discountApplied) {
             if (discountApplied.discount_type === 'percentage') {
-                discountAmount = Math.round(baseSurcharge * (parseFloat(discountApplied.discount_value) || 0) / 100);
+                discountAmount = Math.round(afterItems * (parseFloat(discountApplied.discount_value) || 0) / 100);
             } else {
                 discountAmount = Math.round(parseFloat(discountApplied.discount_value) || 0);
             }
-            if (discountAmount > baseSurcharge) discountAmount = baseSurcharge;
+            if (discountAmount > afterItems) discountAmount = afterItems;
         }
-        const baseTax = Math.max(baseSurcharge - discountAmount, 0);
+        const baseTax = Math.max(afterItems - discountAmount, 0);
         const iva = requiresInvoice ? Math.round(baseTax * 0.19) : 0;
         const total = baseTax + iva;
-        return { subtotal, extras, extrasSum, cardSurcharge, discountAmount, iva, total };
+        return { subtotal, extras, extrasSum, cardSurcharge, itemsDiscount, discountAmount, baseTax, iva, total };
     };
     const calculateTotal = () => calculateBreakdown().total;
 
@@ -454,7 +469,7 @@ export const CheckIn = () => {
         }
         const bk = (() => {
             const b = calculateBreakdown();
-            return b.subtotal + b.extrasSum;
+            return b.subtotal + b.extrasSum - b.itemsDiscount;
         })();
         if (bk <= 0) {
             toast.error('Agrega al menos un servicio antes de validar el código');
@@ -583,6 +598,8 @@ export const CheckIn = () => {
                     service: svc.serviceId,
                     price: svc.no_charge ? 0 : svc.price,
                     no_charge: order.is_postventa ? !!svc.no_charge : null,
+                    ...(svc.no_charge ? { discount_type: null, discount_value: null } : itemDiscountFields(svc)),
+                    discount: svc.no_charge ? null : (itemDiscountAmount(svcLineBase(svc, bk.extras), svc.discount_type, svc.discount_value) || null),
                     description: serviceDescription(svc.category, svc.serviceName, svc.film_label),
                     film: svc.film || null,
                     film_label: svc.film_label || null,
@@ -612,7 +629,7 @@ export const CheckIn = () => {
                 signature_url: clientSignature,
                 requires_invoice: requiresInvoice,
                 discount_code: discountApplied?.code || order.discount_code,
-                price_breakdown: { base: bk.subtotal + bk.extrasSum, discount: bk.discountAmount, iva: bk.iva },
+                price_breakdown: { base: bk.subtotal + bk.extrasSum, items_discount: bk.itemsDiscount, discount: bk.discountAmount, iva: bk.iva },
             };
             let orderPdf = null;
             try {
@@ -1244,6 +1261,17 @@ export const CheckIn = () => {
                                                         </Button>
                                                     </div>
                                                 </div>
+                                                {!svc.no_charge && (
+                                                    <div className="mt-2 flex justify-end">
+                                                        <ItemDiscountInput
+                                                            base={svcLineBase(svc, applicableExtras())}
+                                                            type={svc.discount_type}
+                                                            value={svc.discount_value}
+                                                            onChange={(patch) => handleServiceDiscountChange(svc.serviceId, patch)}
+                                                            testId={`checkin-discount-${svc.serviceId}`}
+                                                        />
+                                                    </div>
+                                                )}
                                                 {/* PPF: Full Body o Partes */}
                                                 {isPPFService(svc) && (
                                                     <div className="mt-3 pt-3 border-t border-border/50 space-y-3 bg-blue-500/5 -mx-3 -mb-3 px-3 pb-3 rounded-b-lg" data-testid={`ppf-block-${svc.serviceId}`}>
@@ -1612,10 +1640,10 @@ export const CheckIn = () => {
                                                 <span className="font-mono">+{formatCurrency(bk.cardSurcharge)}</span>
                                             </div>
                                         )}
-                                        {bk.iva > 0 && (
-                                            <div className="flex justify-between text-sm text-yellow-300">
-                                                <span>IVA (19%)</span>
-                                                <span className="font-mono">+{formatCurrency(bk.iva)}</span>
+                                        {bk.itemsDiscount > 0 && (
+                                            <div className="flex justify-between text-sm text-emerald-300" data-testid="total-items-discount">
+                                                <span>Descuentos por ítem</span>
+                                                <span className="font-mono">-{formatCurrency(bk.itemsDiscount)}</span>
                                             </div>
                                         )}
                                         {bk.discountAmount > 0 && discountApplied && (
@@ -1626,6 +1654,18 @@ export const CheckIn = () => {
                                                     {discountApplied.from_appointment ? ' · desde cita' : ''})
                                                 </span>
                                                 <span className="font-mono">-{formatCurrency(bk.discountAmount)}</span>
+                                            </div>
+                                        )}
+                                        {bk.iva > 0 && (bk.itemsDiscount > 0 || bk.discountAmount > 0) && (
+                                            <div className="flex justify-between text-sm text-muted-foreground border-t border-cyan-500/20 pt-1">
+                                                <span>Base gravable (antes de IVA)</span>
+                                                <span className="font-mono">{formatCurrency(bk.baseTax)}</span>
+                                            </div>
+                                        )}
+                                        {bk.iva > 0 && (
+                                            <div className="flex justify-between text-sm text-yellow-300">
+                                                <span>IVA (19%)</span>
+                                                <span className="font-mono">+{formatCurrency(bk.iva)}</span>
                                             </div>
                                         )}
                                         <div className="flex justify-between items-center pt-2 border-t border-cyan-500/20">
@@ -1911,7 +1951,8 @@ export const CheckIn = () => {
                                                     service: s.serviceId,
                                                     description: s.serviceName,
                                                     price: s.price,
-                                                    parts: s.parts
+                                                    parts: s.parts,
+                                                    discount: itemDiscountAmount(svcLineBase(s, calculateBreakdown().extras), s.discount_type, s.discount_value) || null,
                                                 })),
                                                 ...(sunroofLine() ? [sunroofLine()] : []),
                                             ],
@@ -1922,7 +1963,7 @@ export const CheckIn = () => {
                                             discount_code: discountApplied?.code || order.discount_code,
                                             price_breakdown: (() => {
                                                 const bk = calculateBreakdown();
-                                                return { base: bk.subtotal + bk.extrasSum, discount: bk.discountAmount, iva: bk.iva };
+                                                return { base: bk.subtotal + bk.extrasSum, items_discount: bk.itemsDiscount, discount: bk.discountAmount, iva: bk.iva };
                                             })(),
                                         });
                                         toast.success('PDF generado correctamente');

@@ -11,7 +11,7 @@ const PAYMENT_LABELS = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia
  * Antes de aprobar el ingreso muestra la orden y los avisos para confirmarlos con
  * el cliente. Pregunta dos veces; en el segundo paso el cliente firma.
  * Props: open, onOpenChange(bool), order, services [{ serviceName, category, price, no_charge }],
- *        breakdown { extras, discountAmount, iva, total }, paymentMethod, requiresInvoice, onConfirm(signatureDataUrl)
+ *        breakdown { extras, itemsDiscount, discountAmount, iva, total }, paymentMethod, requiresInvoice, onConfirm(signatureDataUrl)
  */
 export const CheckinConfirmDialog = ({
     open, onOpenChange, order, services = [], breakdown = {}, paymentMethod, requiresInvoice, onConfirm,
@@ -76,6 +76,9 @@ export const CheckinConfirmDialog = ({
                                         <span className="font-mono shrink-0">{formatCurrency(e.price || 0)}</span>
                                     </div>
                                 ))}
+                                {breakdown.itemsDiscount > 0 && (
+                                    <div className="flex justify-between text-green-500"><span>Descuentos por ítem</span><span className="font-mono">-{formatCurrency(breakdown.itemsDiscount)}</span></div>
+                                )}
                                 {breakdown.discountAmount > 0 && (
                                     <div className="flex justify-between text-green-500"><span>Descuento</span><span className="font-mono">-{formatCurrency(breakdown.discountAmount)}</span></div>
                                 )}

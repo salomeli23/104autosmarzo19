@@ -13,6 +13,7 @@ import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { QRDisplay } from '../components/QRDisplay';
 import { PlateBadge } from '../components/PlateBadge';
+import { ItemDiscountInput, itemDiscountAmount, itemDiscountFields } from '../components/ItemDiscountInput';
 import { CarAvatar } from '../components/CarAvatar';
 import { PlateInput } from '../components/PlateInput';
 import { PostventaServicesTable, newPostventaRow } from '../components/PostventaServicesTable';
@@ -144,13 +145,29 @@ export const Appointments = () => {
         fetchSlotsAvailability(selectedDate);
     }, [selectedDate, fetchOrders, fetchSlotsAvailability]);
 
-    // Calculate total from selected services
-    const calculateTotal = () => {
+    // Valor bruto de los servicios seleccionados (sin descuentos, sin IVA)
+    const calculateGross = () => {
         if (formData.appointment_type === 'postventa') {
             return postventaServices.reduce((sum, row) => sum + (row.no_charge ? 0 : (parseFloat(row.price) || 0)), 0);
         }
         const servicesSum = selectedServices.reduce((sum, svc) => sum + (svc.price || 0), 0);
         return servicesSum + (sunroof.enabled ? (parseFloat(sunroof.price) || 0) : 0);
+    };
+    // Descuentos de cada ítem (antes de IVA)
+    const itemsDiscountTotal = () => (formData.appointment_type === 'postventa' ? 0
+        : selectedServices.reduce((sum, svc) => sum + itemDiscountAmount(svc.price, svc.discount_type, svc.discount_value), 0));
+    // Total después de los descuentos por ítem (el código de descuento se aplica sobre este valor)
+    const calculateTotal = () => Math.max(calculateGross() - itemsDiscountTotal(), 0);
+    const codeDiscountAmount = () => {
+        if (!discountApplied) return 0;
+        const base = calculateTotal();
+        const v = parseFloat(discountApplied.discount_value) || 0;
+        const amount = discountApplied.discount_type === 'percentage' ? Math.round(base * v / 100) : Math.round(v);
+        return Math.min(amount, base);
+    };
+    const totalWithDiscounts = () => calculateTotal() - codeDiscountAmount();
+    const handleServiceDiscountChange = (serviceId, patch) => {
+        setSelectedServices(prev => prev.map(s => s.serviceId === serviceId ? { ...s, ...patch } : s));
     };
 
     const handleDateSelect = (date) => {
@@ -553,6 +570,7 @@ export const Appointments = () => {
             film: svc.film || null,
             film_label: svc.film_label || null,
             list_price: svc.list_price ?? null,
+            ...itemDiscountFields(svc),
             ...(svc.ppf_scope ? {
                 ppf_scope: svc.ppf_scope,
                 ppf_parts: svc.ppf_scope === 'partes' ? (svc.ppf_parts || []) : [],
@@ -626,7 +644,7 @@ export const Appointments = () => {
             return;
         }
 
-        if (!isPostventa && calculateTotal() <= 0) {
+        if (!isPostventa && calculateGross() <= 0) {
             toast.error('Ingresa el valor de al menos un servicio');
             return;
         }
@@ -665,7 +683,7 @@ export const Appointments = () => {
     const createAppointment = async () => {
         const isPriority = formData.appointment_type === 'prioridad';
         const isPostventa = formData.appointment_type === 'postventa';
-        const total = calculateTotal();
+        const total = calculateGross();
         setSubmitting(true);
         try {
             const submitData = {
@@ -715,7 +733,7 @@ export const Appointments = () => {
 
     const confirmSections = () => {
         const type = formData.appointment_type;
-        const total = discountApplied ? discountApplied.new_total : calculateTotal();
+        const total = totalWithDiscounts();
         return [
             {
                 title: 'Cita',
@@ -751,10 +769,15 @@ export const Appointments = () => {
                     ...(type === 'postventa'
                         ? buildServicesData().map(svc => ({ label: svc.description.replace(/^Postventa - /, ''), value: svc.no_charge ? 'Sin pago' : formatCurrency(svc.price) }))
                         : [
-                            ...selectedServices.map(svc => ({ label: svc.film_label ? `${svc.serviceName} · ${svc.film_label}` : svc.serviceName, value: formatCurrency(svc.price || 0) })),
+                            ...selectedServices.map(svc => {
+                                const disc = itemDiscountAmount(svc.price, svc.discount_type, svc.discount_value);
+                                return { label: svc.film_label ? `${svc.serviceName} · ${svc.film_label}` : svc.serviceName,
+                                    value: disc > 0 ? `${formatCurrency(svc.price || 0)} (-${formatCurrency(disc)})` : formatCurrency(svc.price || 0) };
+                            }),
                             ...(sunroof.enabled ? [{ label: 'Sunroof (adicional)', value: formatCurrency(parseFloat(sunroof.price) || 0) }] : []),
                         ]),
-                    { label: `Descuento ${discountApplied?.code || ''}`, value: discountApplied ? `-${formatCurrency(discountApplied.discount_amount)}` : null },
+                    { label: 'Descuentos por ítem (antes de IVA)', value: itemsDiscountTotal() > 0 ? `-${formatCurrency(itemsDiscountTotal())}` : null },
+                    { label: `Descuento ${discountApplied?.code || ''}`, value: discountApplied ? `-${formatCurrency(codeDiscountAmount())}` : null },
                     { label: 'Total', value: formatCurrency(total), highlight: true },
                 ],
             },
@@ -1588,6 +1611,15 @@ export const Appointments = () => {
                                                             </Button>
                                                         </div>
                                                     </div>
+                                                    <div className="mt-1.5 flex sm:justify-end">
+                                                        <ItemDiscountInput
+                                                            base={svc.price}
+                                                            type={svc.discount_type}
+                                                            value={svc.discount_value}
+                                                            onChange={(patch) => handleServiceDiscountChange(svc.serviceId, patch)}
+                                                            testId={`appointment-discount-${svc.serviceId}`}
+                                                        />
+                                                    </div>
                                                     {/* Show selected parts for polarizado services */}
                                                     {svc.parts && svc.parts.length > 0 && (
                                                         <div className="mt-1 ml-4 flex flex-wrap gap-1">
@@ -1613,6 +1645,12 @@ export const Appointments = () => {
                                                 <span className="font-mono">{formatCurrency(parseFloat(sunroof.price) || 0)}</span>
                                             </div>
                                         )}
+                                        {itemsDiscountTotal() > 0 && (
+                                            <div className="flex justify-between text-sm text-emerald-300" data-testid="summary-items-discount">
+                                                <span>Descuentos por ítem (antes de IVA)</span>
+                                                <span className="font-mono">-{formatCurrency(itemsDiscountTotal())}</span>
+                                            </div>
+                                        )}
                                         <div className="flex justify-between font-bold pt-2 border-t border-primary/30">
                                             <span>Total:</span>
                                             <span className="text-primary">{formatCurrency(calculateTotal())}</span>
@@ -1623,11 +1661,11 @@ export const Appointments = () => {
                                                     <span>Descuento ({discountApplied.code}
                                                         {discountApplied.discount_type === 'percentage' ? ` · ${discountApplied.discount_value}%` : ''})
                                                     </span>
-                                                    <span className="font-mono">-{formatCurrency(discountApplied.discount_amount)}</span>
+                                                    <span className="font-mono">-{formatCurrency(codeDiscountAmount())}</span>
                                                 </div>
                                                 <div className="flex justify-between font-bold text-emerald-300">
                                                     <span>Total con descuento:</span>
-                                                    <span>{formatCurrency(discountApplied.new_total)}</span>
+                                                    <span>{formatCurrency(totalWithDiscounts())}</span>
                                                 </div>
                                             </div>
                                         )}
@@ -1678,7 +1716,7 @@ export const Appointments = () => {
                                 </div>
                                 {discountApplied && (
                                     <p className="text-xs text-emerald-300" data-testid="appointment-discount-applied-msg">
-                                        Descuento aplicado: -{formatCurrency(discountApplied.discount_amount)} · Total: {formatCurrency(discountApplied.new_total)}
+                                        Descuento aplicado: -{formatCurrency(codeDiscountAmount())} · Total: {formatCurrency(totalWithDiscounts())}
                                     </p>
                                 )}
                             </div>
@@ -1798,7 +1836,7 @@ export const Appointments = () => {
                                 }
                             >
                                 <DollarSign className="w-4 h-4 mr-2" />
-                                Agendar Cita - {formatCurrency(discountApplied ? discountApplied.new_total : calculateTotal())}
+                                Agendar Cita - {formatCurrency(totalWithDiscounts())}
                             </Button>
                         </form>
                     </DialogContent>

@@ -414,9 +414,9 @@ def build_mock_invoice(order: dict, invoice_number: str) -> bytes:
     else:
         tax_base = total
     iva = round(total - tax_base, 2)
-    discount = float(order.get("discount_amount") or 0)
-    gross = tax_base + discount  # Total bruto antes del descuento (sin IVA)
-    disc_pct = round(discount / gross * 100, 2) if gross and discount else 0
+    code_discount = float(order.get("discount_amount") or 0)
+    discount = code_discount + float(order.get("items_discount_amount") or 0)
+    gross = tax_base + discount  # Total bruto antes de los descuentos (sin IVA)
     issued = order.get("invoice_sent_at") or datetime.now(timezone.utc).isoformat()
     try:
         issued_dt = datetime.fromisoformat(issued.replace("Z", "+00:00")).astimezone(COLOMBIA_TZ)
@@ -487,21 +487,27 @@ def build_mock_invoice(order: dict, invoice_number: str) -> bytes:
         price = float(s.get("price") or 0) + sum(float((e or {}).get("price") or 0) for e in (s.get("extras") or []))
         if price <= 0:
             continue
-        lines.append([f"{vehicle} {(s.get('description') or s.get('service') or '').upper()}".strip(), price])
+        lines.append([f"{vehicle} {(s.get('description') or s.get('service') or '').upper()}".strip(), price,
+                      min(float(s.get("discount") or 0), price)])
     if not lines:
-        lines = [[f"{vehicle} SERVICIO".strip(), gross]]
-    lines_sum = sum(p for _, p in lines) or 1
+        lines = [[f"{vehicle} SERVICIO".strip(), gross, 0]]
+    lines_sum = sum(p for _, p, _ in lines) or 1
+    items_sum = sum(d for _, _, d in lines)
     data = [["Ítem", "Descripción", "Cantidad", "Impto. Cargo", "Vr. Bruto", "Vr. Total", "% Desc."]]
     acc_total = 0.0
-    for i, (desc, price) in enumerate(lines, 1):
+    for i, (desc, price, item_disc) in enumerate(lines, 1):
         bruto = round(gross * price / lines_sum, 2)  # reparte el bruto según el valor de cada servicio
+        # Descuento del renglón: el suyo propio más su parte del código de descuento (todo antes de IVA)
+        after_items = max(bruto - item_disc, 0)
+        code_share = code_discount * after_items / max(gross - items_sum, 1) if code_discount else 0
+        line_pct = round((item_disc + code_share) / bruto * 100, 2) if bruto else 0
         if i == len(lines):
             line_total = round(total - acc_total, 2)  # el último cuadra el total exacto
         else:
-            line_total = round(bruto * (1 - disc_pct / 100) * (1.19 if with_iva else 1), 2)
+            line_total = round((bruto - item_disc - code_share) * (1.19 if with_iva else 1), 2)
             acc_total += line_total
         data.append([str(i), Paragraph(desc, normal), "1.00", "19 %" if with_iva else "0 %",
-                     _num(bruto), _num(line_total), f"{disc_pct:g} %"])
+                     _num(bruto), _num(line_total), f"{line_pct:g} %"])
     col_w = [1.1 * cm, 7.2 * cm, 1.9 * cm, 2.4 * cm, 2.6 * cm, 2.6 * cm]
     col_w.append(width - sum(col_w))
     items = Table(data, colWidths=col_w, repeatRows=1)

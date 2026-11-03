@@ -14,6 +14,7 @@ import { UltrasecureFilmPicker, SuggestedPriceHint } from './UltrasecureFilmPick
 import { AccessoryGroups, applyAccessoryGroup } from './AccessoryGroups';
 import { PpfPartsPicker, ppfZonesFor, ppfPartsDescription } from './PpfPartsPicker';
 import { findCatalogService, defaultServicePrice, serviceDescription, stripFilmFromName } from '../lib/servicePricing';
+import { ItemDiscountInput, itemDiscountAmount, itemDiscountFields } from './ItemDiscountInput';
 import { toast } from 'sonner';
 import { FilePenLine, Plus, PlusCircle, Trash2, Lock, Package, Car, CheckCircle } from 'lucide-react';
 
@@ -55,6 +56,8 @@ const rowFromService = (svc) => {
     ppf_parts: svc.ppf_parts || [],
     price: String(svc.price ?? 0),
     no_charge: !!svc.no_charge,
+    discount_type: svc.discount_type || null,
+    discount_value: svc.discount_value ?? '',
     parts: svc.parts || [],
     part_percentages: svc.part_percentages || {},
     isCustom: svc.service === 'personalizado' || String(svc.service || '').startsWith('custom_'),
@@ -115,7 +118,10 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
     const servicesTotal = rows.reduce((sum, r) => sum + (r.no_charge ? 0 : (parseFloat(r.price) || 0)), 0);
     const extrasTotal = rows.reduce((sum, r) => sum + extrasSum(r.base), 0);
     const sunroofTotal = sunroof.enabled ? (parseFloat(sunroof.price) || 0) : 0;
-    const total = servicesTotal + extrasTotal + sunroofTotal;
+    const rowDiscount = (r) => (r.no_charge ? 0
+        : itemDiscountAmount((parseFloat(r.price) || 0) + extrasSum(r.base), r.discount_type, r.discount_value));
+    const itemsDiscount = rows.reduce((sum, r) => sum + rowDiscount(r), 0);
+    const total = servicesTotal + extrasTotal + sunroofTotal - itemsDiscount;
 
     const updateRow = (key, changes) => setRows(prev => prev.map(r => (r.key === key ? { ...r, ...changes } : r)));
 
@@ -209,6 +215,7 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                 } : {}),
                 price,
                 no_charge: isPostventa ? r.no_charge : null,
+                ...(r.no_charge ? { discount_type: null, discount_value: null } : itemDiscountFields(r)),
                 parts: r.parts,
                 part_percentages: r.part_percentages,
             };
@@ -316,6 +323,17 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                                 </Button>
                                             </div>
                                         </div>
+                                        {!r.no_charge && (
+                                            <div className="mt-2 flex justify-end">
+                                                <ItemDiscountInput
+                                                    base={(parseFloat(r.price) || 0) + extrasSum(r.base)}
+                                                    type={r.discount_type}
+                                                    value={r.discount_value}
+                                                    onChange={(patch) => updateRow(r.key, patch)}
+                                                    testId={`update-order-discount-${idx}`}
+                                                />
+                                            </div>
+                                        )}
 
                                         {(() => {
                                             const { service: catSvc, category: catCat } = findCatalogService(catalog, r.serviceId);
@@ -531,8 +549,14 @@ export const UpdateOrderButton = ({ order, onUpdated, className, size = 'sm' }) 
                                     <span className="font-mono">+{formatCurrency(sunroofTotal)}</span>
                                 </div>
                             )}
+                            {itemsDiscount > 0 && (
+                                <div className="flex justify-between text-sm text-emerald-300">
+                                    <span>Descuentos por ítem (antes de IVA)</span>
+                                    <span className="font-mono">-{formatCurrency(itemsDiscount)}</span>
+                                </div>
+                            )}
                             <div className="flex justify-between items-center pt-2 border-t border-cyan-500/20">
-                                <span className="font-medium">Total:</span>
+                                <span className="font-medium">{order.requires_invoice && order.final_value != null ? 'Total antes de IVA:' : 'Total:'}</span>
                                 <span className="text-2xl font-bold text-primary" data-testid="update-order-total">{formatCurrency(total)}</span>
                             </div>
                             {(order.discount_type || order.requires_invoice) && (

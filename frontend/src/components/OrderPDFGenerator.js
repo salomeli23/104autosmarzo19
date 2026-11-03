@@ -178,6 +178,10 @@ export const generateOrderPDF = async (order, { download = true } = {}) => {
             doc.setFontSize(7);
             detailLines = doc.splitTextToSize(`Opacidad / partes: ${detail}`, pageWidth - 80);
         }
+        if (svc.discount > 0) {
+            const pct = svc.discount_type === 'percentage' ? ` (${svc.discount_value}%)` : '';
+            detailLines.push(`Descuento${pct}: -$${Math.round(svc.discount).toLocaleString('es-CO')} (antes de IVA)`);
+        }
         const rowHeight = 8 + detailLines.length * 3.5;
         
         // Alternate row color
@@ -231,14 +235,18 @@ export const generateOrderPDF = async (order, { download = true } = {}) => {
         + (s.extras || []).reduce((t, e) => t + (e?.price || 0), 0), 0);
     const total = order.negotiated_value || order.total_value || servicesSum;
     const bk = order.price_breakdown || {};
-    const discount = bk.discount ?? (order.discount_amount || 0);
+    const itemsDiscount = bk.items_discount ?? (order.items_discount_amount
+        || services.reduce((sum, s) => sum + (s.discount || 0), 0));
+    const codeDiscount = bk.discount ?? (order.discount_amount || 0);
+    const discount = itemsDiscount + codeDiscount;
     const base = bk.base ?? servicesSum;
-    // Sin desglose del check-in: el IVA es lo que hay entre la base (menos descuento) y el total
+    // Los descuentos van antes de IVA. Sin desglose del check-in: el IVA es lo que hay entre la base (menos descuentos) y el total
     const iva = order.requires_invoice ? (bk.iva ?? Math.max(total - Math.max(base - discount, 0), 0)) : 0;
     const totalRows = [];
     if (order.requires_invoice || discount > 0) {
         totalRows.push([order.requires_invoice && !discount ? 'Subtotal (sin IVA)' : 'Subtotal servicios', money(base)]);
-        if (discount > 0) totalRows.push([`Descuento${order.discount_code ? ` (${order.discount_code})` : ''}`, `-${money(discount)}`]);
+        if (itemsDiscount > 0) totalRows.push(['Descuentos por ítem', `-${money(itemsDiscount)}`]);
+        if (codeDiscount > 0) totalRows.push([`Descuento${order.discount_code ? ` (${order.discount_code})` : ''}`, `-${money(codeDiscount)}`]);
         if (order.requires_invoice) {
             if (discount > 0) totalRows.push(['Base gravable', money(Math.max(base - discount, 0))]);
             totalRows.push(['IVA 19%', money(iva)]);

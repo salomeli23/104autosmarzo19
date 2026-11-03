@@ -52,7 +52,8 @@ export const OrderPreviewDialog = ({ orderId, retention, onClose }) => {
         const base = services.reduce((sum, s) => sum + (s.price || 0)
             + (s.extras || []).reduce((t, e) => t + (e?.price || 0), 0), 0);
         const total = order.final_value ?? order.negotiated_value ?? 0;
-        const discount = order.discount_amount || 0;
+        const itemsDiscount = order.items_discount_amount || 0;
+        const discount = (order.discount_amount || 0) + itemsDiscount;
         // Lo que queda entre la base (menos descuento) y el total es el IVA de la factura
         const tax = Math.round((total - Math.max(base - discount, 0)) * 100) / 100;
         const ret = (retention?.reteica || 0) + (retention?.retefuente || 0);
@@ -78,6 +79,10 @@ export const OrderPreviewDialog = ({ orderId, retention, onClose }) => {
                             {(s.parts?.length > 0 || s.ppf_parts_description) && (
                                 <p className="text-xs text-muted-foreground">{s.ppf_parts_description || s.parts.join(', ')}</p>
                             )}
+                            {s.discount > 0 && (
+                                <Row label={<span className="text-xs">Descuento{s.discount_type === 'percentage' ? ` ${s.discount_value}%` : ''}</span>}
+                                    value={`-${formatCurrency(s.discount)}`} className="text-xs text-emerald-400" />
+                            )}
                             {(s.extras || []).map((e, j) => (
                                 <Row key={j} label={<span className="text-xs text-muted-foreground">+ {e.nombre || e.id}</span>}
                                     value={formatCurrency(e.price || 0)} className="text-xs text-muted-foreground" />
@@ -88,9 +93,12 @@ export const OrderPreviewDialog = ({ orderId, retention, onClose }) => {
 
                 <div className="p-3 rounded-lg bg-muted/60 space-y-1" data-testid="order-preview-totals">
                     <Row label="Subtotal servicios" value={formatCurrency(base)} testId="order-preview-base" />
-                    {discount > 0 && (
+                    {itemsDiscount > 0 && (
+                        <Row label="Descuentos por ítem" value={`-${formatCurrency(itemsDiscount)}`} className="text-emerald-400" />
+                    )}
+                    {discount - itemsDiscount > 0 && (
                         <Row label={`Descuento${order.discount_code ? ` (${order.discount_code})` : ''}`}
-                            value={`-${formatCurrency(discount)}`} className="text-emerald-400" />
+                            value={`-${formatCurrency(discount - itemsDiscount)}`} className="text-emerald-400" />
                     )}
                     {order.requires_invoice ? (
                         <Row label="IVA 19% (factura electrónica)" value={formatCurrency(tax)} testId="order-preview-iva" />

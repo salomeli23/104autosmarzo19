@@ -239,7 +239,8 @@ def _advisor_polarizado_line(rates: dict, parts: List[str], discounted: bool) ->
 def _service_discounted(service: dict, order_discount: bool) -> bool:
     """Venta con descuento: la orden tiene código de descuento o el servicio se vendió por debajo del precio de lista."""
     list_price = float(service.get("list_price") or 0)
-    return order_discount or (list_price > 0 and float(service.get("price") or 0) < list_price)
+    return (order_discount or float(service.get("discount") or 0) > 0
+            or (list_price > 0 and float(service.get("price") or 0) < list_price))
 
 
 def compute_advisor_commission(order: dict) -> dict:
