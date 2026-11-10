@@ -124,6 +124,21 @@ const CuttingView = () => {
                         <Recycle className="w-4 h-4 mr-2 text-emerald-400" /> Piezas reutilizables
                         {pieces.length > 0 && <Badge className="ml-2 bg-emerald-500/20 text-emerald-300 border-emerald-500/40">{pieces.length}</Badge>}
                     </Button>
+                    {user?.role === 'admin' && orders.some(o => o.is_test) && (
+                        <Button variant="outline" className="border-red-500/40 text-red-400" data-testid="remove-test-orders"
+                            onClick={async () => {
+                                if (!window.confirm('¿Quitar los servicios de PRUEBA de corte? Los metros ya cortados no vuelven a los rollos.')) return;
+                                try {
+                                    const { data } = await cuttingAPI.removeTestOrders();
+                                    toast.success(data.message);
+                                    fetchOrders();
+                                } catch (e) {
+                                    toast.error(e.response?.data?.detail || 'No se pudieron quitar');
+                                }
+                            }}>
+                            Quitar pruebas ({orders.filter(o => o.is_test).length})
+                        </Button>
+                    )}
                     <Button variant="outline" onClick={fetchOrders}>
                         Actualizar
                     </Button>
@@ -201,7 +216,7 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
@@ -282,7 +297,7 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
@@ -371,7 +386,7 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>

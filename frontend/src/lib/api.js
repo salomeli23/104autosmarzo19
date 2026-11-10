@@ -150,6 +150,7 @@ export const cuttingAPI = {
     getPending: () => api.get('/cutting/pending'),
     start: (orderId) => api.put(`/cutting/${orderId}/start`),
     complete: (orderId, body) => api.put(`/cutting/${orderId}/complete`, body || {}),
+    removeTestOrders: () => api.post('/cutting/test-orders/remove'),
     ppfInService: () => api.get('/cutting/ppf-in-service'),
     extraPpfCut: (orderId, body) => api.post(`/cutting/${orderId}/extra-ppf-cut`, body),
     // Corte confirma que entregó el material al técnico → Por Instalar
