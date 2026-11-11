@@ -51,6 +51,22 @@ const WINDOWS = [
     { id: 'sunroof', label: 'Sunroof' },
 ];
 const windowLabel = (id) => WINDOWS.find(w => w.id === id)?.label || id;
+// Ventanas del carro 3D que cubre cada zona (igual que STANDARD_ZONE_WINDOWS en Vehicle3D;
+// se repite aquí para no cargar three.js antes de abrir el 3D). "luneta" = trasero.
+const ZONE_WINDOWS = {
+    panoramico: ['panoramico'],
+    trasero: ['luneta'],
+    laterales_delanteros: ['delantera_der', 'delantera_izq'],
+    laterales_traseros: ['trasera_der', 'custodia_der', 'trasera_izq', 'custodia_izq'],
+    laterales_derecho: ['delantera_der', 'trasera_der', 'custodia_der'],
+    laterales_izquierdo: ['delantera_izq', 'trasera_izq', 'custodia_izq'],
+    sunroof: ['sunroof'],
+};
+const MODEL_HINTS = {
+    estandar: 'Arrastra para girar · toca un vidrio para ir a su zona',
+    lados: 'Corte A = lado derecho · Corte B = lado izquierdo',
+    ventanas: 'Toca una ventana libre para sumarla al corte activo (máx. 2)',
+};
 const selectClass = 'w-full h-9 rounded-md border border-input bg-background px-2 text-sm';
 const fmtM = (m) => `${(Math.round(m * 100) / 100).toFixed(2).replace('.', ',')} m`;
 
@@ -235,6 +251,16 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const status = Object.fromEntries(MEASURE_ZONES.map(z => [
         z.id, !tm[z.id] || tm[z.id].aplica === false ? 'na' : zoneDone(z.id) ? 'done' : 'pending',
     ]));
+    // Carro 3D según el modelo: qué ventanas pinta cada zona/corte y su estado
+    const zones3d = cutModel === 'estandar'
+        ? MEASURE_ZONES.map(z => ({ id: z.id, n: z.n, windows: ZONE_WINDOWS[z.id] }))
+        : zones.map(z => ({ id: z.id, n: z.n, windows: isWinKey(z.id) ? (winSel[z.id] || []) : ZONE_WINDOWS[z.id] || [] }));
+    const status3d = cutModel === 'estandar' ? status : Object.fromEntries(zones.map(z => [z.id, zoneDone(z.id) ? 'done' : 'pending']));
+    const selectWindow3d = (w) => {
+        if (cutModel !== 'ventanas') return;
+        if (!isWinKey(active || '')) { toast.info('Primero toca el corte al que quieres sumar la ventana'); return; }
+        toggleWindow(active, w);
+    };
 
     const updateLine = (zone, key, changes) => setCuts(prev => ({
         ...prev, [zone]: prev[zone].map(l => (l.key === key ? { ...l, ...changes } : l)),
@@ -442,9 +468,10 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                         )}
                         {(measuredZones.length > 0 || ppfKeys.length === 0) && (
                             <>
-                                {cutModel === 'estandar' && <div className="rounded-xl border overflow-hidden bg-[radial-gradient(ellipse_at_center,_#4b4f56_0%,_#2b2e33_55%,_#18191c_100%)] p-1">
+                                {<div className="rounded-xl border overflow-hidden bg-[radial-gradient(ellipse_at_center,_#4b4f56_0%,_#2b2e33_55%,_#18191c_100%)] p-1">
                                     <Suspense fallback={<div className="h-[260px] flex items-center justify-center text-sm text-slate-300">Cargando carro 3D…</div>}>
-                                        <Vehicle3D status={status} active={active} onSelect={(z) => status[z] !== 'na' && setActive(z)} className="w-full" />
+                                        <Vehicle3D zones={zones3d} status={status3d} active={active} hint={MODEL_HINTS[cutModel]}
+                                            onSelect={(z) => status3d[z] !== 'na' && setActive(z)} onSelectWindow={selectWindow3d} className="w-full" />
                                     </Suspense>
                                 </div>}
                                 <TechMeasurementsSummary order={order} />
