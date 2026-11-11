@@ -165,6 +165,10 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const [carAverage, setCarAverage] = useState(null);
     const [saving, setSaving] = useState(false);
     const [extraCutOk, setExtraCutOk] = useState(false);
+    // Salir del corte: se pregunta si se guarda el borrador (no se pierde lo diligenciado)
+    const [leaveAsk, setLeaveAsk] = useState(false);
+    const [draftInfo, setDraftInfo] = useState(null);
+    const [savingDraft, setSavingDraft] = useState(false);
     const [cutModel, setCutModel] = useState('estandar');
     const [winSel, setWinSel] = useState({}); // modelo 3: {w1: ['delantera_der', 'trasera_der'], …}
 
@@ -205,6 +209,20 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         setNotes('');
         setPpfSerial(order.ppf_vehicle_serial || '');
         setPpfModel(order.ppf_vehicle_model || '');
+        setLeaveAsk(false);
+        // Borrador guardado: se retoma tal como quedó (las líneas reciben claves nuevas)
+        const draft = order.cutting_draft?.data;
+        setDraftInfo(draft ? order.cutting_draft : null);
+        if (draft) {
+            const restored = Object.fromEntries(Object.entries(draft.cuts || {}).map(([k, ls]) => [k, (ls || []).map(l => ({ ...newLine(l.cm || ''), ...l, key: `l${lineKey++}` }))]));
+            setCuts(Object.keys(restored).length ? restored : init);
+            setCutModel(draft.cutModel || 'estandar');
+            setWinSel(draft.winSel || {});
+            setNotes(draft.notes || '');
+            if (draft.ppfSerial) setPpfSerial(draft.ppfSerial);
+            if (draft.ppfModel) setPpfModel(draft.ppfModel);
+            setActive(draft.active && restored[draft.active] ? draft.active : Object.keys(restored).find(k => !isPpfKey(k)) || null);
+        }
         inventoryAPI.list({ tipo_articulo: 'rollo' })
             // Solo rollos activos en el stock de corte (los de bodega se activan desde Inventario)
             // Ordenados por referencia: en el select se escoge escribiendo las primeras letras
@@ -367,6 +385,28 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const stockProblem = overRolls.find(([id]) => rollById(id)?.extra_cut_used || (rollById(id)?.metros_restantes ?? 0) <= 0);
     const needsExtraConfirm = overRolls.length > 0 && !stockProblem;
 
+    const requestClose = () => { if (!saving && !savingDraft) setLeaveAsk(true); };
+    const saveDraftAndClose = async () => {
+        setSavingDraft(true);
+        try {
+            await cuttingAPI.saveDraft(order.id, { cutModel, cuts, winSel, notes, ppfSerial, ppfModel, active });
+            toast.success('Corte guardado como borrador: al volver lo encuentras tal como quedó');
+            setLeaveAsk(false);
+            onCompleted?.();
+            onClose?.();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'No se pudo guardar el borrador');
+        } finally {
+            setSavingDraft(false);
+        }
+    };
+    const leaveWithoutSaving = async () => {
+        if (draftInfo) await cuttingAPI.deleteDraft(order.id).catch(() => {});
+        setLeaveAsk(false);
+        if (draftInfo) onCompleted?.();
+        onClose?.();
+    };
+
     const submit = async () => {
         const zone_cuts = {};
         cutKeys.forEach(k => {
@@ -421,8 +461,29 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const ppfRollOptions = ppfRefs.size ? rollOptions.filter(o => ppfRefs.has(rollById(o.value)?.tipo_rollo)) : rollOptions;
 
     return (
-        <Dialog open={!!order} onOpenChange={(v) => !v && !saving && onClose?.()}>
-            <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto" data-testid="complete-cutting-dialog">
+        <Dialog open={!!order} onOpenChange={(v) => !v && requestClose()}>
+            <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto" data-testid="complete-cutting-dialog"
+                onInteractOutside={(e) => { e.preventDefault(); requestClose(); }}
+                onEscapeKeyDown={(e) => { e.preventDefault(); requestClose(); }}>
+                {leaveAsk && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 rounded-lg" data-testid="cut-leave-ask">
+                        <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 space-y-3 shadow-2xl">
+                            <p className="font-heading text-lg">¿Guardar el corte?</p>
+                            <p className="text-sm text-muted-foreground">
+                                Si lo guardas, queda en el estado actual y al volver lo encuentras listo para seguir, sin diligenciarlo de nuevo.
+                            </p>
+                            <div className="flex flex-col gap-2">
+                                <Button onClick={saveDraftAndClose} disabled={savingDraft} className="bg-green-600 hover:bg-green-700" data-testid="cut-leave-save">
+                                    {savingDraft ? 'Guardando...' : 'Guardar y salir'}
+                                </Button>
+                                <Button variant="outline" onClick={() => setLeaveAsk(false)} data-testid="cut-leave-stay">Seguir cortando</Button>
+                                <Button variant="ghost" className="text-red-400" onClick={leaveWithoutSaving} data-testid="cut-leave-discard">
+                                    Salir sin guardar{draftInfo ? ' (borra el borrador)' : ''}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 <DialogHeader>
                     <DialogTitle className="font-heading text-xl flex items-center gap-2">
                         <Scissors className="w-5 h-5 text-green-500" />
@@ -450,6 +511,12 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                     </div>
                 )}
 
+                {draftInfo && (
+                    <p className="text-xs rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 px-3 py-2" data-testid="cut-draft-restored">
+                        Retomaste el borrador guardado{draftInfo.saved_by_name ? ` por ${draftInfo.saved_by_name}` : ''}
+                        {draftInfo.saved_at ? ` · ${new Date(draftInfo.saved_at).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}` : ''}.
+                    </p>
+                )}
                 <VehicleNotice order={order} />
                 <OrderPercentages order={order} />
 
@@ -665,7 +732,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                         </div>
 
                         <div className="flex flex-col-reverse sm:flex-row gap-2">
-                            <Button variant="outline" className="sm:flex-1" onClick={onClose}>Cancelar</Button>
+                            <Button variant="outline" className="sm:flex-1" onClick={requestClose}>Salir</Button>
                             <Button className="sm:flex-1 bg-green-600 hover:bg-green-700" onClick={goConfirm} data-testid="cut-review">
                                 <CheckCircle2 className="w-4 h-4 mr-2" /> Revisar y confirmar corte
                             </Button>

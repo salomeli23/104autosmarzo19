@@ -217,7 +217,7 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
@@ -300,7 +300,7 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
@@ -391,7 +391,7 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>

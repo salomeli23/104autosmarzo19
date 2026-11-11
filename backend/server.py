@@ -4283,6 +4283,33 @@ async def add_extra_ppf_cut(order_id: str, data: ExtraPpfCutRequest,
     return {"message": "Corte adicional de PPF registrado", "cut": entry, "inventory_deduction": results}
 
 
+class CuttingDraft(BaseModel):
+    data: Dict[str, Any]  # estado del formulario de Completar corte (modelo, cortes, notas…)
+
+
+@api_router.put("/cutting/{order_id}/draft")
+async def save_cutting_draft(order_id: str, payload: CuttingDraft,
+                             current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
+    """Guarda el corte a medio llenar para retomarlo sin volver a diligenciar."""
+    if len(json.dumps(payload.data, default=str)) > 200_000:
+        raise HTTPException(status_code=400, detail="El borrador es demasiado grande")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0, "status": 1, "cutting_status": 1})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") != OrderStatus.EN_CORTE.value or order.get("cutting_status") == "completado":
+        raise HTTPException(status_code=400, detail="Este vehículo ya no está pendiente de corte")
+    draft = {"data": payload.data, "saved_at": datetime.now(timezone.utc).isoformat(),
+             "saved_by_name": current_user.get("name")}
+    await db.orders.update_one({"id": order_id}, {"$set": {"cutting_draft": draft}})
+    return {"message": "Borrador del corte guardado", "cutting_draft": draft}
+
+
+@api_router.delete("/cutting/{order_id}/draft")
+async def delete_cutting_draft(order_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE]))):
+    await db.orders.update_one({"id": order_id}, {"$set": {"cutting_draft": None}})
+    return {"message": "Borrador descartado"}
+
+
 @api_router.put("/cutting/{order_id}/complete")
 async def complete_cutting(
     order_id: str,
@@ -4360,6 +4387,7 @@ async def complete_cutting(
         "cutting_part_materials": p.part_materials or None,
         "cutting_zone_cuts": zone_plan["lines"] if zone_plan else None,
         "cutting_model": (p.cut_model or "estandar") if zone_plan else None,
+        "cutting_draft": None,  # el borrador ya no sirve: el corte quedó registrado
     }
     if ppf_vehicle_serial is not None:
         update_fields["ppf_vehicle_serial"] = ppf_vehicle_serial
