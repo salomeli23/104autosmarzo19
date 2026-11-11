@@ -8573,17 +8573,32 @@ TEST_CUTTING_ORDERS = [
     ("PRB105", "Chevrolet", "Tracker", "huperoptik", "Polarizado - Huperoptik", 1000000,
      {"panoramico": 165, "trasero": 148, "laterales_delanteros": (121, 2), "laterales_traseros": None, "sunroof": None}),
 ]
+# Segunda tanda de pruebas (11-nov-2026)
+TEST_CUTTING_SEED_2 = "test_cutting_orders_2026_11_11"
+TEST_CUTTING_ORDERS_2 = [
+    ("PRB106", "Nissan", "Kicks", "nanooptik", "Polarizado - Nanooptik", 650000,
+     {"panoramico": 158, "trasero": 138, "laterales_delanteros": (119, 2), "laterales_traseros": (127, 4), "sunroof": None}),
+    ("PRB107", "Volkswagen", "T-Cross", "huperoptik", "Polarizado - Huperoptik", 1000000,
+     {"panoramico": 162, "trasero": 142, "laterales_delanteros": (120, 2), "laterales_traseros": (129, 4), "sunroof": 85}),
+    ("PRB108", "Hyundai", "Tucson", "black_ceramic_autobahn", "Polarizado - Black Ceramic Autobahn", 900000,
+     {"panoramico": 172, "trasero": 152, "laterales_delanteros": (124, 2), "laterales_traseros": (134, 4), "sunroof": None}),
+    ("PRB109", "Toyota", "Fortuner", "micras_300", "Ultrasecure - 300 Micras", 1200000,
+     {"panoramico": 178, "trasero": 158, "laterales_delanteros": (126, 2), "laterales_traseros": (138, 4), "sunroof": None}),
+    ("PRB110", "Suzuki", "Swift", "ceramic_i3_autobahn", "Polarizado - Ceramic i3 Autobahn", 1100000,
+     {"panoramico": 150, "trasero": 130, "laterales_delanteros": (115, 2), "laterales_traseros": (122, 2), "sunroof": None}),
+]
+TEST_CUTTING_SEEDS = {TEST_CUTTING_SEED: TEST_CUTTING_ORDERS, TEST_CUTTING_SEED_2: TEST_CUTTING_ORDERS_2}
 
 
-async def _create_test_cutting_orders() -> int:
+async def _create_test_cutting_orders(seed: str = TEST_CUTTING_SEED, orders: list = TEST_CUTTING_ORDERS, first: int = 1) -> int:
     """5 vehículos de PRUEBA en corte, con técnicos asignados (si hay) y medidas del técnico confirmadas."""
     now = datetime.now(timezone.utc).isoformat()
     today = get_colombia_time().strftime("%Y-%m-%d")
     techs = await db.users.find({"role": UserRole.TECNICO.value, "is_active": {"$ne": False}},
                                 {"_id": 0, "id": 1, "name": 1}).sort("name", 1).to_list(20)
     created = 0
-    for i, (plate, brand, model, svc_id, desc, price, zones) in enumerate(TEST_CUTTING_ORDERS):
-        if await db.orders.find_one({"plate": plate, "test_seed": TEST_CUTTING_SEED}, {"_id": 1}):
+    for i, (plate, brand, model, svc_id, desc, price, zones) in enumerate(orders):
+        if await db.orders.find_one({"plate": plate, "test_seed": seed}, {"_id": 1}):
             continue
         pair = [techs[(2 * i) % len(techs)], techs[(2 * i + 1) % len(techs)]] if techs else []
         pair = list({t["id"]: t for t in pair}.values())
@@ -8599,7 +8614,7 @@ async def _create_test_cutting_orders() -> int:
         order_id = str(uuid.uuid4())
         await db.orders.insert_one({
             "id": order_id, "order_code": code, "qr_code": generate_qr_code(code),
-            "client_name": f"PRUEBA Corte {i + 1}", "client_phone": "3000000000", "client_email": None, "client_cedula": None,
+            "client_name": f"PRUEBA Corte {first + i}", "client_phone": "3000000000", "client_email": None, "client_cedula": None,
             "plate": plate, "brand": brand, "model": model, "year": None, "color": None,
             "date": today, "time_slot": "franja_1", "scheduled_time": f"{8 + i:02d}:30", "is_priority": False,
             "services": [{"service": svc_id, "price": price, "description": desc, "parts": [], "extras": []}],
@@ -8616,7 +8631,7 @@ async def _create_test_cutting_orders() -> int:
             "tech_measurements": {**measures, "notes": "Medidas de prueba", "confirmed_at": now,
                                   "confirmed_by_id": pair[0]["id"] if pair else None,
                                   "confirmed_by_name": pair[0]["name"] if pair else "Técnico de prueba"},
-            "is_postventa": False, "is_test": True, "test_seed": TEST_CUTTING_SEED,
+            "is_postventa": False, "is_test": True, "test_seed": seed,
             "created_by": "sistema", "created_by_name": "Sistema (prueba)", "created_by_role": "sistema",
             "created_at": now, "updated_at": now,
         })
@@ -8626,26 +8641,27 @@ async def _create_test_cutting_orders() -> int:
 
 @app.on_event("startup")
 async def create_test_cutting_orders_once():
-    """Una sola vez: 5 servicios de PRUEBA encolados en corte con las medidas del técnico."""
+    """Una sola vez por tanda: 5 servicios de PRUEBA encolados en corte con las medidas del técnico."""
     from pymongo.errors import DuplicateKeyError
-    try:
-        await db.migrations.insert_one({"_id": TEST_CUTTING_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
-    except DuplicateKeyError:
-        return
-    try:
-        n = await _create_test_cutting_orders()
-        await db.migrations.update_one({"_id": TEST_CUTTING_SEED}, {"$set": {
-            "finished_at": datetime.now(timezone.utc).isoformat(), "message": f"{n} servicio(s) de prueba en corte"}})
-        logging.getLogger(__name__).info(f"[corte] {n} servicio(s) de prueba creados en corte")
-    except Exception as e:
-        await db.migrations.delete_one({"_id": TEST_CUTTING_SEED})
-        logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba en corte: {e}")
+    for n_batch, (seed, orders) in enumerate(TEST_CUTTING_SEEDS.items()):
+        try:
+            await db.migrations.insert_one({"_id": seed, "started_at": datetime.now(timezone.utc).isoformat()})
+        except DuplicateKeyError:
+            continue
+        try:
+            n = await _create_test_cutting_orders(seed, orders, first=1 + 5 * n_batch)
+            await db.migrations.update_one({"_id": seed}, {"$set": {
+                "finished_at": datetime.now(timezone.utc).isoformat(), "message": f"{n} servicio(s) de prueba en corte"}})
+            logging.getLogger(__name__).info(f"[corte] {n} servicio(s) de prueba creados en corte ({seed})")
+        except Exception as e:
+            await db.migrations.delete_one({"_id": seed})
+            logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba en corte ({seed}): {e}")
 
 
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
-    ids = [o["id"] async for o in db.orders.find({"test_seed": TEST_CUTTING_SEED}, {"_id": 0, "id": 1})]
+    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": list(TEST_CUTTING_SEEDS)}}, {"_id": 0, "id": 1})]
     if not ids:
         return {"message": "No hay servicios de prueba", "removed": 0}
     await db.orders.delete_many({"id": {"$in": ids}})
