@@ -3942,6 +3942,9 @@ class CuttingCompleteRequest(BaseModel):
     zone_cuts: Optional[Dict[str, List["ZoneCutLine"]]] = None
     # El cortador confirmó el corte extradimensional (el rollo queda en negativo y se da de baja)
     confirm_extra_cut: bool = False
+    # Modelo de corte: 'estandar' (zonas del técnico), 'lados' (Corte A lado derecho / Corte B lado izquierdo)
+    # o 'ventanas' (vidrios independientes: 1 o 2 ventanas por corte)
+    cut_model: Optional[str] = None
 
 
 class ZoneCutLine(BaseModel):
@@ -3968,8 +3971,26 @@ ZONE_CUT_LIMITS = {
 ZONE_LABELS = {
     "panoramico": "Panorámico", "trasero": "Trasero / Luneta", "laterales_delanteros": "Laterales delanteros",
     "laterales_traseros": "Laterales traseros", "sunroof": "Sunroof",
-    "laterales_izquierdo": "Laterales lado izquierdo", "laterales_derecho": "Laterales lado derecho",
+    "laterales_izquierdo": "Corte B · lado izquierdo", "laterales_derecho": "Corte A · lado derecho",
 }
+# Modelos de corte y las zonas de vidrio que admite cada uno
+CUT_MODELS = {
+    "estandar": {"panoramico", "trasero", "laterales_delanteros", "laterales_traseros", "sunroof",
+                 "laterales_izquierdo", "laterales_derecho"},
+    "lados": {"panoramico", "trasero", "laterales_derecho", "laterales_izquierdo", "sunroof"},
+    "ventanas": set(),  # solo "ventanas:<v1>[,<v2>]"
+}
+# Modelo 3: vidrios independientes; cada corte lleva 1 o 2 ventanas
+WINDOW_LABELS = {
+    "panoramico": "Panorámico", "luneta": "Luneta", "delantera_der": "Delantera derecha", "delantera_izq": "Delantera izquierda",
+    "trasera_der": "Trasera derecha", "trasera_izq": "Trasera izquierda", "custodia_der": "Custodia derecha",
+    "custodia_izq": "Custodia izquierda", "sunroof": "Sunroof",
+}
+WINDOWS_ZONE_PREFIX = "ventanas:"
+
+
+def _zone_windows(zone: str) -> List[str]:
+    return [w for w in zone[len(WINDOWS_ZONE_PREFIX):].split(",") if w] if zone.startswith(WINDOWS_ZONE_PREFIX) else []
 
 
 # PPF: "ppf_full" = un corte aproximado para todo el carro; "ppf:<parte>" = corte lineal de cada parte comprada
@@ -3985,6 +4006,9 @@ def _zone_label(zone: str) -> str:
         return "PPF full (corte aproximado)"
     if zone.startswith("ppf:"):
         return f"PPF · {zone[4:]}"
+    if zone.startswith(WINDOWS_ZONE_PREFIX):
+        return "Ventana" + ("s" if len(_zone_windows(zone)) > 1 else "") + ": " + \
+            " + ".join(WINDOW_LABELS.get(w, w) for w in _zone_windows(zone))
     return ZONE_LABELS.get(zone, zone)
 
 
@@ -4005,12 +4029,26 @@ def _order_ppf_plan(order: dict) -> Optional[dict]:
     return None
 
 
-async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, Any]:
+async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]], cut_model: Optional[str] = None) -> Dict[str, Any]:
     """Valida los cortes por zona (límites de materiales/rollos y stock) antes de descontar nada."""
     lines = []
     per_roll: Dict[str, float] = {}
+    model = cut_model or "estandar"
+    if model not in CUT_MODELS:
+        raise HTTPException(status_code=400, detail="Modelo de corte inválido")
+    used_windows: set = set()
     for zone, zlines in (zone_cuts or {}).items():
-        if _is_ppf_zone(zone):
+        if not _is_ppf_zone(zone):
+            if model == "ventanas":
+                wins = _zone_windows(zone)
+                if not 1 <= len(wins) <= 2 or len(set(wins)) != len(wins) or any(w not in WINDOW_LABELS for w in wins):
+                    raise HTTPException(status_code=400, detail="Cada corte de vidrios independientes lleva mínimo 1 y máximo 2 ventanas")
+                if used_windows & set(wins):
+                    raise HTTPException(status_code=400, detail="Una ventana no puede estar en dos cortes")
+                used_windows |= set(wins)
+            elif zone not in CUT_MODELS[model]:
+                raise HTTPException(status_code=400, detail=f"La zona {_zone_label(zone)} no corresponde al modelo de corte elegido")
+        if _is_ppf_zone(zone) or zone.startswith(WINDOWS_ZONE_PREFIX):
             max_mat, max_rolls = (1, 1)
         elif zone in ZONE_CUT_LIMITS:
             max_mat, max_rolls = ZONE_CUT_LIMITS[zone]
@@ -4033,7 +4071,7 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]]) -> Dict[str, 
                 raise HTTPException(status_code=400, detail=f"Elige el rollo de {label} o márcalo como reutilizable")
             if not ln.reutilizable:
                 per_roll[ln.inventory_item_id] = round(per_roll.get(ln.inventory_item_id, 0) + ln.metros, 2)
-            lines.append({"zone": zone, "material": ln.material.strip(), "inventory_item_id": ln.inventory_item_id,
+            lines.append({"zone": zone, "zone_label": _zone_label(zone), "material": ln.material.strip(), "inventory_item_id": ln.inventory_item_id,
                           "metros": round(ln.metros, 2), "reutilizable": bool(ln.reutilizable),
                           "reusable_piece_id": ln.reusable_piece_id})
     if not lines:
@@ -4234,7 +4272,7 @@ async def complete_cutting(
         raise HTTPException(status_code=400, detail="Esta orden no tiene servicio PPF")
 
     # Resolve fields with body taking precedence over query params
-    zone_plan = await _plan_zone_cuts(p.zone_cuts) if p.zone_cuts else None
+    zone_plan = await _plan_zone_cuts(p.zone_cuts, p.cut_model) if p.zone_cuts else None
     final_measurements = p.measurements or measurements or (zone_plan["summary"] if zone_plan else None)
     final_notes = p.notes or notes
     part_measurements = p.part_measurements or {}
@@ -4269,6 +4307,7 @@ async def complete_cutting(
         "cutting_part_measurements": part_measurements or None,
         "cutting_part_materials": p.part_materials or None,
         "cutting_zone_cuts": zone_plan["lines"] if zone_plan else None,
+        "cutting_model": (p.cut_model or "estandar") if zone_plan else None,
     }
     if ppf_vehicle_serial is not None:
         update_fields["ppf_vehicle_serial"] = ppf_vehicle_serial

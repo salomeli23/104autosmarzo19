@@ -25,10 +25,32 @@ const ZONE_LIMITS = {
     laterales_derecho: [3, 2],
     sunroof: [1, 1],
 };
+// Cortes del modelo de vidrios independientes ("w1", "w2"…): 1 material y 1 rollo cada uno
+const isWinKey = (k) => /^w\d+$/.test(k);
+const limitFor = (zone) => (isWinKey(zone) ? [1, 1] : ZONE_LIMITS[zone] || [1, 1]);
 const limitText = (zone) => {
-    const [m, r] = ZONE_LIMITS[zone];
+    const [m, r] = limitFor(zone);
     return m === 1 ? '1 material · 1 rollo' : `Hasta ${m} materiales · ${r} rollos`;
 };
+// Modelos de corte (igual que CUT_MODELS en el backend)
+const CUT_MODELS = [
+    { id: 'estandar', label: 'Modelo 1 · Estándar', hint: 'Por zonas, como las midió el técnico' },
+    { id: 'lados', label: 'Modelo 2 · Corte A / Corte B', hint: 'Laterales por lado: A = derecho, B = izquierdo' },
+    { id: 'ventanas', label: 'Modelo 3 · Vidrios independientes', hint: 'Cada corte: mínimo 1 y máximo 2 ventanas' },
+];
+const SIDE_ZONES = [
+    { id: 'laterales_derecho', n: 'A', label: 'Corte A · lado derecho', hint: 'Delantera, trasera y custodia derechas' },
+    { id: 'laterales_izquierdo', n: 'B', label: 'Corte B · lado izquierdo', hint: 'Delantera, trasera y custodia izquierdas' },
+];
+// Ventanas del modelo 3 (igual que WINDOW_LABELS en el backend)
+const WINDOWS = [
+    { id: 'panoramico', label: 'Panorámico' }, { id: 'luneta', label: 'Luneta' },
+    { id: 'delantera_der', label: 'Delantera derecha' }, { id: 'delantera_izq', label: 'Delantera izquierda' },
+    { id: 'trasera_der', label: 'Trasera derecha' }, { id: 'trasera_izq', label: 'Trasera izquierda' },
+    { id: 'custodia_der', label: 'Custodia derecha' }, { id: 'custodia_izq', label: 'Custodia izquierda' },
+    { id: 'sunroof', label: 'Sunroof' },
+];
+const windowLabel = (id) => WINDOWS.find(w => w.id === id)?.label || id;
 const selectClass = 'w-full h-9 rounded-md border border-input bg-background px-2 text-sm';
 const fmtM = (m) => `${(Math.round(m * 100) / 100).toFixed(2).replace('.', ',')} m`;
 
@@ -126,11 +148,25 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const [carAverage, setCarAverage] = useState(null);
     const [saving, setSaving] = useState(false);
     const [extraCutOk, setExtraCutOk] = useState(false);
+    const [cutModel, setCutModel] = useState('estandar');
+    const [winSel, setWinSel] = useState({}); // modelo 3: {w1: ['delantera_der', 'trasera_der'], …}
 
     const tm = useMemo(() => order?.tech_measurements || {}, [order]);
     // Incluye las zonas anteriores (laterales por lado) si el técnico midió con ellas
     const allZones = useMemo(() => zonesInMeasurements(tm), [tm]);
-    const zones = useMemo(() => allZones.filter(z => tm[z.id] && tm[z.id].aplica !== false), [allZones, tm]);
+    const measuredZones = useMemo(() => allZones.filter(z => tm[z.id] && tm[z.id].aplica !== false), [allZones, tm]);
+    const hasLaterals = measuredZones.some(z => z.id.startsWith('laterales'));
+    // Zonas a cortar según el modelo elegido
+    const zones = useMemo(() => {
+        if (cutModel === 'lados') {
+            const fixed = measuredZones.filter(z => ['panoramico', 'trasero', 'sunroof'].includes(z.id));
+            return [...fixed.filter(z => z.id !== 'sunroof'), ...(hasLaterals ? SIDE_ZONES : []), ...fixed.filter(z => z.id === 'sunroof')];
+        }
+        if (cutModel === 'ventanas') {
+            return Object.keys(winSel).map((k, i) => ({ id: k, n: i + 1, label: `Corte ${i + 1}`, windows: winSel[k] }));
+        }
+        return measuredZones;
+    }, [cutModel, measuredZones, hasLaterals, winSel]);
     const ppfPlan = order?.ppf_plan || null;
     const ppfKeys = useMemo(() => ppfKeysFor(ppfPlan), [ppfPlan]);
     const cutKeys = [...zones.map(z => z.id), ...ppfKeys];
@@ -144,6 +180,8 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         });
         ppfKeysFor(order.ppf_plan).forEach(k => { init[k] = [newLine()]; });
         setCuts(init);
+        setCutModel('estandar');
+        setWinSel({});
         setActive(Object.keys(init).find(k => !isPpfKey(k)) || null);
         setStep('form');
         setReuse({});
@@ -185,7 +223,8 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const allLines = cutKeys.flatMap(k => (cuts[k] || []).map(l => ({ ...l, zone: k })));
     const lineTitle = (k) => {
         if (isPpfKey(k)) return `PPF · ${ppfLabel(k)}`;
-        const z = allZones.find(x => x.id === k);
+        if (isWinKey(k)) return `Ventanas: ${(winSel[k] || []).map(windowLabel).join(' + ') || 'sin elegir'}`;
+        const z = zones.find(x => x.id === k) || allZones.find(x => x.id === k);
         return z ? `${z.n}. ${z.label}` : k;
     };
 
@@ -203,9 +242,52 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const addLine = (zone) => setCuts(prev => ({ ...prev, [zone]: [...prev[zone], newLine()] }));
     const removeLine = (zone, key) => setCuts(prev => ({ ...prev, [zone]: prev[zone].filter(l => l.key !== key) }));
 
+    // Cambiar de modelo: se arman de nuevo los cortes de vidrios (los de PPF se conservan)
+    const changeModel = (model) => {
+        if (model === cutModel) return;
+        const keep = Object.fromEntries(Object.entries(cuts).filter(([k]) => isPpfKey(k)));
+        let next = {};
+        let sel = {};
+        if (model === 'estandar') {
+            measuredZones.forEach(z => { next[z.id] = [newLine(tm[z.id]?.medida_cm || '')]; });
+        } else if (model === 'lados') {
+            measuredZones.filter(z => ['panoramico', 'trasero', 'sunroof'].includes(z.id))
+                .forEach(z => { next[z.id] = [newLine(tm[z.id]?.medida_cm || '')]; });
+            if (hasLaterals) SIDE_ZONES.forEach(z => { next[z.id] = [newLine()]; });
+        } else {
+            sel = { w1: [] };
+            next = { w1: [newLine()] };
+        }
+        setCuts({ ...next, ...keep });
+        setWinSel(sel);
+        setCutModel(model);
+        setActive(Object.keys(next)[0] || null);
+    };
+    const addWinCut = () => {
+        const n = Math.max(0, ...Object.keys(winSel).map(k => parseInt(k.slice(1), 10))) + 1;
+        setWinSel(prev => ({ ...prev, [`w${n}`]: [] }));
+        setCuts(prev => ({ ...prev, [`w${n}`]: [newLine()] }));
+    };
+    const removeWinCut = (k) => {
+        setWinSel(prev => { const c = { ...prev }; delete c[k]; return c; });
+        setCuts(prev => { const c = { ...prev }; delete c[k]; return c; });
+    };
+    const toggleWindow = (k, w) => setWinSel(prev => {
+        const cur = prev[k] || [];
+        if (cur.includes(w)) return { ...prev, [k]: cur.filter(x => x !== w) };
+        if (cur.length >= 2) { toast.error('Máximo 2 ventanas por corte'); return prev; }
+        return { ...prev, [k]: [...cur, w] };
+    });
+    const windowOwner = (w) => Object.keys(winSel).find(k => winSel[k].includes(w));
+    const zoneKeyFor = (k) => (isWinKey(k) ? `ventanas:${(winSel[k] || []).join(',')}` : k);
+    // Referencia del técnico para Corte A / B (él mide laterales delanteros y traseros)
+    const sideReference = () => ['laterales_delanteros', 'laterales_traseros', 'laterales_derecho', 'laterales_izquierdo']
+        .filter(id => tm[id] && tm[id].aplica !== false)
+        .map(id => `${allZones.find(z => z.id === id)?.label || id}: ${zoneText(tm[id])}`).join(' · ');
+
     const zoneRollError = (zone) => {
-        if (!ZONE_LIMITS[zone]) return null;
-        const [, maxRolls] = ZONE_LIMITS[zone];
+        if (!limitFor(zone)) return null;
+        const [, maxRolls] = limitFor(zone);
         const used = new Set((cuts[zone] || []).map(l => l.inventory_item_id).filter(Boolean));
         return used.size > maxRolls ? `Máximo ${maxRolls} rollo(s) en esta zona` : null;
     };
@@ -214,6 +296,14 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         if (allLines.length === 0) {
             toast.error('No hay zonas con medidas del técnico ni PPF para cortar');
             return;
+        }
+        if (cutModel === 'ventanas') {
+            const bad = Object.keys(winSel).find(k => !(winSel[k].length >= 1 && winSel[k].length <= 2));
+            if (bad) {
+                setActive(bad);
+                toast.error('Cada corte de vidrios independientes lleva mínimo 1 y máximo 2 ventanas');
+                return;
+            }
         }
         const missing = allLines.find(l => !l.material || !(parseFloat(l.cm) > 0));
         if (missing) {
@@ -253,7 +343,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const submit = async () => {
         const zone_cuts = {};
         cutKeys.forEach(k => {
-            zone_cuts[k] = (cuts[k] || []).map(l => ({
+            zone_cuts[zoneKeyFor(k)] = (cuts[k] || []).map(l => ({
                 material: l.material,
                 inventory_item_id: reuse[l.key] ? (l.inventory_item_id || null) : l.inventory_item_id,
                 metros: Math.round((parseFloat(l.cm) || 0)) / 100,
@@ -269,6 +359,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                 ppf_vehicle_serial: isPPF ? ppfSerial.trim() : null,
                 ppf_vehicle_model: isPPF ? ppfModel.trim() : null,
                 confirm_extra_cut: needsExtraConfirm && extraCutOk,
+                cut_model: zones.length || cutModel !== 'estandar' ? cutModel : null,
             });
             const d = res.data?.inventory_deduction;
             const list = d?.multi || (d ? [d] : []);
@@ -335,13 +426,27 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                 {step === 'form' ? (
                     <div className="space-y-4">
                         {/* Solo PPF: no hay vidrios que medir, se registra directo el corte PPF */}
-                        {(zones.length > 0 || ppfKeys.length === 0) && (
+                        {measuredZones.length > 0 && (
+                            <div className="space-y-1.5" data-testid="cut-model-picker">
+                                <Label className="text-xs">Modelo de corte</Label>
+                                <div className="grid sm:grid-cols-3 gap-2">
+                                    {CUT_MODELS.map(m => (
+                                        <button key={m.id} type="button" onClick={() => changeModel(m.id)} data-testid={`cut-model-${m.id}`}
+                                            className={`text-left rounded-lg border p-2.5 transition-colors ${cutModel === m.id ? 'border-cyan-500/70 bg-cyan-500/10' : 'border-border hover:border-cyan-500/40'}`}>
+                                            <p className={`text-sm font-semibold ${cutModel === m.id ? 'text-cyan-300' : ''}`}>{m.label}</p>
+                                            <p className="text-[11px] text-muted-foreground">{m.hint}</p>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {(measuredZones.length > 0 || ppfKeys.length === 0) && (
                             <>
-                                <div className="rounded-xl border overflow-hidden bg-[radial-gradient(ellipse_at_center,_#4b4f56_0%,_#2b2e33_55%,_#18191c_100%)] p-1">
+                                {cutModel === 'estandar' && <div className="rounded-xl border overflow-hidden bg-[radial-gradient(ellipse_at_center,_#4b4f56_0%,_#2b2e33_55%,_#18191c_100%)] p-1">
                                     <Suspense fallback={<div className="h-[260px] flex items-center justify-center text-sm text-slate-300">Cargando carro 3D…</div>}>
                                         <Vehicle3D status={status} active={active} onSelect={(z) => status[z] !== 'na' && setActive(z)} className="w-full" />
                                     </Suspense>
-                                </div>
+                                </div>}
                                 <TechMeasurementsSummary order={order} />
                             </>
                         )}
@@ -369,7 +474,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                         <div className="space-y-3">
                             {zones.map(z => {
                                 const ls = cuts[z.id] || [];
-                                const [maxMat] = ZONE_LIMITS[z.id];
+                                const [maxMat] = limitFor(z.id);
                                 const err = zoneRollError(z.id);
                                 return (
                                     <div
@@ -382,9 +487,38 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             <p className="font-medium text-sm flex items-center gap-2">
                                                 <span className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center text-white ${status[z.id] === 'done' ? 'bg-emerald-600' : 'bg-amber-500'}`}>{z.n}</span>
                                                 {z.label}
+                                                {isWinKey(z.id) && z.windows?.length > 0 && <span className="text-xs text-cyan-300 font-normal">· {z.windows.map(windowLabel).join(' + ')}</span>}
                                             </p>
-                                            <span className="text-xs text-muted-foreground">Técnico: <b className="text-foreground">{zoneText(tm[z.id])}</b> · {limitText(z.id)}</span>
+                                            <span className="text-xs text-muted-foreground flex items-center gap-2">
+                                                {!isWinKey(z.id) && <>Técnico: <b className="text-foreground">{tm[z.id] ? zoneText(tm[z.id]) : (z.hint || '—')}</b> · </>}
+                                                {limitText(z.id)}
+                                                {isWinKey(z.id) && Object.keys(winSel).length > 1 && (
+                                                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={(e) => { e.stopPropagation(); removeWinCut(z.id); }} aria-label="Quitar corte">
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </Button>
+                                                )}
+                                            </span>
                                         </div>
+                                        {SIDE_ZONES.some(sz => sz.id === z.id) && cutModel === 'lados' && sideReference() && (
+                                            <p className="text-xs text-muted-foreground">Medidas del técnico: {sideReference()}</p>
+                                        )}
+                                        {isWinKey(z.id) && (
+                                            <div className="flex flex-wrap gap-1.5" data-testid={`cut-windows-${z.id}`}>
+                                                {WINDOWS.map(w => {
+                                                    const owner = windowOwner(w.id);
+                                                    const on = (winSel[z.id] || []).includes(w.id);
+                                                    const taken = owner && owner !== z.id;
+                                                    return (
+                                                        <button key={w.id} type="button" disabled={taken}
+                                                            onClick={(e) => { e.stopPropagation(); toggleWindow(z.id, w.id); }}
+                                                            className={`text-xs px-2 py-1 rounded-md border ${on ? 'border-cyan-500 bg-cyan-500/20 text-cyan-200' : taken ? 'border-border opacity-40 line-through' : 'border-border hover:border-cyan-500/50'}`}>
+                                                            {w.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                                <span className="text-[11px] text-muted-foreground self-center">{(winSel[z.id] || []).length}/2 ventanas</span>
+                                            </div>
+                                        )}
                                         {zoneOpacityText(order, z.id) && (
                                             <p className="text-xs" data-testid={`cut-opacity-${z.id}`}>
                                                 <span className="px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 font-semibold">
@@ -440,6 +574,12 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                     </div>
                                 );
                             })}
+                            {cutModel === 'ventanas' && (
+                                <Button type="button" variant="outline" size="sm" onClick={addWinCut}
+                                    disabled={WINDOWS.every(w => windowOwner(w.id))} data-testid="cut-add-window-cut">
+                                    <Plus className="w-3.5 h-3.5 mr-1" /> Agregar corte de ventanas
+                                </Button>
+                            )}
                         </div>
 
                         {ppfKeys.length > 0 && (
