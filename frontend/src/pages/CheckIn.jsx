@@ -565,6 +565,19 @@ export const CheckIn = () => {
             toast.error('Ingresa el valor del sunroof adicional');
             return;
         }
+        // Porcentajes obligatorios: cada vidrio de polarizado / ultrasecure lleva su opacidad
+        const pctMissing = selectedServices.find(svc => serviceRequiresParts(svc.serviceId) && serviceRequiresPercentage(svc.serviceId)
+            && (!(svc.parts || []).length || svc.parts.some(p => !svc.part_percentages?.[p] || svc.part_percentages[p] === 'N/A')));
+        if (pctMissing) {
+            toast.error(!(pctMissing.parts || []).length
+                ? `Selecciona los vidrios de ${pctMissing.serviceName}`
+                : `Falta el porcentaje de algún vidrio en ${pctMissing.serviceName}: es obligatorio`);
+            return;
+        }
+        if (sunroof.enabled && !sunroof.percentage) {
+            toast.error('Indica el porcentaje del sunroof');
+            return;
+        }
         if (!cedulaNumber) {
             toast.error('El número de cédula es requerido');
             return;
@@ -583,7 +596,7 @@ export const CheckIn = () => {
     };
 
     // Se ejecuta después de que el cliente confirma la orden y los avisos (2 veces)
-    const submitIngreso = async (clientSignature) => {
+    const submitIngreso = async (clientSignature, vehicleInfo = {}) => {
         const total = calculateTotal();
         setSignature(clientSignature);
         setLoading(true);
@@ -662,6 +675,9 @@ export const CheckIn = () => {
                 payment_method: paymentMethod,
                 requires_invoice: requiresInvoice,
                 discount_code: (discountApplied && !discountApplied.from_appointment) ? discountApplied.code : null,
+                vehicle_type: vehicleInfo.vehicle_type,
+                over_existing_film: vehicleInfo.over_existing_film,
+                over_existing_film_note: vehicleInfo.over_existing_film_note || null,
             });
 
             toast.success('Ingreso aprobado exitosamente');
@@ -1450,7 +1466,7 @@ export const CheckIn = () => {
                                                                         </div>
                                                                         {showPct && (
                                                                             <select
-                                                                                className="text-xs px-2 py-1 rounded border border-input bg-background"
+                                                                                className={`text-xs px-2 py-1 rounded border bg-background ${isPartSelected && (!svc.part_percentages?.[part.id] || svc.part_percentages[part.id] === 'N/A') ? 'border-red-500 text-red-400' : 'border-input'}`}
                                                                                 value={pctValue}
                                                                                 onChange={(e) => {
                                                                                     const val = e.target.value;
@@ -1468,7 +1484,7 @@ export const CheckIn = () => {
                                                                                 disabled={!isPartSelected}
                                                                                 data-testid={`pct-${svc.serviceId}-${part.id}`}
                                                                             >
-                                                                                <option value="N/A">N/A</option>
+                                                                                <option value="N/A">{isPartSelected ? '% *' : 'N/A'}</option>
                                                                                 {TINT_PERCENTAGES.map(p => (
                                                                                     <option key={p} value={p}>{p}</option>
                                                                                 ))}

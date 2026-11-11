@@ -21,6 +21,16 @@ const ZONE_PARTS = {
     laterales_derecho: ['vidrio_copiloto', 'vidrio_trasero_copiloto', 'custodias'],
     sunroof: ['sunroof'],
 };
+// Modelo 3 (vidrios independientes): ventana → vidrio del check-in
+const WINDOW_PARTS = {
+    panoramico: ['panoramico'], luneta: ['luneta', 'trasero', 'vidrio_trasero'], sunroof: ['sunroof'],
+    delantera_der: ['vidrio_copiloto'], delantera_izq: ['vidrio_piloto'],
+    trasera_der: ['vidrio_trasero_copiloto'], trasera_izq: ['vidrio_trasero_piloto'],
+    custodia_der: ['custodias'], custodia_izq: ['custodias'],
+};
+const partsForZone = (zone) => (String(zone).startsWith('ventanas:')
+    ? String(zone).slice(9).split(',').flatMap(w => WINDOW_PARTS[w] || [])
+    : ZONE_PARTS[zone] || []);
 
 /** Opacidades de una zona en toda la orden: [{ part, label, pct }] */
 export const zoneOpacity = (order, zone) => {
@@ -28,7 +38,7 @@ export const zoneOpacity = (order, zone) => {
     (order?.services || []).forEach(svc => {
         if (!svc || typeof svc !== 'object') return;
         Object.entries(svc.part_percentages || {}).forEach(([part, pct]) => {
-            if (pct && (ZONE_PARTS[zone] || []).includes(part) && !out.some(o => o.part === part)) {
+            if (pct && partsForZone(zone).includes(part) && !out.some(o => o.part === part)) {
                 out.push({ part, label: partLabel(part), pct });
             }
         });

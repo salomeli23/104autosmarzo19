@@ -128,6 +128,7 @@ class AlertType(str, Enum):
     ROLLO_AGOTADO = "rollo_agotado"  # El rollo se acabó (o quedó en negativo por el corte extradimensional) y se dio de baja
     ROLLO_FALTANTE = "rollo_faltante"  # La referencia se quedó sin rollos disponibles
     CORTE_PPF_ADICIONAL = "corte_ppf_adicional"  # Corte de PPF adicional aprobado con PIN de coordinador
+    MATERIAL_ENCIMA = "material_encima"  # El material va encima de un vidrio que ya tiene material o es de otro color
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -394,6 +395,9 @@ class OrderResponse(BaseModel):
     discount_applied_at: Optional[str] = None
     discount_applied_stage: Optional[str] = None  # 'appointment' | 'checkin'
     items_discount_amount: Optional[float] = None  # suma de descuentos por ítem (antes de IVA)
+    vehicle_type: Optional[str] = None  # 'auto' | 'camioneta' (check-in)
+    over_existing_film: Optional[bool] = None  # material encima de un vidrio con material o de otro color
+    over_existing_film_note: Optional[str] = None
     extra_ppf_cuts: Optional[List[Dict[str, Any]]] = None  # cortes de PPF adicionales aprobados con PIN de coordinador
     paid_at: Optional[str] = None
     # Entrega data
@@ -488,6 +492,10 @@ class IngresoApproval(BaseModel):
     requires_invoice: bool = False  # si True, se añadió IVA 19%
     discount_code: Optional[str] = None  # código de descuento opcional (solo si la orden no tiene uno)
     order_pdf: Optional[str] = None  # PDF de la orden firmada por el cliente (data URI base64)
+    # Preguntas al cerrar el check-in (se avisan al técnico y a corte)
+    vehicle_type: Optional[str] = None  # 'auto' | 'camioneta'
+    over_existing_film: Optional[bool] = None  # ¿el material va encima de un vidrio con material o de otro color?
+    over_existing_film_note: Optional[str] = None
 
 class InspectionData(BaseModel):
     order_id: str
@@ -647,6 +655,22 @@ def _compute_discount_amount(subtotal: float, dtype: str, dvalue: float) -> floa
     if (dtype or "").lower() == "percentage":
         return round(min(subtotal * dvalue / 100.0, subtotal), 2)
     return round(min(dvalue, subtotal), 2)
+
+
+PERCENTAGE_SERVICE_KEYS = ("polarizado", "ultrasecure", "nanooptik", "huperoptik", "black_ceramic", "ultraoptik",
+                           "ceramic_i3", "spectra", "edge", "micras")
+PART_NAMES = {"panoramico": "Panorámico", "vidrio_copiloto": "Vidrio Copiloto", "vidrio_piloto": "Vidrio Piloto",
+              "vidrio_trasero_piloto": "Vidrio Trasero Piloto", "vidrio_trasero_copiloto": "Vidrio Trasero Copiloto",
+              "vidrio_trasero": "Vidrio Trasero", "luneta": "Luneta / Trasero", "sunroof": "Sunroof", "custodias": "Custodias"}
+
+
+def _requires_percentage(svc) -> bool:
+    """Polarizado / ultrasecure: cada vidrio lleva su porcentaje (opacidad). El sunroof adicional va aparte."""
+    sid = (svc.service or "").lower()
+    if "sunroof" in sid or "ppf" in sid:
+        return False
+    text = f"{sid} {(svc.description or '').lower()}"
+    return any(k in text for k in PERCENTAGE_SERVICE_KEYS)
 
 
 def _apply_item_discounts(services) -> float:
@@ -2327,6 +2351,21 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
                 svc.price = 0
     if data.payment_method == "sin_pago" and not order.get("is_postventa"):
         raise HTTPException(status_code=400, detail="Solo las órdenes de postventa pueden ir sin pago")
+    # Porcentaje (opacidad) obligatorio en cada vidrio de polarizado / ultrasecure
+    for svc in data.services:
+        if svc.parts and _requires_percentage(svc):
+            missing = [p for p in svc.parts if not str((svc.part_percentages or {}).get(p) or "").strip()
+                       or str((svc.part_percentages or {}).get(p)).strip().upper() == "N/A"]
+            if missing:
+                names = [PART_NAMES.get(p, p.replace("_", " ")) for p in missing]
+                raise HTTPException(status_code=400, detail=f"Falta el porcentaje de {', '.join(names)} en {svc.description or svc.service}")
+    if data.vehicle_type not in ("auto", "camioneta"):
+        raise HTTPException(status_code=400, detail="Indica si el vehículo es auto o camioneta")
+    if data.over_existing_film is None:
+        raise HTTPException(status_code=400, detail="Indica si el material va encima de un vidrio con material o de otro color")
+    film_note = (data.over_existing_film_note or "").strip()
+    if data.over_existing_film and len(film_note) < 3:
+        raise HTTPException(status_code=400, detail="Describe en qué vidrios va encima y qué material o color tienen")
     items_disc = _apply_item_discounts(data.services)
     
     # ===== Código de descuento en check-in =====
@@ -2367,6 +2406,9 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         "final_value": net_final_value,
         "final_value_before_discount": final_value_raw if has_discount else order.get("final_value_before_discount"),
         "items_discount_amount": items_disc or None,
+        "vehicle_type": data.vehicle_type,
+        "over_existing_film": bool(data.over_existing_film),
+        "over_existing_film_note": film_note if data.over_existing_film else None,
         "tax_base": price["tax_base"],
         "iva_amount": price["iva"],
         "signature_url": data.signature_url,
@@ -2437,6 +2479,12 @@ async def approve_ingreso(data: IngresoApproval, current_user: dict = Depends(re
         await _sync_accessory_request(order_ci, current_user)
     except Exception as e:
         logger.error(f"[accesorios] solicitud al aprobar ingreso {data.order_id}: {e}")
+
+    if data.over_existing_film:
+        film_msg = (f"{order['plate']} · {'Camioneta' if data.vehicle_type == 'camioneta' else 'Auto'}: el material va ENCIMA "
+                    f"de un vidrio con material o de otro color. {film_note}")
+        for role in ("corte", "coordinador"):
+            await create_alert(role, AlertType.MATERIAL_ENCIMA, "⚠ Material encima de otro", film_msg, data.order_id)
 
     # Alert coordinators
     await create_alert(
@@ -2791,8 +2839,12 @@ async def _assign_technicians(order: dict, technician_ids: List[str], minutes: O
             "id": str(uuid.uuid4()),
             "recipient_id": t["id"],
             "alert_type": AlertType.SERVICIO_ASIGNADO.value,
-            "title": "Nuevo servicio asignado" + (f" · {mine}" if mine else ""),
-            "message": f"Vehículo {order.get('plate')} con {names}. {step}.",
+            "title": ("⚠ " if order.get("over_existing_film") else "") + "Nuevo servicio asignado" + (f" · {mine}" if mine else ""),
+            "message": f"Vehículo {order.get('plate')}"
+                       + (f" ({'camioneta' if order.get('vehicle_type') == 'camioneta' else 'auto'})" if order.get("vehicle_type") else "")
+                       + f" con {names}. {step}."
+                       + (f" ATENCIÓN: el material va encima de un vidrio con material o de otro color. {order.get('over_existing_film_note') or ''}"
+                          if order.get("over_existing_film") else ""),
             "order_id": order["id"],
             "read": False,
             "created_at": now,

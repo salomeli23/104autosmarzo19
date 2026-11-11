@@ -15,6 +15,7 @@ import { PostventaBadge } from '../components/PostventaBadge';
 import { AccessoryStatusTag } from '../components/AccessoryStatusTag';
 import { WorkflowSteps } from '../components/WorkflowSteps';
 import { TechMeasurementsDialog, TechMeasurementsSummary } from '../components/TechMeasurements';
+import { VehicleNotice, OrderPercentages } from '../components/VehicleNotice';
 import { orderTechnicians } from '../lib/workflow';
 import { CameraCapture } from '../components/CameraCapture';
 import { ConfirmTwiceDialog } from '../components/ConfirmTwiceDialog';
@@ -254,6 +255,8 @@ const InstallCard = ({ order, userId, onStart, onFinish, onMeasure, processing }
                 </div>
 
                 <WorkflowSteps order={order} />
+                <VehicleNotice order={order} compact />
+                <OrderPercentages order={order} />
 
                 {inProgress && order.quality_status === 'rechazado' && (
                     <div className="text-xs p-2 rounded border border-red-500/40 bg-red-500/10 text-red-300 space-y-1" data-testid={`quality-rework-${order.id}`}>

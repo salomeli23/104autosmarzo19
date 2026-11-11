@@ -11,7 +11,8 @@ const PAYMENT_LABELS = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia
  * Antes de aprobar el ingreso muestra la orden y los avisos para confirmarlos con
  * el cliente. Pregunta dos veces; en el segundo paso el cliente firma.
  * Props: open, onOpenChange(bool), order, services [{ serviceName, category, price, no_charge }],
- *        breakdown { extras, itemsDiscount, discountAmount, iva, total }, paymentMethod, requiresInvoice, onConfirm(signatureDataUrl)
+ *        breakdown { extras, itemsDiscount, discountAmount, iva, total }, paymentMethod, requiresInvoice,
+ *        onConfirm(signatureDataUrl, { vehicle_type, over_existing_film, over_existing_film_note })
  */
 export const CheckinConfirmDialog = ({
     open, onOpenChange, order, services = [], breakdown = {}, paymentMethod, requiresInvoice, onConfirm,
@@ -19,14 +20,22 @@ export const CheckinConfirmDialog = ({
     const [step, setStep] = useState(1);
     const [accepted, setAccepted] = useState(false);
     const [signature, setSignature] = useState(null);
+    // Preguntas antes de cerrar: tipo de vehículo y si el material va encima de otro material o color
+    const [vehicleType, setVehicleType] = useState('');
+    const [overFilm, setOverFilm] = useState(null);
+    const [overFilmNote, setOverFilmNote] = useState('');
 
     useEffect(() => {
         if (open) {
             setStep(1);
             setAccepted(false);
             setSignature(null);
+            setVehicleType('');
+            setOverFilm(null);
+            setOverFilmNote('');
         }
     }, [open]);
+    const questionsDone = !!vehicleType && overFilm !== null && (!overFilm || overFilmNote.trim().length >= 3);
 
     if (!order) return null;
 
@@ -92,6 +101,37 @@ export const CheckinConfirmDialog = ({
 
                             {noticesBlock}
 
+                            <div className="rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3 space-y-3" data-testid="checkin-vehicle-questions">
+                                <div className="space-y-1.5">
+                                    <p className="text-sm font-medium">¿Es auto o camioneta? *</p>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {[['auto', 'Auto'], ['camioneta', 'Camioneta']].map(([k, label]) => (
+                                            <button key={k} type="button" onClick={() => setVehicleType(k)} data-testid={`checkin-vehicle-${k}`}
+                                                className={`py-2 rounded-md border text-sm ${vehicleType === k ? 'border-cyan-500 bg-cyan-500/20 text-cyan-200 font-semibold' : 'border-border hover:border-cyan-500/50'}`}>
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <p className="text-sm font-medium">¿El material se va a colocar encima de un vidrio que ya tiene material o es de otro color? *</p>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {[[true, 'Sí'], [false, 'No']].map(([v, label]) => (
+                                            <button key={label} type="button" onClick={() => setOverFilm(v)} data-testid={`checkin-overfilm-${v ? 'si' : 'no'}`}
+                                                className={`py-2 rounded-md border text-sm ${overFilm === v ? (v ? 'border-amber-500 bg-amber-500/20 text-amber-200 font-semibold' : 'border-cyan-500 bg-cyan-500/20 text-cyan-200 font-semibold') : 'border-border hover:border-cyan-500/50'}`}>
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {overFilm && (
+                                        <textarea value={overFilmNote} onChange={(e) => setOverFilmNote(e.target.value)} rows={2}
+                                            placeholder="¿En qué vidrios y qué material o color tienen? (ej. panorámico con película azul)"
+                                            className="w-full rounded-md border border-amber-500/50 bg-background px-3 py-2 text-sm" data-testid="checkin-overfilm-note" />
+                                    )}
+                                    {overFilm && <p className="text-xs text-amber-400">Se avisará al técnico y a corte con alerta.</p>}
+                                </div>
+                            </div>
+
                             <label className="flex items-start gap-2 text-sm cursor-pointer p-2 rounded border">
                                 <input
                                     type="checkbox"
@@ -108,7 +148,7 @@ export const CheckinConfirmDialog = ({
                             <Button type="button" variant="outline" className="sm:flex-1" onClick={() => onOpenChange(false)}>
                                 No, corregir
                             </Button>
-                            <Button type="button" className="sm:flex-1" disabled={!accepted} onClick={() => setStep(2)} data-testid="checkin-confirm-next">
+                            <Button type="button" className="sm:flex-1" disabled={!accepted || !questionsDone} onClick={() => setStep(2)} data-testid="checkin-confirm-next">
                                 Sí, el cliente confirma
                             </Button>
                         </div>
@@ -144,7 +184,10 @@ export const CheckinConfirmDialog = ({
                                 type="button"
                                 className="sm:flex-1 brand-glow"
                                 disabled={!signature}
-                                onClick={() => { onOpenChange(false); onConfirm(signature); }}
+                                onClick={() => {
+                                    onOpenChange(false);
+                                    onConfirm(signature, { vehicle_type: vehicleType, over_existing_film: overFilm, over_existing_film_note: overFilm ? overFilmNote.trim() : null });
+                                }}
                                 data-testid="checkin-confirm-final"
                             >
                                 <CheckCircle2 className="w-4 h-4 mr-2" />

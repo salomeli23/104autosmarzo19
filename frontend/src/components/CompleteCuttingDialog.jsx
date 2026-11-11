@@ -12,6 +12,7 @@ import { cuttingAPI, inventoryAPI, cuttingCatalogAPI } from '../lib/api';
 import { toast } from 'sonner';
 import { Scissors, Plus, Trash2, Recycle, CheckCircle2, ArrowLeft, Gauge, AlertTriangle } from 'lucide-react';
 import { TypeAheadSelect } from './TypeAheadSelect';
+import { VehicleNotice, OrderPercentages } from './VehicleNotice';
 
 const Vehicle3D = React.lazy(() => import('./Vehicle3D'));
 
@@ -449,6 +450,9 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                     </div>
                 )}
 
+                <VehicleNotice order={order} />
+                <OrderPercentages order={order} />
+
                 {step === 'form' ? (
                     <div className="space-y-4">
                         {/* Solo PPF: no hay vidrios que medir, se registra directo el corte PPF */}
@@ -546,10 +550,10 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                                 <span className="text-[11px] text-muted-foreground self-center">{(winSel[z.id] || []).length}/2 ventanas</span>
                                             </div>
                                         )}
-                                        {zoneOpacityText(order, z.id) && (
+                                        {zoneOpacityText(order, zoneKeyFor(z.id)) && (
                                             <p className="text-xs" data-testid={`cut-opacity-${z.id}`}>
                                                 <span className="px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 font-semibold">
-                                                    Opacidad: {zoneOpacityText(order, z.id)}
+                                                    Opacidad: {zoneOpacityText(order, zoneKeyFor(z.id))}
                                                 </span>
                                             </p>
                                         )}
@@ -691,7 +695,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             data-testid={`cut-reuse-${l.key}`}
                                         />
                                         <div className="flex-1 min-w-0 text-sm">
-                                            <p className="font-medium">{lineTitle(l.zone)} · {formatLinear(parseFloat(l.cm))}{zoneOpacityText(order, l.zone) ? ` · ${zoneOpacityText(order, l.zone)}` : ''}</p>
+                                            <p className="font-medium">{lineTitle(l.zone)} · {formatLinear(parseFloat(l.cm))}{zoneOpacityText(order, zoneKeyFor(l.zone)) ? ` · ${zoneOpacityText(order, zoneKeyFor(l.zone))}` : ''}</p>
                                             <p className="text-xs text-muted-foreground truncate">
                                                 {l.material} · {l.reusable_piece_id ? `pieza reutilizable ${pieceById(l.reusable_piece_id)?.codigo || ''}` : roll ? `${roll.codigo} ${roll.nombre}` : 'sin rollo'}
                                             </p>

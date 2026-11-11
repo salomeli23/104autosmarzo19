@@ -13,6 +13,7 @@ import { ReusablePiecesDialog } from '../components/ReusablePiecesDialog';
 import { ExtraPpfCutDialog } from '../components/ExtraPpfCutDialog';
 import { CoordinatorPinCard } from '../components/CoordinatorPinCard';
 import { useAuth } from '../context/AuthContext';
+import { VehicleNotice, OrderPercentages } from '../components/VehicleNotice';
 import { partLabel } from '../lib/opacity';
 
 // Solo PPF: se corta sin las medidas de vidrios del técnico
@@ -241,6 +242,8 @@ const CuttingView = () => {
                                         </div>
                                         
                                         <div className="flex-1 md:max-w-md">
+                                            <VehicleNotice order={order} compact className="mb-2" />
+                                            <OrderPercentages order={order} className="mb-2" />
                                             <div className="mb-2"><TechMeasurementsSummary order={order} compact /></div>
                                             <p className="text-sm font-medium mb-2 flex items-center gap-1">
                                                 <Package className="w-4 h-4" />
@@ -330,6 +333,8 @@ const CuttingView = () => {
                                         </div>
                                         
                                         <div className="flex-1 md:max-w-md">
+                                            <VehicleNotice order={order} compact className="mb-2" />
+                                            <OrderPercentages order={order} className="mb-2" />
                                             <div className="mb-2"><TechMeasurementsSummary order={order} compact /></div>
                                             <p className="text-sm font-medium mb-2">Servicios:</p>
                                             <div className="space-y-1">
