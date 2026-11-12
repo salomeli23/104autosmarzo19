@@ -52,6 +52,7 @@ const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c
 
 const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'coordinador', 'tecnico', 'facturacion', 'corte', 'accesorios', 'calidad', 'seguridad', 'liquidaciones'] },
+    { path: '/settings', label: 'Configuración', icon: Settings, roles: ['admin'] },
     { path: '/appointments', label: 'Agendamiento', icon: Calendar, roles: ['admin', 'asesor'] },
     { path: '/checkin', label: 'Check-in / Ingreso', icon: QrCode, roles: ['admin', 'asesor'] },
     { path: '/vehicles', label: 'Vehículos', icon: Car, roles: ['admin', 'coordinador'] },
@@ -82,7 +83,6 @@ const navItems = [
     { path: '/postventa', label: 'Postventa / Garantías', icon: ShieldCheck, roles: ['admin', 'coordinador'] },
     { path: '/accesorios', label: 'Accesorios', icon: PackageCheck, roles: ['admin', 'accesorios', 'coordinador'] },
     { path: '/inventory', label: 'Inventario', icon: Boxes, roles: ['admin', 'coordinador', 'corte'] },
-    { path: '/settings', label: 'Configuración', icon: Settings, roles: ['admin'] },
 ];
 
 export const Layout = ({ children }) => {
