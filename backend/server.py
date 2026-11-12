@@ -8658,10 +8658,101 @@ async def create_test_cutting_orders_once():
             logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba en corte ({seed}): {e}")
 
 
+# ==================== SERVICIOS DE PRUEBA PARA TÉCNICOS ====================
+TEST_TECH_SEED = "test_tech_orders_2026_11_12"
+_ALL_WINDOWS = ["panoramico", "vidrio_piloto", "vidrio_copiloto", "vidrio_trasero_piloto", "vidrio_trasero_copiloto", "luneta"]
+_PCT = {"panoramico": "50%", "vidrio_piloto": "20%", "vidrio_copiloto": "20%",
+        "vidrio_trasero_piloto": "5%", "vidrio_trasero_copiloto": "5%", "luneta": "5%"}
+TEST_TECH_ORDERS = [
+    # (placa, marca, modelo, área, servicio)
+    ("PRB201", "Mazda", "3", "polarizado", {"service": "nanooptik", "description": "Polarizado - Nanooptik", "price": 650000}),
+    ("PRB202", "Kia", "Picanto", "polarizado", {"service": "huperoptik", "description": "Polarizado - Huperoptik", "price": 1000000}),
+    ("PRB203", "Renault", "Koleos", "polarizado", {"service": "black_ceramic_autobahn", "description": "Polarizado - Black Ceramic Autobahn", "price": 900000}),
+    ("PRB204", "Chevrolet", "Onix", "polarizado", {"service": "ceramic_i3_autobahn", "description": "Polarizado - Ceramic i3 Autobahn", "price": 1100000}),
+    ("PRB205", "BMW", "X3", "ppf", {"service": "ppf_full_body", "description": "PPF - Full Body", "price": 9000000,
+                                     "ppf_scope": "full", "ppf_finish": "brillante"}),
+    ("PRB206", "Toyota", "RAV4", "ppf", {"service": "ppf_partes", "description": "PPF - Partes / Piezas", "price": 1800000,
+                                         "ppf_scope": "partes", "ppf_finish": "brillante", "ppf_zones": ["exterior"],
+                                         "ppf_parts": ["Manijas", "Espejos", "Farolas", "Stops"],
+                                         "ppf_parts_description": "Exterior: Manijas, Espejos, Farolas, Stops"}),
+    ("PRB207", "Audi", "Q5", "ppf", {"service": "ppf_partes", "description": "PPF - Partes / Piezas", "price": 2200000,
+                                     "ppf_scope": "partes", "ppf_finish": "mate", "ppf_zones": ["exterior"],
+                                     "ppf_parts": ["Persiana", "Boomerang delantero", "Estribos"],
+                                     "ppf_parts_description": "Exterior: Persiana, Boomerang delantero, Estribos"}),
+    ("PRB208", "Toyota", "Prado", "ultrasecure", {"service": "micras_300", "description": "Ultrasecure - 300 Micras", "price": 1200000,
+                                                  "film": "black_ceramic", "film_label": "Black Ceramic"}),
+    ("PRB209", "Ford", "Explorer", "ultrasecure", {"service": "micras_300", "description": "Ultrasecure - 300 Micras", "price": 1200000,
+                                                   "film": "nano", "film_label": "Nano"}),
+    ("PRB210", "Mercedes-Benz", "GLC", "ultrasecure", {"service": "micras_300", "description": "Ultrasecure - 300 Micras", "price": 1200000,
+                                                       "film": "huperoptik", "film_label": "HÜPER OPTIK"}),
+]
+
+
+async def _create_test_tech_orders() -> int:
+    """10 servicios de PRUEBA (polarizado, PPF y Ultrasecure) ya cortados y en cola de instalación, repartidos entre todos los técnicos."""
+    now = datetime.now(timezone.utc).isoformat()
+    today = get_colombia_time().strftime("%Y-%m-%d")
+    techs = await db.users.find({"role": UserRole.TECNICO.value, "is_active": {"$ne": False}},
+                                {"_id": 0, "id": 1, "name": 1}).sort("name", 1).to_list(200)
+    created = 0
+    for i, (plate, brand, model, area, svc) in enumerate(TEST_TECH_ORDERS):
+        if await db.orders.find_one({"plate": plate, "test_seed": TEST_TECH_SEED}, {"_id": 1}):
+            continue
+        pair = [techs[i % len(techs)], techs[(i + 1) % len(techs)]] if techs else []
+        pair = list({t["id"]: t for t in pair}.values())
+        service = {**svc, "extras": []}
+        if area in ("polarizado", "ultrasecure"):
+            service.update({"parts": list(_ALL_WINDOWS), "part_percentages": dict(_PCT)})
+        else:
+            service["parts"] = []
+        code = generate_order_code()
+        await db.orders.insert_one({
+            "id": str(uuid.uuid4()), "order_code": code, "qr_code": generate_qr_code(code),
+            "client_name": f"PRUEBA Técnico {i + 1}", "client_phone": "3000000000", "client_email": None, "client_cedula": None,
+            "plate": plate, "brand": brand, "model": model, "year": None, "color": None,
+            "vehicle_type": "camioneta" if model in ("Koleos", "RAV4", "Q5", "Prado", "Explorer", "GLC", "X3") else "auto",
+            "date": today, "time_slot": "franja_1", "scheduled_time": f"{8 + i % 9:02d}:00", "is_priority": False,
+            "services": [service], "negotiated_value": svc["price"], "final_value": svc["price"],
+            "requires_invoice": False, "payment_method": "efectivo",
+            "status": OrderStatus.ASIGNADO.value, "cutting_status": "completado", "cutting_completed_at": now,
+            "notes": "SERVICIO DE PRUEBA para practicar la instalación. Se puede quitar con 'Quitar pruebas' en Corte de Piezas.",
+            "ingreso_at": now, "checkin_by_name": "Prueba", "risk_agreement_accepted": True,
+            "inspection_photos": [], "inspection_at": now,
+            "assigned_technicians": [{"id": t["id"], "name": t["name"], "services": [area]} for t in pair],
+            "assigned_technician_id": pair[0]["id"] if pair else None, "assigned_technician_name": pair[0]["name"] if pair else None,
+            "assigned_technician_2_id": pair[1]["id"] if len(pair) > 1 else None,
+            "assigned_technician_2_name": pair[1]["name"] if len(pair) > 1 else None,
+            "service_time_minutes": 180 if area == "ppf" else 120, "assigned_at": now,
+            "is_postventa": False, "is_test": True, "test_seed": TEST_TECH_SEED,
+            "created_by": "sistema", "created_by_name": "Sistema (prueba)", "created_by_role": "sistema",
+            "created_at": now, "updated_at": now,
+        })
+        created += 1
+    return created
+
+
+@app.on_event("startup")
+async def create_test_tech_orders_once():
+    """Una sola vez: 10 servicios de PRUEBA en cola de instalación para los técnicos."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": TEST_TECH_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    try:
+        n = await _create_test_tech_orders()
+        await db.migrations.update_one({"_id": TEST_TECH_SEED}, {"$set": {
+            "finished_at": datetime.now(timezone.utc).isoformat(), "message": f"{n} servicio(s) de prueba para técnicos"}})
+        logging.getLogger(__name__).info(f"[tecnicos] {n} servicio(s) de prueba en cola de instalación")
+    except Exception as e:
+        await db.migrations.delete_one({"_id": TEST_TECH_SEED})
+        logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba para técnicos: {e}")
+
+
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
-    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": list(TEST_CUTTING_SEEDS)}}, {"_id": 0, "id": 1})]
+    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED]}}, {"_id": 0, "id": 1})]
     if not ids:
         return {"message": "No hay servicios de prueba", "removed": 0}
     await db.orders.delete_many({"id": {"$in": ids}})
