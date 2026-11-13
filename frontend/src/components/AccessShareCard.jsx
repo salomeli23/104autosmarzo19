@@ -110,7 +110,7 @@ export const AccessShareCard = ({ accesses, onClose }) => {
             <p className="text-xs text-muted-foreground">Por seguridad el PIN y la contraseña solo se muestran ahora. Envíalos antes de cerrar.</p>
             {smsReady && !smsReady.configured && (
                 <p className="text-xs text-amber-400" data-testid="sms-not-configured">
-                    El envío por SMS aún no está activo: faltan las claves de Twilio en Railway. Mientras tanto usa Copiar o WhatsApp.
+                    El envío por SMS aún no está activo: faltan las claves de LabsMobile en Railway. Mientras tanto usa Copiar o WhatsApp.
                 </p>
             )}
             {accesses.length > 1 && (

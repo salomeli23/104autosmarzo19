@@ -909,7 +909,7 @@ class AccessSms(BaseModel):
 
 @api_router.get("/sms/status")
 async def sms_status(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
-    return {"configured": sms.configured(), "simulated": sms.dry_run()}
+    return {"configured": sms.configured(), "simulated": sms.dry_run(), "provider": sms.provider()}
 
 
 @api_router.post("/users/{user_id}/send-access-sms")
@@ -918,7 +918,7 @@ async def send_access_sms(user_id: str, data: AccessSms, request: Request,
     """Envía por SMS al celular del usuario sus datos de acceso. El PIN o la contraseña solo se envían
     si coinciden con los guardados, para no mandar datos equivocados."""
     if not sms.configured():
-        raise HTTPException(status_code=400, detail="El envío de SMS no está configurado: faltan las claves de Twilio en Railway")
+        raise HTTPException(status_code=400, detail="El envío de SMS no está configurado: faltan las claves de LabsMobile en Railway")
     user = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")

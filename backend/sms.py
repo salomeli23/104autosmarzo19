@@ -1,6 +1,9 @@
-"""Envío de SMS con Twilio (API REST, sin librerías extra).
+"""Envío de SMS con LabsMobile (rutas locales en Colombia) o Twilio, sin librerías extra.
+Si están las variables de LabsMobile se usa LabsMobile; si no, Twilio.
 
 Variables en Railway:
+  LABSMOBILE_USERNAME, LABSMOBILE_TOKEN  → usuario (correo de la cuenta) y token de API de LabsMobile
+  LABSMOBILE_SENDER                      → opcional: remitente (tpoa) si el país lo permite
   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN  → credenciales de la cuenta de Twilio
   TWILIO_FROM                            → número de Twilio que envía (+1..., +57...) o
   TWILIO_MESSAGING_SERVICE_SID           → servicio de mensajería (en vez de TWILIO_FROM)
@@ -24,11 +27,17 @@ def dry_run() -> bool:
     return os.environ.get("SMS_DRY_RUN", "").strip() in ("1", "true", "yes")
 
 
+def provider() -> Optional[str]:
+    if os.environ.get("LABSMOBILE_USERNAME") and os.environ.get("LABSMOBILE_TOKEN"):
+        return "labsmobile"
+    if (os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_AUTH_TOKEN")
+            and (os.environ.get("TWILIO_FROM") or os.environ.get("TWILIO_MESSAGING_SERVICE_SID"))):
+        return "twilio"
+    return None
+
+
 def configured() -> bool:
-    if dry_run():
-        return True
-    return bool(os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_AUTH_TOKEN")
-                and (os.environ.get("TWILIO_FROM") or os.environ.get("TWILIO_MESSAGING_SERVICE_SID")))
+    return dry_run() or provider() is not None
 
 
 def normalize_phone(raw: Optional[str]) -> Optional[str]:
@@ -82,6 +91,33 @@ def _send_twilio(to: str, body: str) -> dict:
         return {"ok": False, "error": f"No se pudo conectar con Twilio: {e}"}
 
 
+def _send_labsmobile(to: str, body: str) -> dict:
+    """POST https://api.labsmobile.com/json/send con autenticación Basic usuario:token (SDK oficial labsmobile/sms-node).
+    El número va con indicativo y sin '+'. Respuesta correcta: {"code": "0", "subid": ...}."""
+    user, token = os.environ["LABSMOBILE_USERNAME"], os.environ["LABSMOBILE_TOKEN"]
+    payload = {"message": body, "recipient": [{"msisdn": to.lstrip("+")}]}
+    if os.environ.get("LABSMOBILE_SENDER"):
+        payload["tpoa"] = os.environ["LABSMOBILE_SENDER"]
+    req = urllib.request.Request(
+        "https://api.labsmobile.com/json/send", data=json.dumps(payload).encode(), method="POST",
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            data = json.loads(e.read() or b"{}")
+        except Exception:
+            data = {}
+        return {"ok": False, "error": data.get("message") or f"LabsMobile respondió {e.code}"}
+    except Exception as e:  # red, timeout
+        return {"ok": False, "error": f"No se pudo conectar con LabsMobile: {e}"}
+    if str(data.get("code")) == "0":
+        return {"ok": True, "id": data.get("subid"), "status": "enviado"}
+    return {"ok": False, "error": f"LabsMobile: {data.get('message') or 'error'} (código {data.get('code')})"}
+
+
 async def send_sms(to: str, body: str) -> dict:
     """Envía un SMS. Devuelve {ok, id?, error?}. No lanza excepciones."""
     if dry_run():
@@ -89,4 +125,5 @@ async def send_sms(to: str, body: str) -> dict:
         return {"ok": True, "id": "simulado", "status": "simulado"}
     if not configured():
         return {"ok": False, "error": "El envío de SMS no está configurado"}
-    return await asyncio.to_thread(_send_twilio, to, body)
+    fn = _send_labsmobile if provider() == "labsmobile" else _send_twilio
+    return await asyncio.to_thread(fn, to, body)
