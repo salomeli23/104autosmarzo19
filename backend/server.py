@@ -8693,7 +8693,9 @@ TEST_TECH_ORDERS = [
 
 
 async def _create_test_tech_orders(seed: str = TEST_TECH_SEED, orders: list = TEST_TECH_ORDERS,
-                                   techs: Optional[list] = None, client_prefix: str = "PRUEBA Técnico") -> int:
+                                   techs: Optional[list] = None, client_prefix: str = "PRUEBA Técnico",
+                                   stage: str = "instalacion") -> int:
+    """stage: "instalacion" = ya cortado, listo para instalar; "medidas" = en corte esperando las medidas del técnico."""
     """10 servicios de PRUEBA (polarizado, PPF y Ultrasecure) ya cortados y en cola de instalación, repartidos entre todos los técnicos."""
     now = datetime.now(timezone.utc).isoformat()
     today = get_colombia_time().strftime("%Y-%m-%d")
@@ -8720,7 +8722,8 @@ async def _create_test_tech_orders(seed: str = TEST_TECH_SEED, orders: list = TE
             "date": today, "time_slot": "franja_1", "scheduled_time": f"{8 + i % 9:02d}:00", "is_priority": False,
             "services": [service], "negotiated_value": svc["price"], "final_value": svc["price"],
             "requires_invoice": False, "payment_method": "efectivo",
-            "status": OrderStatus.ASIGNADO.value, "cutting_status": "completado", "cutting_completed_at": now,
+            **({"status": OrderStatus.EN_CORTE.value, "cutting_status": "pendiente"} if stage == "medidas" else
+               {"status": OrderStatus.ASIGNADO.value, "cutting_status": "completado", "cutting_completed_at": now}),
             "notes": "SERVICIO DE PRUEBA para practicar la instalación. Se puede quitar con 'Quitar pruebas' en Corte de Piezas.",
             "ingreso_at": now, "checkin_by_name": "Prueba", "risk_agreement_accepted": True,
             "inspection_photos": [], "inspection_at": now,
@@ -8794,10 +8797,44 @@ async def create_test_gustavo_orders_once():
         logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba de Gustavo Florez: {e}")
 
 
+# 2 servicios de PRUEBA para que Gustavo Florez envíe las medidas a corte
+TEST_GUSTAVO_MED_SEED = "test_tech_gustavo_medidas_2026_11_13"
+TEST_GUSTAVO_MED_ORDERS = [
+    ("PRB304", "Chevrolet", "Captiva", "polarizado", {"service": "black_ceramic_autobahn", "description": "Polarizado - Black Ceramic Autobahn", "price": 900000}),
+    ("PRB305", "Nissan", "X-Trail", "ultrasecure", {"service": "micras_300", "description": "Ultrasecure - 300 Micras", "price": 1200000,
+                                                   "film": "nano", "film_label": "Nano"}),
+]
+
+
+@app.on_event("startup")
+async def create_test_gustavo_measure_orders_once():
+    """Una sola vez: 2 servicios de PRUEBA en corte esperando que Gustavo Florez envíe las medidas."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": TEST_GUSTAVO_MED_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    try:
+        tech = await db.users.find_one({"role": UserRole.TECNICO.value, "is_active": {"$ne": False},
+                                        "name": {"$regex": r"^\s*gustavo\s+fl[oó]rez", "$options": "i"}},
+                                       {"_id": 0, "id": 1, "name": 1})
+        if not tech:
+            await db.migrations.delete_one({"_id": TEST_GUSTAVO_MED_SEED})
+            logging.getLogger(__name__).warning("[tecnicos] No existe el técnico Gustavo Florez: no se crearon sus servicios para medidas")
+            return
+        n = await _create_test_tech_orders(TEST_GUSTAVO_MED_SEED, TEST_GUSTAVO_MED_ORDERS, [tech], "PRUEBA Medidas Gustavo", stage="medidas")
+        await db.migrations.update_one({"_id": TEST_GUSTAVO_MED_SEED}, {"$set": {
+            "finished_at": datetime.now(timezone.utc).isoformat(), "message": f"{n} servicio(s) para medidas de {tech['name']}"}})
+        logging.getLogger(__name__).info(f"[tecnicos] {n} servicio(s) para medidas de {tech['name']}")
+    except Exception as e:
+        await db.migrations.delete_one({"_id": TEST_GUSTAVO_MED_SEED})
+        logging.getLogger(__name__).warning(f"No se pudieron crear los servicios para medidas de Gustavo Florez: {e}")
+
+
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
-    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED]}}, {"_id": 0, "id": 1})]
+    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED, TEST_GUSTAVO_MED_SEED]}}, {"_id": 0, "id": 1})]
     if not ids:
         return {"message": "No hay servicios de prueba", "removed": 0}
     await db.orders.delete_many({"id": {"$in": ids}})
