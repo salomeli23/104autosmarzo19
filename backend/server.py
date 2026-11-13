@@ -9025,10 +9025,49 @@ async def create_test_miguel_measure_orders_once():
         logging.getLogger(__name__).warning(f"No se pudieron crear los servicios para medidas de Miguel Arango: {e}")
 
 
+# 3 servicios de PRUEBA para el técnico Freddy Rivera: 2 para instalar y 1 para colocar medidas
+TEST_FREDDY_SEED = "test_tech_freddy_2026_11_13"
+TEST_FREDDY_INSTALL_ORDERS = [
+    ("PRB601", "Mazda", "2", "polarizado", {"service": "nanooptik", "description": "Polarizado - Nanooptik", "price": 650000}),
+    ("PRB602", "Toyota", "Fortuner SW4", "ultrasecure", {"service": "micras_300", "description": "Ultrasecure - 300 Micras", "price": 1200000,
+                                                         "film": "black_ceramic", "film_label": "Black Ceramic"}),
+]
+TEST_FREDDY_MEASURE_ORDERS = [
+    ("PRB603", "Kia", "Seltos", "polarizado", {"service": "huperoptik", "description": "Polarizado - Huperoptik", "price": 1000000}),
+]
+
+
+@app.on_event("startup")
+async def create_test_freddy_orders_once():
+    """Una sola vez: 3 servicios de PRUEBA para Freddy Rivera (2 en cola de instalación y 1 en corte esperando sus medidas).
+    Si el técnico todavía no existe, lo vuelve a intentar en el próximo arranque."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": TEST_FREDDY_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    try:
+        tech = await db.users.find_one({"role": UserRole.TECNICO.value, "is_active": {"$ne": False},
+                                        "name": {"$regex": r"^(?=.*fredd?y)(?=.*rivera)", "$options": "i"}},
+                                       {"_id": 0, "id": 1, "name": 1})
+        if not tech:
+            await db.migrations.delete_one({"_id": TEST_FREDDY_SEED})
+            logging.getLogger(__name__).warning("[tecnicos] No existe el técnico Freddy Rivera: no se crearon sus servicios de prueba")
+            return
+        n = await _create_test_tech_orders(TEST_FREDDY_SEED, TEST_FREDDY_INSTALL_ORDERS, [tech], "PRUEBA Freddy")
+        n += await _create_test_tech_orders(TEST_FREDDY_SEED, TEST_FREDDY_MEASURE_ORDERS, [tech], "PRUEBA Medidas Freddy", stage="medidas")
+        await db.migrations.update_one({"_id": TEST_FREDDY_SEED}, {"$set": {
+            "finished_at": datetime.now(timezone.utc).isoformat(), "message": f"{n} servicio(s) de prueba para {tech['name']}"}})
+        logging.getLogger(__name__).info(f"[tecnicos] {n} servicio(s) de prueba para {tech['name']} (1 para medidas)")
+    except Exception as e:
+        await db.migrations.delete_one({"_id": TEST_FREDDY_SEED})
+        logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba de Freddy Rivera: {e}")
+
+
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
-    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED, TEST_GUSTAVO_MED_SEED, TEST_MAURICIO_SEED, TEST_MIGUEL_SEED, TEST_MIGUEL_MED_SEED]}}, {"_id": 0, "id": 1})]
+    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED, TEST_GUSTAVO_MED_SEED, TEST_MAURICIO_SEED, TEST_MIGUEL_SEED, TEST_MIGUEL_MED_SEED, TEST_FREDDY_SEED]}}, {"_id": 0, "id": 1})]
     if not ids:
         return {"message": "No hay servicios de prueba", "removed": 0}
     await db.orders.delete_many({"id": {"$in": ids}})
