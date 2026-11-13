@@ -8692,15 +8692,17 @@ TEST_TECH_ORDERS = [
 ]
 
 
-async def _create_test_tech_orders() -> int:
+async def _create_test_tech_orders(seed: str = TEST_TECH_SEED, orders: list = TEST_TECH_ORDERS,
+                                   techs: Optional[list] = None, client_prefix: str = "PRUEBA Técnico") -> int:
     """10 servicios de PRUEBA (polarizado, PPF y Ultrasecure) ya cortados y en cola de instalación, repartidos entre todos los técnicos."""
     now = datetime.now(timezone.utc).isoformat()
     today = get_colombia_time().strftime("%Y-%m-%d")
-    techs = await db.users.find({"role": UserRole.TECNICO.value, "is_active": {"$ne": False}},
-                                {"_id": 0, "id": 1, "name": 1}).sort("name", 1).to_list(200)
+    if techs is None:
+        techs = await db.users.find({"role": UserRole.TECNICO.value, "is_active": {"$ne": False}},
+                                    {"_id": 0, "id": 1, "name": 1}).sort("name", 1).to_list(200)
     created = 0
-    for i, (plate, brand, model, area, svc) in enumerate(TEST_TECH_ORDERS):
-        if await db.orders.find_one({"plate": plate, "test_seed": TEST_TECH_SEED}, {"_id": 1}):
+    for i, (plate, brand, model, area, svc) in enumerate(orders):
+        if await db.orders.find_one({"plate": plate, "test_seed": seed}, {"_id": 1}):
             continue
         pair = [techs[i % len(techs)], techs[(i + 1) % len(techs)]] if techs else []
         pair = list({t["id"]: t for t in pair}.values())
@@ -8712,7 +8714,7 @@ async def _create_test_tech_orders() -> int:
         code = generate_order_code()
         await db.orders.insert_one({
             "id": str(uuid.uuid4()), "order_code": code, "qr_code": generate_qr_code(code),
-            "client_name": f"PRUEBA Técnico {i + 1}", "client_phone": "3000000000", "client_email": None, "client_cedula": None,
+            "client_name": f"{client_prefix} {i + 1}", "client_phone": "3000000000", "client_email": None, "client_cedula": None,
             "plate": plate, "brand": brand, "model": model, "year": None, "color": None,
             "vehicle_type": "camioneta" if model in ("Koleos", "RAV4", "Q5", "Prado", "Explorer", "GLC", "X3") else "auto",
             "date": today, "time_slot": "franja_1", "scheduled_time": f"{8 + i % 9:02d}:00", "is_priority": False,
@@ -8727,7 +8729,7 @@ async def _create_test_tech_orders() -> int:
             "assigned_technician_2_id": pair[1]["id"] if len(pair) > 1 else None,
             "assigned_technician_2_name": pair[1]["name"] if len(pair) > 1 else None,
             "service_time_minutes": 180 if area == "ppf" else 120, "assigned_at": now,
-            "is_postventa": False, "is_test": True, "test_seed": TEST_TECH_SEED,
+            "is_postventa": False, "is_test": True, "test_seed": seed,
             "created_by": "sistema", "created_by_name": "Sistema (prueba)", "created_by_role": "sistema",
             "created_at": now, "updated_at": now,
         })
@@ -8753,10 +8755,49 @@ async def create_test_tech_orders_once():
         logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba para técnicos: {e}")
 
 
+# 3 servicios de PRUEBA solo para el técnico Gustavo Florez
+TEST_GUSTAVO_SEED = "test_tech_gustavo_2026_11_13"
+TEST_GUSTAVO_ORDERS = [
+    ("PRB301", "Mazda", "CX-5", "polarizado", {"service": "nanooptik", "description": "Polarizado - Nanooptik", "price": 650000}),
+    ("PRB302", "Toyota", "Hilux", "ppf", {"service": "ppf_partes", "description": "PPF - Partes / Piezas", "price": 1500000,
+                                         "ppf_scope": "partes", "ppf_finish": "brillante", "ppf_zones": ["exterior"],
+                                         "ppf_parts": ["Manijas", "Espejos", "Farolas"],
+                                         "ppf_parts_description": "Exterior: Manijas, Espejos, Farolas"}),
+    ("PRB303", "Kia", "Sorento", "ultrasecure", {"service": "micras_300", "description": "Ultrasecure - 300 Micras", "price": 1200000,
+                                                "film": "black_ceramic", "film_label": "Black Ceramic"}),
+]
+
+
+@app.on_event("startup")
+async def create_test_gustavo_orders_once():
+    """Una sola vez: 3 servicios de PRUEBA en cola de instalación para el técnico Gustavo Florez.
+    Si el técnico todavía no existe, lo vuelve a intentar en el próximo arranque."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": TEST_GUSTAVO_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    try:
+        tech = await db.users.find_one({"role": UserRole.TECNICO.value, "is_active": {"$ne": False},
+                                        "name": {"$regex": r"^\s*gustavo\s+fl[oó]rez", "$options": "i"}},
+                                       {"_id": 0, "id": 1, "name": 1})
+        if not tech:
+            await db.migrations.delete_one({"_id": TEST_GUSTAVO_SEED})
+            logging.getLogger(__name__).warning("[tecnicos] No existe el técnico Gustavo Florez: no se crearon sus servicios de prueba")
+            return
+        n = await _create_test_tech_orders(TEST_GUSTAVO_SEED, TEST_GUSTAVO_ORDERS, [tech], "PRUEBA Gustavo")
+        await db.migrations.update_one({"_id": TEST_GUSTAVO_SEED}, {"$set": {
+            "finished_at": datetime.now(timezone.utc).isoformat(), "message": f"{n} servicio(s) de prueba para {tech['name']}"}})
+        logging.getLogger(__name__).info(f"[tecnicos] {n} servicio(s) de prueba para {tech['name']}")
+    except Exception as e:
+        await db.migrations.delete_one({"_id": TEST_GUSTAVO_SEED})
+        logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba de Gustavo Florez: {e}")
+
+
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
-    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED]}}, {"_id": 0, "id": 1})]
+    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED]}}, {"_id": 0, "id": 1})]
     if not ids:
         return {"message": "No hay servicios de prueba", "removed": 0}
     await db.orders.delete_many({"id": {"$in": ids}})
