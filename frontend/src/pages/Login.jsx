@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { Button } from '../components/ui/button';
@@ -17,7 +17,8 @@ const BG_IMAGE = "https://images.unsplash.com/photo-1647649641463-724358c4387e?w
 export const Login = () => {
     const navigate = useNavigate();
     const { login, loginWithPin } = useAuth();
-    const [pinMode, setPinMode] = useState(false);
+    const [searchParams] = useSearchParams();
+    const [pinMode, setPinMode] = useState(searchParams.get('pin') === '1');
     const { theme, toggleTheme } = useTheme();
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);

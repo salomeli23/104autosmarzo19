@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { ROLE_LABELS } from '../lib/utils';
 import { BulkTechniciansCard } from '../components/BulkTechniciansCard';
 import { CoordinatorPinCard } from '../components/CoordinatorPinCard';
+import { AccessShareCard } from '../components/AccessShareCard';
 import { toast } from 'sonner';
 import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff, UserPlus, LockKeyhole, Hash } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
@@ -48,6 +49,7 @@ export const Settings = () => {
     const emptyNewUser = { name: '', email: '', phone: '', role: 'accesorios', password: '', pin: '', entry_id: '' };
     const [newUser, setNewUser] = useState(emptyNewUser);
     const [creatingUser, setCreatingUser] = useState(false);
+    const [createdAccess, setCreatedAccess] = useState(null); // acceso del usuario recién creado, para copiar o enviar
 
     // Restablecer contraseña (admin)
     const [resetUser, setResetUser] = useState(null);
@@ -235,6 +237,10 @@ export const Settings = () => {
                 entry_id: newUser.role === 'tecnico' && newUser.entry_id ? newUser.entry_id : null,
             });
             setUsers(prev => [...prev, res.data.user]);
+            const u = res.data.user;
+            setCreatedAccess(u.role === 'tecnico' && newUser.pin
+                ? { name: u.name, role: u.role, entry_id: u.entry_id || newUser.entry_id, pin: newUser.pin }
+                : { name: u.name, role: u.role, email: u.email, password: newUser.password });
             setNewUser(emptyNewUser);
             toast.success(`Usuario ${res.data.user.name} creado como ${ROLE_LABELS[res.data.user.role] || res.data.user.role}`);
         } catch (error) {
@@ -488,6 +494,7 @@ export const Settings = () => {
                         <UserPlus className="w-4 h-4 mr-2" />
                         {creatingUser ? 'Creando...' : 'Crear usuario'}
                     </Button>
+                    <AccessShareCard accesses={createdAccess ? [createdAccess] : []} onClose={() => setCreatedAccess(null)} />
                 </CardContent>
             </Card>
 

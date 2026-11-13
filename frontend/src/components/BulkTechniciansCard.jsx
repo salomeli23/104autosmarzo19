@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { toast } from 'sonner';
+import { AccessShareCard } from './AccessShareCard';
 import { Users, Plus, Trash2, ClipboardPaste, Loader2, Shuffle } from 'lucide-react';
 
 const randomEntryId = () => {
@@ -61,7 +62,8 @@ export const BulkTechniciansCard = ({ onDone }) => {
         setBusy(true);
         try {
             const res = await usersAPI.bulkTechnicians(list.map(r => ({ name: r.name.trim(), entry_id: r.entry_id, pin: r.pin })));
-            setResults(res.data.results);
+            const pins = Object.fromEntries(list.map(r => [r.name.trim().toLowerCase(), r.pin]));
+            setResults(res.data.results.map(r => ({ ...r, pin: pins[r.name.toLowerCase()] })));
             toast.success(res.data.message);
             onDone?.();
         } catch (e) {
@@ -133,14 +135,9 @@ export const BulkTechniciansCard = ({ onDone }) => {
                 </Button>
 
                 {results && (
-                    <div className="rounded-lg border p-3 text-sm space-y-1" data-testid="bulk-results">
-                        {results.map(r => (
-                            <p key={r.name} className="flex justify-between gap-2">
-                                <span>{r.name} · ID <span className="font-mono">{r.entry_id}</span></span>
-                                <span className={r.action === 'creado' ? 'text-emerald-400' : 'text-cyan-400'}>{r.action}</span>
-                            </p>
-                        ))}
-                    </div>
+                    <AccessShareCard
+                        accesses={results.map(r => ({ name: r.name, role: 'tecnico', entry_id: r.entry_id, pin: r.pin, note: r.action }))}
+                        onClose={() => setResults(null)} />
                 )}
             </CardContent>
         </Card>
