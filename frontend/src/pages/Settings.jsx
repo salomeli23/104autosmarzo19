@@ -239,8 +239,8 @@ export const Settings = () => {
             setUsers(prev => [...prev, res.data.user]);
             const u = res.data.user;
             setCreatedAccess(u.role === 'tecnico' && newUser.pin
-                ? { name: u.name, role: u.role, entry_id: u.entry_id || newUser.entry_id, pin: newUser.pin }
-                : { name: u.name, role: u.role, email: u.email, password: newUser.password });
+                ? { user_id: u.id, name: u.name, role: u.role, entry_id: u.entry_id || newUser.entry_id, pin: newUser.pin, phone: u.phone }
+                : { user_id: u.id, name: u.name, role: u.role, email: u.email, password: newUser.password, phone: u.phone });
             setNewUser(emptyNewUser);
             toast.success(`Usuario ${res.data.user.name} creado como ${ROLE_LABELS[res.data.user.role] || res.data.user.role}`);
         } catch (error) {

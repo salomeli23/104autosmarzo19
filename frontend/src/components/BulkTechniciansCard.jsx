@@ -13,16 +13,19 @@ const randomEntryId = () => {
     window.crypto.getRandomValues(n);
     return Array.from(n, (v, i) => (i === 0 ? 1 + (v % 9) : v % 10)).join('');
 };
-const initialRows = () => Array.from({ length: 6 }, (_, i) => ({ name: `tecnico${i + 1}`, entry_id: '', pin: '1111' }));
+const initialRows = () => Array.from({ length: 6 }, (_, i) => ({ name: `tecnico${i + 1}`, entry_id: '', pin: '1111', phone: '' }));
+const validPhone = (p) => !p || /^(\+?57)?3\d{9}$/.test(p.replace(/[\s-]/g, '')) || /^\+\d{8,15}$/.test(p.replace(/[\s-]/g, ''));
 
-// "| tecnico2 | 123456 | 1111 |" o "tecnico2 123456 1111" → fila
+// "| tecnico2 | 4632561234 | 1111 | 3001234567 |" o "tecnico2 4632561234 1111 3001234567" → fila (el celular es opcional)
 const parseList = (text) => text.split('\n').map(line => {
     const cells = line.split(/[|\t,;]+|\s{2,}/).map(c => c.trim()).filter(Boolean);
     const parts = cells.length >= 2 ? cells : line.trim().split(/\s+/);
-    const entry = parts.find(p => /^\d{10}$/.test(p));
+    const tens = parts.filter(p => /^\d{10}$/.test(p));
+    const entry = tens[0];
+    const phone = tens[1] || parts.find(p => /^\+?57\d{10}$/.test(p)) || '';
     const pin = parts.find(p => /^\d{4}$/.test(p));
     const name = parts.find(p => !/^\d+$/.test(p) && !/^-+$/.test(p) && !/^(técnico|tecnico|id de entrada|pin)$/i.test(p));
-    return entry && name ? { name, entry_id: entry, pin: pin || '1111' } : null;
+    return entry && name ? { name, entry_id: entry, pin: pin || '1111', phone } : null;
 }).filter(Boolean);
 
 /** Configuración: crea (o actualiza) varios técnicos con ID de entrada y PIN en un solo paso */
@@ -59,9 +62,14 @@ export const BulkTechniciansCard = ({ onDone }) => {
             toast.error(`${bad.name}: el ID de entrada debe tener 10 dígitos y el PIN 4`);
             return;
         }
+        const badPhone = list.find(r => !validPhone(r.phone || ''));
+        if (badPhone) {
+            toast.error(`${badPhone.name}: el celular debe tener 10 dígitos (ej. 3001234567)`);
+            return;
+        }
         setBusy(true);
         try {
-            const res = await usersAPI.bulkTechnicians(list.map(r => ({ name: r.name.trim(), entry_id: r.entry_id, pin: r.pin })));
+            const res = await usersAPI.bulkTechnicians(list.map(r => ({ name: r.name.trim(), entry_id: r.entry_id, pin: r.pin, phone: (r.phone || '').trim() || null })));
             const pins = Object.fromEntries(list.map(r => [r.name.trim().toLowerCase(), r.pin]));
             setResults(res.data.results.map(r => ({ ...r, pin: pins[r.name.toLowerCase()] })));
             toast.success(res.data.message);
@@ -93,7 +101,7 @@ export const BulkTechniciansCard = ({ onDone }) => {
                 ) : (
                     <div className="space-y-2">
                         <Textarea rows={6} value={paste} onChange={(e) => setPaste(e.target.value)}
-                            placeholder={'Pega la tabla, una fila por técnico:\n| tecnico1 | 4632561234 | 1111 |'} className="font-mono text-xs" data-testid="bulk-paste-text" />
+                            placeholder={'Pega la tabla, una fila por técnico (celular opcional):\n| tecnico1 | 4632561234 | 1111 | 3001234567 |'} className="font-mono text-xs" data-testid="bulk-paste-text" />
                         <div className="flex gap-2">
                             <Button type="button" size="sm" onClick={applyPaste} data-testid="bulk-paste-apply">Cargar</Button>
                             <Button type="button" size="sm" variant="ghost" onClick={() => setPaste(null)}>Cancelar</Button>
@@ -101,12 +109,12 @@ export const BulkTechniciansCard = ({ onDone }) => {
                     </div>
                 )}
 
-                <div className="space-y-2">
-                    <div className="grid grid-cols-[1fr_10.5rem_5.5rem_2.25rem] gap-2 text-xs text-muted-foreground px-1">
-                        <span>Nombre</span><span>ID de entrada</span><span>PIN</span><span />
+                <div className="space-y-2 overflow-x-auto">
+                    <div className="grid grid-cols-[minmax(8rem,1fr)_10.5rem_9rem_5.5rem_2.25rem] gap-2 text-xs text-muted-foreground px-1">
+                        <span>Nombre</span><span>ID de entrada</span><span>Celular (SMS)</span><span>PIN</span><span />
                     </div>
                     {rows.map((r, i) => (
-                        <div key={i} className="grid grid-cols-[1fr_10.5rem_5.5rem_2.25rem] gap-2 items-center" data-testid={`bulk-row-${i}`}>
+                        <div key={i} className="grid grid-cols-[minmax(8rem,1fr)_10.5rem_9rem_5.5rem_2.25rem] gap-2 items-center" data-testid={`bulk-row-${i}`}>
                             <Input value={r.name} onChange={(e) => update(i, { name: e.target.value })} />
                             <div className="relative">
                                 <Input inputMode="numeric" maxLength={10} value={r.entry_id} placeholder="10 dígitos"
@@ -117,6 +125,9 @@ export const BulkTechniciansCard = ({ onDone }) => {
                                     <Shuffle className="w-4 h-4" />
                                 </button>
                             </div>
+                            <Input inputMode="tel" value={r.phone || ''} placeholder="3001234567"
+                                onChange={(e) => update(i, { phone: e.target.value.replace(/[^\d+\s-]/g, '').slice(0, 16) })}
+                                className="font-mono" data-testid={`bulk-phone-${i}`} />
                             <Input inputMode="numeric" maxLength={4} value={r.pin}
                                 onChange={(e) => update(i, { pin: e.target.value.replace(/\D/g, '').slice(0, 4) })} className="font-mono" />
                             <Button type="button" variant="ghost" size="icon" className="text-red-500" onClick={() => setRows(prev => prev.filter((_, j) => j !== i))} aria-label="Quitar">
@@ -124,7 +135,7 @@ export const BulkTechniciansCard = ({ onDone }) => {
                             </Button>
                         </div>
                     ))}
-                    <Button type="button" variant="outline" size="sm" onClick={() => setRows(prev => [...prev, { name: `tecnico${prev.length + 1}`, entry_id: '', pin: '1111' }])}>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setRows(prev => [...prev, { name: `tecnico${prev.length + 1}`, entry_id: '', pin: '1111', phone: '' }])}>
                         <Plus className="w-4 h-4 mr-1" /> Agregar fila
                     </Button>
                 </div>
@@ -136,7 +147,7 @@ export const BulkTechniciansCard = ({ onDone }) => {
 
                 {results && (
                     <AccessShareCard
-                        accesses={results.map(r => ({ name: r.name, role: 'tecnico', entry_id: r.entry_id, pin: r.pin, note: r.action }))}
+                        accesses={results.map(r => ({ user_id: r.id, name: r.name, role: 'tecnico', entry_id: r.entry_id, pin: r.pin, phone: r.phone, note: r.action }))}
                         onClose={() => setResults(null)} />
                 )}
             </CardContent>

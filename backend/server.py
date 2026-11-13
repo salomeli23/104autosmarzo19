@@ -23,6 +23,7 @@ import base64
 from io import BytesIO
 import asyncio
 import resend
+import sms
 import re
 from reports import (CHARGE_LABELS, METHOD_LABELS, PAYMENT_STATUS_LABELS, STATUS_LABELS, build_workbook,
                      local_dt, range_bounds, summarize)
@@ -835,6 +836,7 @@ class BulkTechnician(BaseModel):
     name: str
     entry_id: str
     pin: str
+    phone: Optional[str] = None  # celular para enviarle el acceso por SMS
 
 
 class BulkTechnicians(BaseModel):
@@ -863,14 +865,19 @@ async def bulk_technicians(data: BulkTechnicians, current_user: dict = Depends(r
         existing = await db.users.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"},
                                             "role": UserRole.TECNICO.value}, {"_id": 0, "id": 1})
         await _free_entry_id(eid, existing["id"] if existing else None)  # valida formato y que no lo use otro
-        plan.append((name, eid, t.pin.strip(), existing))
+        phone = (t.phone or "").strip() or None
+        if phone and not sms.normalize_phone(phone):
+            raise HTTPException(status_code=400, detail=f"{name}: el celular no es válido (10 dígitos, ej. 3001234567)")
+        plan.append((name, eid, t.pin.strip(), existing, phone))
     now = datetime.now(timezone.utc).isoformat()
     results = []
-    for name, eid, pin, existing in plan:
+    for name, eid, pin, existing, phone in plan:
         if existing:
             await db.users.update_one({"id": existing["id"]}, {"$set": {
-                "entry_id": eid, "pin_hash": hash_password(pin), "pin_fails": 0, "pin_locked_until": None}})
-            results.append({"name": name, "entry_id": eid, "action": "actualizado"})
+                "entry_id": eid, "pin_hash": hash_password(pin), "pin_fails": 0, "pin_locked_until": None,
+                **({"phone": phone} if phone else {})}})
+            ph = phone or (await db.users.find_one({"id": existing["id"]}, {"_id": 0, "phone": 1}) or {}).get("phone")
+            results.append({"id": existing["id"], "name": name, "entry_id": eid, "phone": ph, "action": "actualizado"})
             continue
         slug = re.sub(r"[^a-z0-9]+", ".", name.lower()).strip(".") or "tecnico"
         email = f"{slug}@tecnicos.polarizadosya.com"
@@ -878,14 +885,77 @@ async def bulk_technicians(data: BulkTechnicians, current_user: dict = Depends(r
         while await db.users.find_one({"email": email}, {"_id": 1}):
             n += 1
             email = f"{slug}{n}@tecnicos.polarizadosya.com"
+        new_id = str(uuid.uuid4())
         await db.users.insert_one({
-            "id": str(uuid.uuid4()), "email": email, "password": hash_password(_secrets.token_urlsafe(24)),
-            "name": name, "role": UserRole.TECNICO.value, "phone": None, "created_at": now,
+            "id": new_id, "email": email, "password": hash_password(_secrets.token_urlsafe(24)),
+            "name": name, "role": UserRole.TECNICO.value, "phone": phone, "created_at": now,
             "entry_id": eid, "pin_hash": hash_password(pin), "created_by": current_user["id"],
         })
-        results.append({"name": name, "entry_id": eid, "action": "creado"})
+        results.append({"id": new_id, "name": name, "entry_id": eid, "phone": phone, "action": "creado"})
     return {"message": f"{sum(r['action'] == 'creado' for r in results)} técnicos creados, "
                        f"{sum(r['action'] == 'actualizado' for r in results)} actualizados", "results": results}
+
+
+# ==================== ACCESOS POR SMS ====================
+SMS_MAX_PER_USER_HOUR = 5
+
+
+class AccessSms(BaseModel):
+    pin: Optional[str] = None       # técnicos con ID de entrada: el PIN que se le acaba de poner
+    password: Optional[str] = None  # demás usuarios: la contraseña que se le acaba de poner
+    phone: Optional[str] = None     # celular si el usuario aún no tiene (se guarda)
+    app_url: Optional[str] = None   # dirección de la app que se pone en el mensaje
+
+
+@api_router.get("/sms/status")
+async def sms_status(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    return {"configured": sms.configured(), "simulated": sms.dry_run()}
+
+
+@api_router.post("/users/{user_id}/send-access-sms")
+async def send_access_sms(user_id: str, data: AccessSms, request: Request,
+                          current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Envía por SMS al celular del usuario sus datos de acceso. El PIN o la contraseña solo se envían
+    si coinciden con los guardados, para no mandar datos equivocados."""
+    if not sms.configured():
+        raise HTTPException(status_code=400, detail="El envío de SMS no está configurado: faltan las claves de Twilio en Railway")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    phone_raw = (data.phone or "").strip() or user.get("phone")
+    to = sms.normalize_phone(phone_raw)
+    if not to:
+        raise HTTPException(status_code=400, detail=f"{user['name']} no tiene un celular válido (10 dígitos, ej. 3001234567)")
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    if await db.sms_log.count_documents({"user_id": user_id, "ok": True, "at": {"$gte": since}}) >= SMS_MAX_PER_USER_HOUR:
+        raise HTTPException(status_code=429, detail=f"Ya se enviaron {SMS_MAX_PER_USER_HOUR} SMS a {user['name']} en la última hora")
+
+    origin = (data.app_url or request.headers.get("origin") or os.environ.get("FRONTEND_URL") or "").rstrip("/")
+    if not re.fullmatch(r"https?://[\w.\-:]+", origin):
+        origin = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    if user.get("role") == UserRole.TECNICO.value and user.get("entry_id") and user.get("pin_hash"):
+        pin = (data.pin or "").strip()
+        if not re.fullmatch(r"\d{4}", pin) or not verify_password(pin, user["pin_hash"]):
+            raise HTTPException(status_code=400, detail="El PIN no coincide con el del técnico; vuelve a ponérselo")
+        body = (f"PolarizadosYA! Hola {user['name']}, tu acceso de tecnico:\n"
+                f"{origin}/login?pin=1\nID de entrada: {user['entry_id']}\nPIN: {pin}\nNo compartas tu PIN.")
+    else:
+        pwd = data.password or ""
+        if not pwd or not user.get("password") or not verify_password(pwd, user["password"]):
+            raise HTTPException(status_code=400, detail="La contraseña no coincide con la del usuario")
+        body = (f"PolarizadosYA! Hola {user['name']}, tu acceso:\n{origin}/login\n"
+                f"Correo: {user['email']}\nContrasena: {pwd}\nCambiala al entrar.")
+
+    result = await sms.send_sms(to, body)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.sms_log.insert_one({"id": str(uuid.uuid4()), "user_id": user_id, "to": sms.mask_phone(to), "kind": "acceso",
+                                 "ok": result["ok"], "provider_id": result.get("id"), "error": result.get("error"),
+                                 "sent_by": current_user["id"], "at": now})
+    if not result["ok"]:
+        raise HTTPException(status_code=502, detail=f"No se pudo enviar el SMS: {result.get('error')}")
+    if data.phone and data.phone.strip() != (user.get("phone") or ""):
+        await db.users.update_one({"id": user_id}, {"$set": {"phone": data.phone.strip()}})
+    return {"message": f"SMS enviado a {user['name']} ({sms.mask_phone(to)})", "simulated": sms.dry_run()}
 
 
 @api_router.post("/auth/register", response_model=TokenResponse)

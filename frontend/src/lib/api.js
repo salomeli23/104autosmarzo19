@@ -42,6 +42,8 @@ export const usersAPI = {
     resetPassword: (userId, newPassword) => api.put(`/users/${userId}/password`, { new_password: newPassword }),
     setPin: (userId, data) => api.put(`/users/${userId}/pin`, data),
     bulkTechnicians: (technicians) => api.post('/users/technicians/bulk', { technicians }),
+    sendAccessSms: (userId, data) => api.post(`/users/${userId}/send-access-sms`, data),
+    smsStatus: () => api.get('/sms/status'),
 };
 
 // Orders (nuevo flujo completo)

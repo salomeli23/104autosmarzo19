@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { toast } from 'sonner';
-import { Copy, MessageCircle, X, KeyRound } from 'lucide-react';
+import { Copy, MessageCircle, X, KeyRound, Smartphone, Loader2, Check } from 'lucide-react';
 import { ROLE_LABELS } from '../lib/utils';
+import { usersAPI } from '../lib/api';
 
 const appUrl = () => window.location.origin;
 
@@ -44,12 +46,57 @@ const copy = async (text, msg) => {
 const whatsapp = (text) => window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
 
 /**
- * Accesos recién creados, para copiar o enviar por WhatsApp.
- * accesses: [{ name, role, entry_id?, pin?, email?, password?, note? }]
+ * Accesos recién creados, para copiar, enviar por WhatsApp o por SMS al celular de cada persona.
+ * accesses: [{ user_id?, name, role, entry_id?, pin?, email?, password?, phone?, note? }]
  */
 export const AccessShareCard = ({ accesses, onClose }) => {
+    const [smsReady, setSmsReady] = useState(null); // null = cargando, {configured, simulated}
+    const [phones, setPhones] = useState({});       // celular escrito a mano cuando no hay
+    const [sending, setSending] = useState({});     // i → true
+    const [sent, setSent] = useState({});           // i → true
+
+    useEffect(() => {
+        if (!accesses?.length) return;
+        usersAPI.smsStatus().then(res => setSmsReady(res.data)).catch(() => setSmsReady({ configured: false }));
+    }, [accesses]);
+    useEffect(() => { setPhones({}); setSent({}); }, [accesses]);
+
     if (!accesses?.length) return null;
     const all = accesses.map(accessText).join('\n\n— — —\n\n');
+    const phoneOf = (a, i) => (phones[i] ?? a.phone ?? '').trim();
+    const canSms = (a) => !!(smsReady?.configured && a.user_id);
+
+    const sendSms = async (a, i) => {
+        const phone = phoneOf(a, i);
+        if (!phone) { toast.error(`Escribe el celular de ${a.name}`); return false; }
+        setSending(s => ({ ...s, [i]: true }));
+        try {
+            const { data } = await usersAPI.sendAccessSms(a.user_id, {
+                pin: a.entry_id ? a.pin : null, password: a.entry_id ? null : a.password,
+                phone, app_url: appUrl(),
+            });
+            setSent(s => ({ ...s, [i]: true }));
+            toast.success(data.simulated ? `${data.message} (simulado)` : data.message);
+            return true;
+        } catch (e) {
+            toast.error(e.response?.data?.detail || `No se pudo enviar el SMS a ${a.name}`);
+            return false;
+        } finally {
+            setSending(s => ({ ...s, [i]: false }));
+        }
+    };
+    const sendAll = async () => {
+        let ok = 0;
+        for (let i = 0; i < accesses.length; i += 1) {
+            const a = accesses[i];
+            if (sent[i] || !canSms(a) || !phoneOf(a, i)) continue;
+            // eslint-disable-next-line no-await-in-loop
+            if (await sendSms(a, i)) ok += 1;
+        }
+        if (!ok) toast.message('No había accesos con celular por enviar');
+    };
+    const withPhone = accesses.filter((a, i) => canSms(a) && phoneOf(a, i) && !sent[i]).length;
+
     return (
         <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 space-y-3" data-testid="access-share">
             <div className="flex items-center justify-between gap-2">
@@ -60,9 +107,19 @@ export const AccessShareCard = ({ accesses, onClose }) => {
                     </button>
                 )}
             </div>
-            <p className="text-xs text-muted-foreground">Por seguridad el PIN y la contraseña solo se muestran ahora. Cópialos o envíalos antes de cerrar.</p>
+            <p className="text-xs text-muted-foreground">Por seguridad el PIN y la contraseña solo se muestran ahora. Envíalos antes de cerrar.</p>
+            {smsReady && !smsReady.configured && (
+                <p className="text-xs text-amber-400" data-testid="sms-not-configured">
+                    El envío por SMS aún no está activo: faltan las claves de Twilio en Railway. Mientras tanto usa Copiar o WhatsApp.
+                </p>
+            )}
             {accesses.length > 1 && (
                 <div className="flex flex-wrap gap-2">
+                    {smsReady?.configured && (
+                        <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700" onClick={sendAll} disabled={!withPhone} data-testid="access-sms-all">
+                            <Smartphone className="w-4 h-4 mr-1" /> Enviar SMS a todos ({withPhone})
+                        </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => copy(all, `${accesses.length} accesos copiados`)} data-testid="access-copy-all">
                         <Copy className="w-4 h-4 mr-1" /> Copiar todos
                     </Button>
@@ -76,9 +133,9 @@ export const AccessShareCard = ({ accesses, onClose }) => {
                     const text = accessText(a);
                     return (
                         <div key={`${a.name}-${i}`} className="rounded-md border bg-background/60 p-2 space-y-2" data-testid={`access-item-${i}`}>
-                            <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                                 <p className="font-medium text-sm">{a.name}{a.note && <span className="ml-2 text-xs text-cyan-400">{a.note}</span>}</p>
-                                <div className="flex gap-1">
+                                <div className="flex flex-wrap gap-1">
                                     <Button size="sm" variant="ghost" onClick={() => copy(text, `Acceso de ${a.name} copiado`)} data-testid={`access-copy-${i}`}>
                                         <Copy className="w-4 h-4 mr-1" /> Copiar
                                     </Button>
@@ -87,6 +144,19 @@ export const AccessShareCard = ({ accesses, onClose }) => {
                                     </Button>
                                 </div>
                             </div>
+                            {canSms(a) && (
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Input inputMode="tel" value={phones[i] ?? a.phone ?? ''} placeholder="Celular, ej. 3001234567"
+                                        onChange={(e) => setPhones(p => ({ ...p, [i]: e.target.value.replace(/[^\d+\s-]/g, '').slice(0, 16) }))}
+                                        className="h-8 w-44 font-mono text-sm" data-testid={`access-phone-${i}`} />
+                                    <Button size="sm" className="h-8 bg-cyan-600 hover:bg-cyan-700" onClick={() => sendSms(a, i)}
+                                        disabled={sending[i] || !phoneOf(a, i)} data-testid={`access-sms-${i}`}>
+                                        {sending[i] ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                            : sent[i] ? <Check className="w-4 h-4 mr-1" /> : <Smartphone className="w-4 h-4 mr-1" />}
+                                        {sent[i] ? 'SMS enviado · reenviar' : 'Enviar SMS'}
+                                    </Button>
+                                </div>
+                            )}
                             <pre className="whitespace-pre-wrap text-xs font-mono text-muted-foreground select-all">{text}</pre>
                         </div>
                     );
