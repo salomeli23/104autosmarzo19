@@ -8902,10 +8902,59 @@ async def create_test_gustavo_measure_orders_once():
         logging.getLogger(__name__).warning(f"No se pudieron crear los servicios para medidas de Gustavo Florez: {e}")
 
 
+# 3 servicios de PRUEBA solo para el técnico Mauricio Almanza
+TEST_MAURICIO_SEED = "test_tech_mauricio_2026_11_13"
+TEST_MAURICIO_ENTRY_SHA256 = "082e9fb1b8f6f6d548f023205552cd71f1c0038fa457be54abdbd9aa9e57761a"
+TEST_MAURICIO_ORDERS = [
+    ("PRB401", "Renault", "Sandero", "polarizado", {"service": "huperoptik", "description": "Polarizado - Huperoptik", "price": 1000000}),
+    ("PRB402", "Ford", "Ranger", "ppf", {"service": "ppf_partes", "description": "PPF - Partes / Piezas", "price": 1600000,
+                                        "ppf_scope": "partes", "ppf_finish": "brillante", "ppf_zones": ["exterior"],
+                                        "ppf_parts": ["Manijas", "Estribos", "Farolas"],
+                                        "ppf_parts_description": "Exterior: Manijas, Estribos, Farolas"}),
+    ("PRB403", "Hyundai", "Creta", "ultrasecure", {"service": "micras_300", "description": "Ultrasecure - 300 Micras", "price": 1200000,
+                                                  "film": "huperoptik", "film_label": "HÜPER OPTIK"}),
+]
+
+
+@app.on_event("startup")
+async def create_test_mauricio_orders_once():
+    """Una sola vez: 3 servicios de PRUEBA en cola de instalación para el técnico Mauricio Almanza.
+    Si el técnico todavía no existe, lo vuelve a intentar en el próximo arranque."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": TEST_MAURICIO_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    try:
+        # Se busca por su ID de entrada (guardado como huella SHA-256, no el número) y si no, por nombre
+        import hashlib
+        tech = None
+        async for t in db.users.find({"role": UserRole.TECNICO.value, "is_active": {"$ne": False}, "entry_id": {"$ne": None}},
+                                     {"_id": 0, "id": 1, "name": 1, "entry_id": 1}):
+            if hashlib.sha256(str(t.get("entry_id") or "").encode()).hexdigest() == TEST_MAURICIO_ENTRY_SHA256:
+                tech = t
+                break
+        if not tech:
+            tech = await db.users.find_one({"role": UserRole.TECNICO.value, "is_active": {"$ne": False},
+                                            "name": {"$regex": r"^(?=.*mauricio)(?=.*almanza)", "$options": "i"}},
+                                           {"_id": 0, "id": 1, "name": 1})
+        if not tech:
+            await db.migrations.delete_one({"_id": TEST_MAURICIO_SEED})
+            logging.getLogger(__name__).warning("[tecnicos] No existe el técnico Mauricio Almanza: no se crearon sus servicios de prueba")
+            return
+        n = await _create_test_tech_orders(TEST_MAURICIO_SEED, TEST_MAURICIO_ORDERS, [tech], "PRUEBA Mauricio")
+        await db.migrations.update_one({"_id": TEST_MAURICIO_SEED}, {"$set": {
+            "finished_at": datetime.now(timezone.utc).isoformat(), "message": f"{n} servicio(s) de prueba para {tech['name']}"}})
+        logging.getLogger(__name__).info(f"[tecnicos] {n} servicio(s) de prueba para {tech['name']}")
+    except Exception as e:
+        await db.migrations.delete_one({"_id": TEST_MAURICIO_SEED})
+        logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba de Mauricio Almanza: {e}")
+
+
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
-    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED, TEST_GUSTAVO_MED_SEED]}}, {"_id": 0, "id": 1})]
+    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED, TEST_GUSTAVO_MED_SEED, TEST_MAURICIO_SEED]}}, {"_id": 0, "id": 1})]
     if not ids:
         return {"message": "No hay servicios de prueba", "removed": 0}
     await db.orders.delete_many({"id": {"$in": ids}})
