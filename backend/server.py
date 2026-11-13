@@ -933,18 +933,19 @@ async def send_access_sms(user_id: str, data: AccessSms, request: Request,
     origin = (data.app_url or request.headers.get("origin") or os.environ.get("FRONTEND_URL") or "").rstrip("/")
     if not re.fullmatch(r"https?://[\w.\-:]+", origin):
         origin = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    host = re.sub(r"^https?://", "", origin)
+    sms_name = sms.plain_text(user["name"]).split(" ")[0][:20] or "Hola"
     if user.get("role") == UserRole.TECNICO.value and user.get("entry_id") and user.get("pin_hash"):
         pin = (data.pin or "").strip()
         if not re.fullmatch(r"\d{4}", pin) or not verify_password(pin, user["pin_hash"]):
             raise HTTPException(status_code=400, detail="El PIN no coincide con el del técnico; vuelve a ponérselo")
-        body = (f"PolarizadosYA! Hola {user['name']}, tu acceso de tecnico:\n"
-                f"{origin}/login?pin=1\nID de entrada: {user['entry_id']}\nPIN: {pin}\nNo compartas tu PIN.")
+        # Corto y sin tildes para que quepa en un solo SMS; /t abre directo el ingreso con PIN
+        body = f"PolarizadosYA! {sms_name}, tu acceso: {host}/t ID {user['entry_id']} PIN {pin}"
     else:
         pwd = data.password or ""
         if not pwd or not user.get("password") or not verify_password(pwd, user["password"]):
             raise HTTPException(status_code=400, detail="La contraseña no coincide con la del usuario")
-        body = (f"PolarizadosYA! Hola {user['name']}, tu acceso:\n{origin}/login\n"
-                f"Correo: {user['email']}\nContrasena: {pwd}\nCambiala al entrar.")
+        body = f"PolarizadosYA! {sms_name}, tu acceso: {host}/login Correo {user['email']} Clave {pwd}"
 
     result = await sms.send_sms(to, body)
     now = datetime.now(timezone.utc).isoformat()

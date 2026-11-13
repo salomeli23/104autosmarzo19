@@ -302,6 +302,8 @@ function AppRoutes() {
                     </ProtectedRoute>
                 } 
             />
+            {/* Enlace corto del SMS de acceso: abre el ingreso de técnicos con PIN */}
+            <Route path="/t" element={<Navigate to="/login?pin=1" replace />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

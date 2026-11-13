@@ -47,6 +47,12 @@ def normalize_phone(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def plain_text(text: str) -> str:
+    """Sin tildes ni símbolos especiales: así el SMS usa el alfabeto GSM (160 caracteres por mensaje)."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).replace("ñ", "n").replace("Ñ", "N")
+
+
 def mask_phone(phone: str) -> str:
     return phone[:3] + "*" * (len(phone) - 7) + phone[-4:] if len(phone) > 7 else phone
 
