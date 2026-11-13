@@ -17,11 +17,11 @@ import { DiscountCodesSection } from '../components/DiscountCodesSection';
 import { SedesSection, CarSeriesSection, ServiceExtrasSection, TechnicianRolesSection } from '../components/SettingsSections';
 
 
-// ID de entrada aleatorio de 6 dígitos (sin empezar en 0)
+// ID de entrada aleatorio de 10 dígitos (sin empezar en 0)
 const randomEntryId = () => {
-    const n = new Uint32Array(1);
+    const n = new Uint32Array(10);
     window.crypto.getRandomValues(n);
-    return String(100000 + (n[0] % 900000));
+    return Array.from(n, (v, i) => (i === 0 ? 1 + (v % 9) : v % 10)).join('');
 };
 
 export const Settings = () => {
@@ -195,7 +195,7 @@ export const Settings = () => {
 
     const savePin = async (remove = false) => {
         if (!remove) {
-            if (!/^\d{6}$/.test(entryValue)) { toast.error('El ID de entrada debe tener 6 dígitos'); return; }
+            if (!/^\d{10}$/.test(entryValue) && entryValue !== (pinUser?.entry_id || '')) { toast.error('El ID de entrada debe tener 10 dígitos'); return; }
             if (!(pinUser.has_pin && !pinValue) && !/^\d{4}$/.test(pinValue)) { toast.error('El PIN debe tener 4 dígitos'); return; }
         }
         setSavingPin(true);
@@ -222,7 +222,7 @@ export const Settings = () => {
             return;
         }
         if (newUser.role === 'tecnico' && (newUser.pin || newUser.entry_id)) {
-            if (!/^\d{6}$/.test(newUser.entry_id)) { toast.error('El ID de entrada debe tener 6 dígitos'); return; }
+            if (!/^\d{10}$/.test(newUser.entry_id)) { toast.error('El ID de entrada debe tener 10 dígitos'); return; }
             if (!/^\d{4}$/.test(newUser.pin)) { toast.error('El PIN debe tener 4 dígitos'); return; }
         }
         try {
@@ -468,10 +468,10 @@ export const Settings = () => {
                         {newUser.role === 'tecnico' && (
                             <div className="sm:col-span-2 grid grid-cols-2 gap-3">
                                 <div className="space-y-2">
-                                    <Label htmlFor="new-user-entry">ID de entrada (6 dígitos)</Label>
+                                    <Label htmlFor="new-user-entry">ID de entrada (10 dígitos)</Label>
                                     <div className="flex gap-2">
-                                        <Input id="new-user-entry" inputMode="numeric" maxLength={6} autoComplete="off" value={newUser.entry_id}
-                                            onChange={(e) => setNewUser(u => ({ ...u, entry_id: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                                        <Input id="new-user-entry" inputMode="numeric" maxLength={10} autoComplete="off" value={newUser.entry_id}
+                                            onChange={(e) => setNewUser(u => ({ ...u, entry_id: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
                                             placeholder="Ej. 463256" className="font-mono tracking-widest" data-testid="new-user-entry" />
                                         <Button type="button" variant="outline" onClick={() => setNewUser(u => ({ ...u, entry_id: randomEntryId() }))}>Generar</Button>
                                     </div>
@@ -580,11 +580,11 @@ export const Settings = () => {
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-1">
-                        <Label>ID de entrada (6 dígitos)</Label>
+                        <Label>ID de entrada (10 dígitos)</Label>
                         <div className="flex gap-2">
-                            <Input inputMode="numeric" maxLength={6} autoComplete="off" value={entryValue}
-                                onChange={(e) => setEntryValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                                placeholder="6 dígitos" className="font-mono text-xl tracking-[0.3em] text-center" data-testid="entry-input" />
+                            <Input inputMode="numeric" maxLength={10} autoComplete="off" value={entryValue}
+                                onChange={(e) => setEntryValue(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                                placeholder="10 dígitos" className="font-mono text-xl tracking-[0.2em] text-center" data-testid="entry-input" />
                             <Button type="button" variant="outline" onClick={() => setEntryValue(randomEntryId())} data-testid="entry-generate">Generar</Button>
                         </div>
                     </div>

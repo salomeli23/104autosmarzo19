@@ -262,7 +262,7 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.ASESOR
     phone: Optional[str] = None
     pin: Optional[str] = None  # técnicos: PIN de 4 dígitos para el ingreso rápido
-    entry_id: Optional[str] = None  # técnicos: ID de entrada de 6 dígitos (se usa con el PIN)
+    entry_id: Optional[str] = None  # técnicos: ID de entrada de 10 dígitos (se usa con el PIN)
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -738,8 +738,12 @@ def _valid_pin(pin: str) -> str:
 
 async def _free_entry_id(entry_id: str, user_id: Optional[str] = None) -> str:
     entry_id = (entry_id or "").strip()
-    if not re.fullmatch(r"\d{6}", entry_id):
-        raise HTTPException(status_code=400, detail="El ID de entrada debe tener 6 dígitos")
+    if not re.fullmatch(r"\d{10}", entry_id):
+        # Los técnicos que ya tenían un ID de 6 dígitos lo conservan mientras no se les cambie
+        legacy = re.fullmatch(r"\d{6}", entry_id) and user_id and await db.users.find_one(
+            {"id": user_id, "entry_id": entry_id}, {"_id": 1})
+        if not legacy:
+            raise HTTPException(status_code=400, detail="El ID de entrada debe tener 10 dígitos")
     other = await db.users.find_one({"entry_id": entry_id, "id": {"$ne": user_id}}, {"_id": 0, "name": 1})
     if other:
         raise HTTPException(status_code=400, detail="Ese ID de entrada ya lo tiene otro técnico")
@@ -763,7 +767,7 @@ class PinUpdate(BaseModel):
 
 @api_router.post("/auth/pin-login", response_model=TokenResponse)
 async def pin_login(data: PinLogin, request: Request):
-    """Ingreso de técnicos con ID de entrada (6 dígitos) y PIN (4 dígitos).
+    """Ingreso de técnicos con ID de entrada (10 dígitos; los anteriores de 6 siguen sirviendo) y PIN (4 dígitos).
     5 PIN fallidos bloquean al técnico 5 minutos; 20 fallos desde la misma IP la bloquean 15 minutos."""
     now = datetime.now(timezone.utc)
     ip = _client_ip(request)
@@ -773,7 +777,7 @@ async def pin_login(data: PinLogin, request: Request):
         raise HTTPException(status_code=429, detail="Demasiados intentos. Espera unos minutos e intenta de nuevo")
     entry_id, pin = (data.entry_id or "").strip(), (data.pin or "").strip()
     user = None
-    if re.fullmatch(r"\d{6}", entry_id):
+    if re.fullmatch(r"\d{10}|\d{6}", entry_id):
         user = await db.users.find_one({"entry_id": entry_id, "role": UserRole.TECNICO.value}, {"_id": 0})
     if user and user.get("pin_locked_until") and datetime.fromisoformat(user["pin_locked_until"]) > now:
         mins = max(1, int((datetime.fromisoformat(user["pin_locked_until"]) - now).total_seconds() // 60) + 1)

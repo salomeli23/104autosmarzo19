@@ -3,12 +3,13 @@ import { Button } from './ui/button';
 import { toast } from 'sonner';
 import { ArrowLeft, Delete, Loader2, Wrench } from 'lucide-react';
 
-const ID_LENGTH = 6;
+const ID_LENGTH = 10;
+const LEGACY_ID_LENGTH = 6; // IDs anteriores de 6 dígitos: se confirman con "Continuar"
 const PIN_LENGTH = 4;
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
 
 /**
- * Ingreso de técnicos: ID de entrada (6 dígitos) y después PIN (4 dígitos), con el teclado en pantalla
+ * Ingreso de técnicos: ID de entrada (10 dígitos; los anteriores de 6 con "Continuar") y después PIN (4 dígitos), con el teclado en pantalla
  * o el teclado físico.
  * Props: onLogin(entryId, pin) → Promise, onBack()
  */
@@ -56,12 +57,13 @@ export const TechnicianPinLogin = ({ onLogin, onBack }) => {
     useEffect(() => {
         const onKey = (e) => {
             if (/^\d$/.test(e.key)) press(e.key);
+            else if (e.key === 'Enter' && step === 'id' && entryId.length === LEGACY_ID_LENGTH) setStep('pin');
             else if (e.key === 'Backspace') press('del');
             else if (e.key === 'Escape') { setEntryId(''); setPin(''); setStep('id'); }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [press]);
+    }, [press, step, entryId]);
 
     const length = step === 'id' ? ID_LENGTH : PIN_LENGTH;
     const filled = (step === 'id' ? entryId : pin).length;
@@ -75,10 +77,10 @@ export const TechnicianPinLogin = ({ onLogin, onBack }) => {
                 </p>
                 {step === 'pin' && <p className="text-xs text-muted-foreground font-mono">ID {entryId}</p>}
             </div>
-            <div className="flex justify-center gap-2.5" aria-label={step === 'id' ? 'ID de entrada' : 'PIN'}>
+            <div className={`flex justify-center ${step === 'id' ? 'gap-1' : 'gap-2.5'}`} aria-label={step === 'id' ? 'ID de entrada' : 'PIN'}>
                 {Array.from({ length }).map((_, i) => (
                     step === 'id' ? (
-                        <span key={i} className={`w-8 h-10 rounded-md border-2 flex items-center justify-center font-mono text-lg ${i < filled ? 'border-primary' : 'border-muted-foreground/40'}`}>
+                        <span key={i} className={`w-6 h-9 sm:w-7 sm:h-10 rounded-md border-2 flex items-center justify-center font-mono text-lg ${i < filled ? 'border-primary' : 'border-muted-foreground/40'}`}>
                             {entryId[i] || ''}
                         </span>
                     ) : (
@@ -86,6 +88,13 @@ export const TechnicianPinLogin = ({ onLogin, onBack }) => {
                     )
                 ))}
             </div>
+            {step === 'id' && entryId.length === LEGACY_ID_LENGTH && (
+                <div className="flex justify-center">
+                    <Button type="button" size="sm" variant="outline" onClick={() => setStep('pin')} disabled={busy} data-testid="pin-id-continue">
+                        Continuar (ID de 6 dígitos)
+                    </Button>
+                </div>
+            )}
             <div className="grid grid-cols-3 gap-2 max-w-xs mx-auto">
                 {KEYS.map((k, i) => (k === '' ? <span key={i} /> : (
                     <button key={i} type="button" disabled={busy} onClick={() => press(k)}
