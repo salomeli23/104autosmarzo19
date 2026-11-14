@@ -10,6 +10,7 @@ import { ROLE_LABELS } from '../lib/utils';
 import { BulkTechniciansCard } from '../components/BulkTechniciansCard';
 import { CoordinatorPinCard } from '../components/CoordinatorPinCard';
 import { AccessShareCard } from '../components/AccessShareCard';
+import { DeleteUserButton, DeleteUserPinCard } from '../components/DeleteUser';
 import { toast } from 'sonner';
 import { Settings as SettingsIcon, Users, Shield, User, KeyRound, Eye, EyeOff, UserPlus, LockKeyhole, Hash } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
@@ -425,6 +426,7 @@ export const Settings = () => {
             <DiscountCodesSection />
 
             <CoordinatorPinCard />
+            <DeleteUserPinCard />
             <BulkTechniciansCard onDone={() => usersAPI.getAll().then(res => setUsers(res.data)).catch(() => {})} />
 
             {/* Crear usuario */}
@@ -563,6 +565,9 @@ export const Settings = () => {
                                             <LockKeyhole className="w-4 h-4 sm:mr-1" />
                                             <span className="hidden sm:inline">Restablecer contraseña</span>
                                         </Button>
+                                        {u.id !== user?.id && (
+                                            <DeleteUserButton target={u} onDeleted={(id) => setUsers(prev => prev.filter(x => x.id !== id))} />
+                                        )}
                                     </div>
                                 </div>
                             ))}

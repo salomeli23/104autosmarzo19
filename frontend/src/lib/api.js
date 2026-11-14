@@ -42,6 +42,7 @@ export const usersAPI = {
     resetPassword: (userId, newPassword) => api.put(`/users/${userId}/password`, { new_password: newPassword }),
     setPin: (userId, data) => api.put(`/users/${userId}/pin`, data),
     bulkTechnicians: (technicians) => api.post('/users/technicians/bulk', { technicians }),
+    deleteUser: (userId, pin) => api.post(`/users/${userId}/delete`, { pin }),
     sendAccessSms: (userId, data) => api.post(`/users/${userId}/send-access-sms`, data),
     smsStatus: () => api.get('/sms/status'),
 };
@@ -201,6 +202,8 @@ export const settingsAPI = {
     getBookingPin: () => api.get('/settings/booking-pin'),
     getCoordinatorPin: () => api.get('/settings/coordinator-pin'),
     updateCoordinatorPin: (pin) => api.put('/settings/coordinator-pin', { pin }),
+    getDeleteUserPin: () => api.get('/settings/delete-user-pin'),
+    updateDeleteUserPin: (pin) => api.put('/settings/delete-user-pin', { pin }),
     updateBookingPin: (pin) => api.put('/settings/booking-pin', { pin }),
     getCompletionPin: () => api.get('/settings/completion-pin'),
     updateCompletionPin: (pin) => api.put('/settings/completion-pin', { pin }),

@@ -1019,6 +1019,88 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     )
 
 # ==================== USERS ENDPOINTS ====================
+# ==================== BORRAR USUARIOS CON PIN ====================
+DELETE_USER_PIN_KEY = "delete_user_pin"
+ACTIVE_ORDER_STATUSES = [OrderStatus.EN_REVISION.value, OrderStatus.EN_CORTE.value, OrderStatus.ASIGNADO.value,
+                         OrderStatus.EN_PROCESO.value, OrderStatus.EN_CALIDAD.value]
+
+
+class DeleteUserRequest(BaseModel):
+    pin: str
+
+
+class DeleteUserPinUpdate(BaseModel):
+    pin: str
+
+
+@api_router.get("/settings/delete-user-pin")
+async def get_delete_user_pin_status(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Si el PIN para borrar usuarios está configurado. El PIN no se muestra."""
+    doc = await db.settings.find_one({"key": DELETE_USER_PIN_KEY}, {"_id": 0, "value_hash": 1, "updated_at": 1, "updated_by_name": 1})
+    return {"configured": bool((doc or {}).get("value_hash")), "updated_at": (doc or {}).get("updated_at"),
+            "updated_by_name": (doc or {}).get("updated_by_name")}
+
+
+@api_router.put("/settings/delete-user-pin")
+async def update_delete_user_pin(data: DeleteUserPinUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Crea o cambia el PIN para borrar usuarios (4 a 10 dígitos). Se guarda cifrado."""
+    pin = (data.pin or "").strip()
+    if not pin.isdigit() or not 4 <= len(pin) <= 10:
+        raise HTTPException(status_code=400, detail="El PIN debe ser numérico de 4 a 10 dígitos")
+    await db.settings.update_one({"key": DELETE_USER_PIN_KEY}, {"$set": {
+        "key": DELETE_USER_PIN_KEY, "value_hash": hash_password(pin), "fails": 0, "locked_until": None,
+        "updated_at": datetime.now(timezone.utc).isoformat(), "updated_by": current_user["id"],
+        "updated_by_name": current_user.get("name")}}, upsert=True)
+    return {"message": "PIN para borrar usuarios actualizado", "configured": True}
+
+
+async def _verify_delete_user_pin(pin: str):
+    """Valida el PIN de borrado con bloqueo de 5 minutos tras 5 intentos fallidos."""
+    doc = await db.settings.find_one({"key": DELETE_USER_PIN_KEY}, {"_id": 0})
+    if not (doc or {}).get("value_hash"):
+        raise HTTPException(status_code=400, detail="Falta crear el PIN para borrar usuarios en Configuración")
+    now = datetime.now(timezone.utc)
+    if doc.get("locked_until") and datetime.fromisoformat(doc["locked_until"]) > now:
+        raise HTTPException(status_code=429, detail="PIN bloqueado por intentos fallidos: espera unos minutos")
+    if not pin or not verify_password(str(pin).strip(), doc["value_hash"]):
+        fails = int(doc.get("fails") or 0) + 1
+        upd = {"fails": fails}
+        if fails >= 5:
+            upd = {"fails": 0, "locked_until": (now + timedelta(minutes=5)).isoformat()}
+        await db.settings.update_one({"key": DELETE_USER_PIN_KEY}, {"$set": upd})
+        raise HTTPException(status_code=400, detail="PIN incorrecto")
+    if doc.get("fails"):
+        await db.settings.update_one({"key": DELETE_USER_PIN_KEY}, {"$set": {"fails": 0, "locked_until": None}})
+
+
+@api_router.post("/users/{user_id}/delete")
+async def delete_user(user_id: str, data: DeleteUserRequest, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Borra un usuario con el PIN de borrado. Las órdenes conservan su nombre; queda copia en deleted_users.
+    No deja borrarse a sí mismo, al último administrador ni a un técnico con servicios activos (sin contar pruebas)."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="No puedes borrar tu propio usuario")
+    if user.get("role") == UserRole.ADMIN.value and await db.users.count_documents({"role": UserRole.ADMIN.value}) <= 1:
+        raise HTTPException(status_code=400, detail="No se puede borrar el único administrador")
+    if user.get("role") == UserRole.TECNICO.value:
+        active = await db.orders.count_documents({
+            "status": {"$in": ACTIVE_ORDER_STATUSES}, "is_test": {"$ne": True},
+            "$or": [{"assigned_technicians.id": user_id}, {"assigned_technician_id": user_id}, {"assigned_technician_2_id": user_id}]})
+        if active:
+            raise HTTPException(status_code=400, detail=f"{user['name']} tiene {active} servicio(s) activo(s): reasígnalos antes de borrarlo")
+    await _verify_delete_user_pin(data.pin)
+    now = datetime.now(timezone.utc).isoformat()
+    snapshot = {k: v for k, v in user.items() if k not in ("password", "pin_hash")}
+    await db.deleted_users.insert_one({**snapshot, "deleted_at": now, "deleted_by": current_user["id"],
+                                       "deleted_by_name": current_user.get("name")})
+    await db.users.delete_one({"id": user_id})
+    await db.alerts.delete_many({"recipient_id": user_id, "read": False})
+    logging.getLogger(__name__).info(f"[usuarios] {current_user.get('name')} borró a {user['name']} ({user.get('role')})")
+    return {"message": f"Usuario {user['name']} borrado"}
+
+
 @api_router.get("/users", response_model=List[UserResponse])
 async def get_users(role: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     query = {}
