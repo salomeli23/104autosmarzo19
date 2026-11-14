@@ -939,13 +939,13 @@ async def send_access_sms(user_id: str, data: AccessSms, request: Request,
         pin = (data.pin or "").strip()
         if not re.fullmatch(r"\d{4}", pin) or not verify_password(pin, user["pin_hash"]):
             raise HTTPException(status_code=400, detail="El PIN no coincide con el del técnico; vuelve a ponérselo")
-        # Corto y sin tildes para que quepa en un solo SMS; /t abre directo el ingreso con PIN
-        body = f"PolarizadosYA! {sms_name}, tu acceso: {host}/t ID {user['entry_id']} PIN {pin}"
+        # Corto, sin tildes y SIN enlace: los operadores en Colombia descartan los SMS internacionales con enlaces
+        body = f"PolarizadosYA! {sms_name}, entra a la app PolarizadosYA en Ingreso de tecnicos. ID {user['entry_id']} PIN {pin}"
     else:
         pwd = data.password or ""
         if not pwd or not user.get("password") or not verify_password(pwd, user["password"]):
             raise HTTPException(status_code=400, detail="La contraseña no coincide con la del usuario")
-        body = f"PolarizadosYA! {sms_name}, tu acceso: {host}/login Correo {user['email']} Clave {pwd}"
+        body = f"PolarizadosYA! {sms_name}, entra a la app PolarizadosYA. Usuario {user['email']} Clave {pwd}"
 
     result = await sms.send_sms(to, body)
     now = datetime.now(timezone.utc).isoformat()
