@@ -9259,10 +9259,48 @@ async def create_test_jose_alfredo_measure_orders_once():
         logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de medidas de Jose Alfredo: {e}")
 
 
+# 3 servicios de PRUEBA de Detailing para el técnico Yonathan Romel (no pasan por Corte: quedan listos para hacer)
+TEST_YONATHAN_SEED = "test_tech_yonathan_detailing_2026_11_17"
+TEST_YONATHAN_ORDERS = [
+    ("PRB901", "Mazda", "CX-30", "detailing", {"service": "ceramico_3_anos", "description": "Detailing - Cerámico 3 años", "price": 1500000}),
+    ("PRB902", "Toyota", "Corolla Cross", "detailing", {"service": "polichado_profesional", "description": "Detailing - Polichado Profesional", "price": 450000}),
+    ("PRB903", "Kia", "Sportage", "detailing", {"service": "mantenimiento_ceramico", "description": "Detailing - Mantenimiento Cerámico 3 y 5 años", "price": 500000}),
+]
+
+
+@app.on_event("startup")
+async def create_test_yonathan_orders_once():
+    """Una sola vez: 3 servicios de PRUEBA de Detailing asignados a Yonathan Romel.
+    Si el técnico todavía no existe, lo vuelve a intentar en el próximo arranque."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": TEST_YONATHAN_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    try:
+        tech = await db.users.find_one({"role": UserRole.TECNICO.value, "is_active": {"$ne": False},
+                                        "name": {"$regex": r"^(?=.*[yj]h?onath?an)(?=.*romm?el)", "$options": "i"}},
+                                       {"_id": 0, "id": 1, "name": 1})
+        if not tech:
+            await db.migrations.delete_one({"_id": TEST_YONATHAN_SEED})
+            logging.getLogger(__name__).warning("[tecnicos] No existe el técnico Yonathan Romel: no se crearon sus servicios de prueba")
+            return
+        n = await _create_test_tech_orders(TEST_YONATHAN_SEED, TEST_YONATHAN_ORDERS, [tech], "PRUEBA Detailing")
+        # Detailing no lleva corte: quedan asignados sin estado de corte, como los servicios reales
+        await db.orders.update_many({"test_seed": TEST_YONATHAN_SEED}, {"$unset": {"cutting_status": "", "cutting_completed_at": ""},
+                                                                         "$set": {"service_time_minutes": 180}})
+        await db.migrations.update_one({"_id": TEST_YONATHAN_SEED}, {"$set": {
+            "finished_at": datetime.now(timezone.utc).isoformat(), "message": f"{n} servicio(s) de Detailing para {tech['name']}"}})
+        logging.getLogger(__name__).info(f"[tecnicos] {n} servicio(s) de prueba de Detailing para {tech['name']}")
+    except Exception as e:
+        await db.migrations.delete_one({"_id": TEST_YONATHAN_SEED})
+        logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba de Yonathan Romel: {e}")
+
+
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
-    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED, TEST_GUSTAVO_MED_SEED, TEST_MAURICIO_SEED, TEST_MIGUEL_SEED, TEST_MIGUEL_MED_SEED, TEST_FREDDY_SEED, TEST_DAINER_SEED, TEST_JOSE_ALFREDO_SEED, TEST_JOSE_ALFREDO_MED_SEED]}}, {"_id": 0, "id": 1})]
+    ids = [o["id"] async for o in db.orders.find({"test_seed": {"$in": [*TEST_CUTTING_SEEDS, TEST_TECH_SEED, TEST_GUSTAVO_SEED, TEST_GUSTAVO_MED_SEED, TEST_MAURICIO_SEED, TEST_MIGUEL_SEED, TEST_MIGUEL_MED_SEED, TEST_FREDDY_SEED, TEST_DAINER_SEED, TEST_JOSE_ALFREDO_SEED, TEST_JOSE_ALFREDO_MED_SEED, TEST_YONATHAN_SEED]}}, {"_id": 0, "id": 1})]
     if not ids:
         return {"message": "No hay servicios de prueba", "removed": 0}
     await db.orders.delete_many({"id": {"$in": ids}})
