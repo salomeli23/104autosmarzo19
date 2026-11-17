@@ -10,6 +10,17 @@ document.addEventListener("wheel", (e) => {
   if (el && el.type === "number" && el === e.target) el.blur();
 }, { passive: true });
 
+// Instalación como app (PWA): guarda el aviso de instalación de Android para usarlo en la pantalla de instalar
+window.__pwaPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  window.__pwaPrompt = e;
+  window.dispatchEvent(new Event("pwa-prompt-ready"));
+});
+if ("serviceWorker" in navigator && window.location.protocol === "https:") {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>

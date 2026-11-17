@@ -157,6 +157,8 @@
 /* Mobile bottom navigation */
 .mobile-nav {
     @apply fixed bottom-0 left-0 right-0 glass-header border-t z-50 md:hidden;
+    /* Respeta la barra de gestos del celular (iPhone y Android con gestos) */
+    padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Noise texture overlay */

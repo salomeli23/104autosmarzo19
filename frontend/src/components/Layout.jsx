@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { InstallAppGate } from './InstallAppGate';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -192,7 +193,7 @@ export const Layout = ({ children }) => {
             {/* Main content */}
             <div className="md:pl-64">
                 {/* Top header */}
-                <header className="sticky top-0 z-40 glass-header">
+                <header className="sticky top-0 z-40 glass-header pt-[env(safe-area-inset-top)]">
                     <div className="flex items-center justify-between h-16 px-4 md:px-8">
                         {/* Mobile menu */}
                         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -286,10 +287,14 @@ export const Layout = ({ children }) => {
                 </header>
 
                 {/* Page content */}
-                <main className="p-4 md:p-8 animate-fade-in">
+                {/* En celular deja espacio para la barra de abajo, así los últimos botones no quedan tapados */}
+                <main className="p-3 sm:p-4 md:p-8 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-8 animate-fade-in">
                     {children}
                 </main>
             </div>
+
+            {/* Técnicos en celular: deben instalar la app la primera vez */}
+            <InstallAppGate user={user} onLogout={handleLogout} />
 
             {/* Mobile bottom navigation */}
             <nav className="mobile-nav">

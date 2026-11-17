@@ -613,7 +613,7 @@ export const TechnicianView = () => {
                                     Sin vehículos en <b>{st.label}</b>
                                 </div>
                             ) : (
-                                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                     {byStage[st.id].map(o => (
                                         <InstallCard
                                             key={o.id}
@@ -639,7 +639,7 @@ export const TechnicianView = () => {
                             {SECTIONS.filter(sec => bySection[sec.id].length > 0).map(sec => (
                                 <div key={sec.id} className="space-y-2">
                                     <h3 className="text-sm font-medium flex items-center gap-2"><sec.icon className="w-4 h-4" /> {sec.label}</h3>
-                                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                         {bySection[sec.id].map(({ order, slot }) => (
                                             <SlotCard
                                                 key={slot.id}
