@@ -9614,6 +9614,55 @@ async def create_test_yonathan_orders_once():
         logging.getLogger(__name__).warning(f"No se pudieron crear los servicios de prueba de Yonathan Romel: {e}")
 
 
+# Pedido del administrador (18-nov-2026): borrar los técnicos de prueba Juan Técnico, Pedro Técnico y tecnico1…tecnico6.
+# Mismas reglas que "Borrar" en Configuración: copia en deleted_users y no borra a quien tenga servicios reales activos.
+DELETE_TEST_TECHS_SEED = "delete_test_technicians_2026_11_18"
+DELETE_TEST_TECH_NAMES = {"juan tecnico", "pedro tecnico", *(f"tecnico{i}" for i in range(1, 7))}
+
+
+def _plain_name(name: str) -> str:
+    import unicodedata
+    t = "".join(c for c in unicodedata.normalize("NFKD", name or "") if not unicodedata.combining(c))
+    return " ".join(t.lower().split())
+
+
+@app.on_event("startup")
+async def delete_test_technicians_once():
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": DELETE_TEST_TECHS_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    log = logging.getLogger(__name__)
+    try:
+        deleted, kept = [], []
+        async for user in db.users.find({"role": UserRole.TECNICO.value}, {"_id": 0}):
+            plain = _plain_name(user.get("name"))
+            if plain not in DELETE_TEST_TECH_NAMES and plain.replace(" ", "") not in DELETE_TEST_TECH_NAMES:
+                continue
+            uid = user["id"]
+            active = await db.orders.count_documents({
+                "status": {"$in": ACTIVE_ORDER_STATUSES}, "is_test": {"$ne": True},
+                "$or": [{"assigned_technicians.id": uid}, {"assigned_technician_id": uid}, {"assigned_technician_2_id": uid}]})
+            if active:
+                kept.append(f"{user['name']} ({active} servicio(s) activo(s))")
+                continue
+            now = datetime.now(timezone.utc).isoformat()
+            snapshot = {k: v for k, v in user.items() if k not in ("password", "pin_hash")}
+            await db.deleted_users.insert_one({**snapshot, "deleted_at": now, "deleted_by": "sistema",
+                                               "deleted_by_name": "Pedido del administrador"})
+            await db.users.delete_one({"id": uid})
+            await db.alerts.delete_many({"recipient_id": uid, "read": False})
+            deleted.append(user["name"])
+        await db.migrations.update_one({"_id": DELETE_TEST_TECHS_SEED}, {"$set": {
+            "finished_at": datetime.now(timezone.utc).isoformat(), "deleted": deleted, "kept": kept}})
+        log.info(f"[usuarios] Técnicos de prueba borrados: {', '.join(deleted) or 'ninguno'}"
+                 + (f" · no se borraron (servicios activos): {', '.join(kept)}" if kept else ""))
+    except Exception as e:
+        await db.migrations.delete_one({"_id": DELETE_TEST_TECHS_SEED})
+        log.warning(f"No se pudieron borrar los técnicos de prueba: {e}")
+
+
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
