@@ -116,17 +116,23 @@ def is_from_contact(message: Dict[str, Any]) -> bool:
     return message.get("status") == "received"
 
 
-async def chat_messages(contact_uuid: str, max_pages: int = 2) -> List[Tuple[str, bool]]:
-    """Mensajes del chat con texto, del más reciente al más antiguo: [(texto, lo_escribió_el_cliente)]."""
+async def chat_messages(contact_uuid: str, max_pages: int = 2, since: Optional[datetime] = None) -> List[Tuple[str, bool]]:
+    """Mensajes del chat con texto, del más reciente al más antiguo: [(texto, lo_escribió_el_cliente)].
+    since: solo los mensajes enviados desde esa fecha (los mensajes vienen del más nuevo al más viejo)."""
     out, after = [], None
     for _ in range(max_pages):
         data = await asyncio.to_thread(_request, f"/contacts/{urllib.parse.quote(contact_uuid)}/messages",
                                        {"after": after} if after else None)
+        older = False
         for m in data.get("messages") or []:
+            created = parse_iso(m.get("createdAt"))
+            if since and created and created < since:
+                older = True
+                continue
             if (m.get("text") or "").strip():
                 out.append((m["text"].strip(), is_from_contact(m)))
         after = (data.get("meta") or {}).get("next")
-        if not after:
+        if not after or older:
             break
     return out
 
