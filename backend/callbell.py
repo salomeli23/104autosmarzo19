@@ -218,8 +218,15 @@ def parse_chat(messages: List[Tuple[str, bool]], catalog: Optional[Dict[str, Any
     """Datos del lead: primero el formulario diligenciado más reciente (lo haya enviado el cliente o el asesor);
     lo que falte se completa con lo que el cliente escribió suelto en el chat."""
     out: Dict[str, Any] = {}
-    # El formulario cuenta si tiene al menos 3 etiquetas y 2 datos diligenciados (la plantilla vacía no cuenta)
+    # El formulario cuenta si tiene al menos 3 etiquetas y 2 datos diligenciados
     form_text = next((t for t, _ in messages if _form_labels(t) >= 3 and len(parse_form(t)) >= 2), None)
+    if not form_text:
+        # El asesor envió la plantilla vacía y el cliente respondió con sus datos (una línea por dato, sin etiquetas)
+        idx = next((i for i, (t, _) in enumerate(messages) if _form_labels(t) >= 3), None)
+        if idx is not None:
+            reply = parse_customer_data([t for t, mine in messages[:idx] if mine], catalog)
+            if sum(1 for k in ("nombre", "placa", "telefono", "email", "servicio", "valor") if reply.get(k)) >= 2:
+                return {"formulario": True, "respuesta_a_plantilla": True, **reply}
     if form_text:
         form = parse_form(form_text)
         out["formulario"] = True
