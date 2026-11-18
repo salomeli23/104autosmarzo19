@@ -16,6 +16,7 @@ import { PlateBadge } from '../components/PlateBadge';
 import { ItemDiscountInput, itemDiscountAmount, itemDiscountFields } from '../components/ItemDiscountInput';
 import { RemovalCostInput } from '../components/RemovalCostInput';
 import { ServiceInfoButton } from '../components/ServiceInfoButton';
+import { CallbellLeadsPanel, payLabel } from '../components/CallbellLeadsPanel';
 import { allowsRemoval, removalAmount, withRemovalExtra, REMOVAL_LABEL } from '../lib/removal';
 import { CarAvatar } from '../components/CarAvatar';
 import { PlateInput } from '../components/PlateInput';
@@ -44,6 +45,9 @@ export const Appointments = () => {
     const [loading, setLoading] = useState(true);
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [dialogOpen, setDialogOpen] = useState(false);
+    // Lead de Callbell que se está agendando a mano (le faltaban datos)
+    const [callbellLead, setCallbellLead] = useState(null);
+    const [callbellRefresh, setCallbellRefresh] = useState(0);
     const [serviceCatalog, setServiceCatalog] = useState({});
     const [createdOrder, setCreatedOrder] = useState(null);
     const [showQRDialog, setShowQRDialog] = useState(false);
@@ -715,6 +719,7 @@ export const Appointments = () => {
                     : isPostventa ? formData.postventa_code.trim() : null,
                 priority_reason: isPriority ? (formData.priority_reason || null) : null,
                 discount_code: discountApplied ? discountApplied.code : null,
+                callbell_uuid: callbellLead?.uuid || null,
                 is_postventa: isPostventa,
                 postventa_type: isPostventa ? 'postventa' : null,
                 postventa_motivo: isPostventa ? formData.postventa_motivo.trim() : null,
@@ -730,6 +735,7 @@ export const Appointments = () => {
             fetchOrders(selectedDate);
             fetchSlotsAvailability(selectedDate);
             resetForm();
+            if (callbellLead) { setCallbellLead(null); setCallbellRefresh(n => n + 1); }
         } catch (error) {
             setConfirmOpen(false);
             toast.error(error.response?.data?.detail || 'Error al agendar cita');
@@ -1023,7 +1029,7 @@ export const Appointments = () => {
                     <h1 className="font-heading text-3xl md:text-4xl">Agendamiento</h1>
                     <p className="text-muted-foreground">Gestiona las citas del taller</p>
                 </div>
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <Dialog open={dialogOpen} onOpenChange={(v) => { setDialogOpen(v); if (!v) setCallbellLead(null); }}>
                     <DialogTrigger asChild>
                         <Button className="brand-glow touch-target" data-testid="new-appointment-btn">
                             <Plus className="w-4 h-4 mr-2" />
@@ -1033,6 +1039,11 @@ export const Appointments = () => {
                     <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                         <DialogHeader>
                             <DialogTitle className="font-heading text-xl">Agendar Nueva Cita</DialogTitle>
+                            {callbellLead && (
+                                <p className="text-xs text-emerald-400" data-testid="callbell-scheduling-note">
+                                    Agendando el lead de Callbell de {callbellLead.name || callbellLead.phone}{callbellLead.problem ? `: ${callbellLead.problem}` : ''}
+                                </p>
+                            )}
                             <DialogDescription>Complete los datos del cliente, vehículo y servicios</DialogDescription>
                         </DialogHeader>
                         <form onSubmit={handleSubmit} className="space-y-6">
@@ -1931,6 +1942,35 @@ export const Appointments = () => {
                 </Dialog>
             </div>
 
+            <CallbellLeadsPanel
+                refreshKey={callbellRefresh}
+                onSynced={() => { fetchOrders(selectedDate); fetchSlotsAvailability(selectedDate); }}
+                onSchedule={(lead) => {
+                    resetForm();
+                    const f = lead.fields || {};
+                    const pay = f.pago ? `Pago: ${payLabel(f.pago)}` : '';
+                    setFormData(prev => ({
+                        ...prev,
+                        client_name: f.nombre || lead.name || '',
+                        client_phone: (f.telefono || lead.phone || '').replace(/[^\d]/g, '').replace(/^57(?=\d{10}$)/, ''),
+                        client_email: f.email || '',
+                        client_cedula: f.cedula || '',
+                        plate: (f.placa || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+                        brand: f.marca || '',
+                        model: f.modelo || '',
+                        notes: [`Lead de Callbell`, f.servicio && `Servicio: ${f.servicio}`, f.valor && `Valor acordado: ${formatCurrency(f.valor)}`, pay,
+                            (f.fecha || f.hora) && `Pidió: ${[f.fecha, f.hora].filter(Boolean).join(' ')}`].filter(Boolean).join(' · '),
+                    }));
+                    // El servicio que escribió el cliente queda seleccionado con el valor acordado (editable)
+                    if (f.servicio_id) {
+                        setSelectedServices([{ serviceId: f.servicio_id, serviceName: f.servicio_nombre || f.servicio, category: f.servicio_categoria || '',
+                            price: Number(f.valor) || 0, parts: serviceRequiresParts(f.servicio_id) ? [] : undefined }]);
+                    }
+                    setCallbellLead(lead);
+                    setDialogOpen(true);
+                }}
+            />
+
             {/* Calendar and Schedule */}
             <div className="grid lg:grid-cols-3 gap-6">
                 {/* Calendar */}
@@ -2046,6 +2086,12 @@ export const Appointments = () => {
                                                                         <p className="text-xs text-purple-400 flex items-center gap-1 mt-0.5" data-testid={`asesor-tag-${order.id}`}>
                                                                             <UserCog className="w-3 h-3" />
                                                                             Asesor: {order.created_by_name}
+                                                                        </p>
+                                                                    )}
+                                                                    {order.source === 'callbell' && (
+                                                                        <p className="text-xs text-emerald-400 mt-0.5" data-testid={`callbell-tag-${order.id}`}>
+                                                                            Llegó del bot de Callbell
+                                                                            {order.callbell_href && <> · <a href={order.callbell_href} target="_blank" rel="noreferrer" className="underline">ver chat</a></>}
                                                                         </p>
                                                                     )}
                                                                     <CheckinByTag order={order} className="mt-1" />

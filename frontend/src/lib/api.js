@@ -201,6 +201,19 @@ export const accessoryRequestsAPI = {
     deliver: (id, data) => api.post(`/accessory-requests/${id}/deliver`, data),
 };
 
+// Callbell: leads del bot con cita → Agendamiento
+export const callbellAPI = {
+    status: () => api.get('/integrations/callbell/status'),
+    saveConfig: (data) => api.put('/integrations/callbell/config', data),
+    fields: () => api.get('/integrations/callbell/fields'),
+    teams: () => api.get('/integrations/callbell/teams'),
+    sync: () => api.post('/integrations/callbell/sync'),
+    leads: (status = 'pendiente') => api.get('/integrations/callbell/leads', { params: { status } }),
+    discard: (uuid) => api.post(`/integrations/callbell/leads/${uuid}/discard`),
+    advisors: () => api.get('/integrations/callbell/advisors'),
+    saveAdvisors: (emails) => api.put('/integrations/callbell/advisors', { emails }),
+};
+
 // Settings (admin)
 export const settingsAPI = {
     getBookingPin: () => api.get('/settings/booking-pin'),

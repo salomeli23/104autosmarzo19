@@ -29,6 +29,7 @@ from reports import (CHARGE_LABELS, METHOD_LABELS, PAYMENT_STATUS_LABELS, STATUS
                      local_dt, range_bounds, summarize)
 from installer_rates import claim_label, compute_advisor_commission, compute_installer_charge, rates_table
 from pdf_utils import build_ingreso_receipt, build_payment_statement, build_mock_invoice, build_exit_certificate, build_retention_certificate, PAYMENT_METHOD_LABELS
+import callbell
 from cutting_catalog import (CAR_AVERAGES, MATERIALS_CATALOG, ROLLS_LIST, CUTTING_REFERENCE_GROUPS,
                              DEFAULT_ROLL_METERS, lookup_car_average)
 from email_templates import (
@@ -130,6 +131,7 @@ class AlertType(str, Enum):
     ROLLO_FALTANTE = "rollo_faltante"  # La referencia se quedó sin rollos disponibles
     CORTE_PPF_ADICIONAL = "corte_ppf_adicional"  # Corte de PPF adicional aprobado con PIN de coordinador
     MATERIAL_ENCIMA = "material_encima"  # El material va encima de un vidrio que ya tiene material o es de otro color
+    CITA_CALLBELL = "cita_callbell"  # Cita creada desde un lead de Callbell (o lead al que le faltan datos)
 
 # ==================== HELPERS ====================
 def generate_order_code():
@@ -336,6 +338,8 @@ class OrderCreate(BaseModel):
     priority_reason: Optional[str] = None
     # Código de descuento (opcional)
     discount_code: Optional[str] = None
+    # Lead de Callbell que se está agendando (queda enlazado a la cita)
+    callbell_uuid: Optional[str] = None
     # Postventa / Garantía
     is_postventa: Optional[bool] = False
     postventa_type: Optional[str] = None  # 'garantia' | 'postventa'
@@ -402,6 +406,9 @@ class OrderResponse(BaseModel):
     ppf_approval: Optional[Dict[str, Any]] = None  # aprobación del coordinador del corte de PPF
     extra_ppf_cuts: Optional[List[Dict[str, Any]]] = None  # cortes de PPF adicionales aprobados con PIN de coordinador
     queue_ranks: Optional[Dict[str, int]] = None  # {técnico: posición} que definió el coordinador en Priorizar
+    source: Optional[str] = None  # 'callbell' si la cita llegó del bot
+    callbell_uuid: Optional[str] = None
+    callbell_href: Optional[str] = None
     paid_at: Optional[str] = None
     # Entrega data
     delivery_photo_url: Optional[str] = None
@@ -1824,6 +1831,16 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
         "updated_at": None
     }
     await db.orders.insert_one(order_doc)
+    if order.callbell_uuid:
+        lead_doc = await db.callbell_leads.find_one({"uuid": order.callbell_uuid}, {"_id": 0, "advisor_id": 1, "advisor_name": 1}) or {}
+        await db.callbell_leads.update_one({"uuid": order.callbell_uuid}, {"$set": {
+            "status": "agendado", "order_id": order_id, "order_code": order_code,
+            "order_date": order.date, "order_time": scheduled_time,
+            # Un lead sin asesor queda del asesor que lo agendó
+            "advisor_id": lead_doc.get("advisor_id") or current_user["id"],
+            "advisor_name": lead_doc.get("advisor_name") if lead_doc.get("advisor_id") else current_user.get("name"),
+            "updated_at": datetime.now(timezone.utc).isoformat()}})
+        await db.orders.update_one({"id": order_id}, {"$set": {"source": "callbell", "callbell_uuid": order.callbell_uuid}})
     
     # Incrementar contador de uso del código de descuento
     if disc_doc:
@@ -3754,6 +3771,297 @@ async def _verify_coordinator_pin(pin: str):
         raise HTTPException(status_code=400, detail="PIN de coordinador incorrecto")
     if doc.get("fails"):
         await db.settings.update_one({"key": COORD_PIN_KEY}, {"$set": {"fails": 0, "locked_until": None}})
+
+
+# ==================== CALLBELL: LEADS CON CITA → AGENDAMIENTO ====================
+CALLBELL_CONFIG_KEY = "callbell_config"
+CALLBELL_POLL_SECONDS = 600  # revisión periódica por si se pierde un webhook
+CALLBELL_CONTACT_EVENTS = {"contact_created", "contact_updated", "message_created"}
+
+
+async def _callbell_config() -> dict:
+    doc = await db.settings.find_one({"key": CALLBELL_CONFIG_KEY}, {"_id": 0}) or {}
+    return {"tag": doc.get("tag") or callbell.DEFAULT_TAG, "team_uuid": doc.get("team_uuid"), "team_name": doc.get("team_name"),
+            "fields": {**callbell.DEFAULT_FIELDS, **(doc.get("fields") or {})},
+            "last_sync_at": doc.get("last_sync_at"), "last_sync_result": doc.get("last_sync_result")}
+
+
+def _callbell_services(text: str, raw: str) -> List[Dict[str, Any]]:
+    found = callbell.match_services(text, SERVICES_CATALOG)
+    if not found:
+        return [{"service": "por_definir", "price": 0, "description": f"Por definir - {raw or 'servicio del bot'}"}]
+    out = []
+    for svc, cat_name in found:
+        price = float(svc.get("default_price") or 0)
+        out.append({"service": svc["id"], "price": price, "description": f"{cat_name} - {svc.get('name')}".strip(" -"),
+                    "list_price": price or None})
+    return out
+
+
+async def _callbell_advisor(assigned: Optional[str]) -> Optional[dict]:
+    """Asesor dueño del lead: el usuario asignado en Callbell (su correo), buscado por el correo de Callbell
+    que se vinculó en Configuración o por el correo de la app."""
+    email = str(assigned or "").strip().lower()
+    if not email:
+        return None
+    return await db.users.find_one(
+        {"role": {"$in": [UserRole.ASESOR.value, UserRole.ADMIN.value]}, "is_active": {"$ne": False},
+         "$or": [{"callbell_email": email}, {"email": email}]},
+        {"_id": 0, "id": 1, "name": 1, "role": 1}, sort=[("callbell_email", -1)])
+
+
+async def _alert_advisor_or_all(advisor: Optional[dict], title: str, message: str, order_id: Optional[str] = None):
+    """Avisa al asesor dueño del lead; si el lead no tiene asesor, a todos los asesores."""
+    if not advisor:
+        await create_alert("asesor", AlertType.CITA_CALLBELL, title, message, order_id)
+        return
+    await db.alerts.insert_one({"id": str(uuid.uuid4()), "recipient_id": advisor["id"], "alert_type": AlertType.CITA_CALLBELL.value,
+                                "title": title, "message": message, "order_id": order_id, "read": False,
+                                "created_at": datetime.now(timezone.utc).isoformat()})
+
+
+async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = True) -> str:
+    """Deja el contacto (del equipo y con la etiqueta configurados) como lead por ingresar a Agendamiento,
+    con los datos que el cliente escribió en el chat: nombre, placa, celular, correo, servicio, valor y forma de pago.
+    No crea la cita: el asesor o el coordinador la agenda desde "Leads de Callbell"."""
+    cuuid = contact.get("uuid")
+    if not cuuid or not callbell.has_tag(contact, cfg["tag"]):
+        return "sin_etiqueta"
+    if cfg.get("team_uuid") and callbell.contact_team_uuid(contact) != cfg["team_uuid"]:
+        return "otro_equipo"
+    existing = await db.callbell_leads.find_one({"uuid": cuuid}, {"_id": 0, "status": 1, "chat": 1})
+    if existing and existing.get("status") in ("agendado", "descartado"):
+        return "ya_importado"
+    now = datetime.now(timezone.utc).isoformat()
+    custom = callbell.read_fields(contact, cfg["fields"])
+    chat = (existing or {}).get("chat") or {}
+    if read_chat or not existing:
+        try:
+            chat = callbell.parse_customer_data(await callbell.customer_texts(cuuid), SERVICES_CATALOG)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[callbell] no se pudo leer el chat de {cuuid}: {e}")
+    # Lo escrito en el chat manda; los campos personalizados completan lo que falte
+    f = {**{k: v for k, v in custom.items() if v}, **{k: v for k, v in chat.items() if v not in (None, "")}}
+    missing = [label for key, label in (("placa", "placa"), ("servicio", "servicio")) if not f.get(key)]
+    advisor = await _callbell_advisor(contact.get("assignedUser"))
+    team = contact.get("team") if isinstance(contact.get("team"), dict) else {}
+    lead = {
+        "uuid": cuuid, "name": f.get("nombre") or contact.get("name"), "contact_name": contact.get("name"),
+        "phone": f.get("telefono") or contact.get("phoneNumber"), "fields": f, "chat": chat,
+        "tags": contact.get("tags") or [], "team_name": team.get("name"), "href": contact.get("href"),
+        "conversation_href": contact.get("conversationHref"), "assigned_user": contact.get("assignedUser"),
+        "contact_created_at": contact.get("createdAt"), "updated_at": now,
+        "advisor_id": (advisor or {}).get("id"), "advisor_name": (advisor or {}).get("name"),
+        "status": "pendiente", "problem": f"Falta {' y '.join(missing)} en el chat" if missing else None,
+    }
+    await db.callbell_leads.update_one({"uuid": cuuid}, {"$set": lead, "$setOnInsert": {"created_at": now}}, upsert=True)
+    if not existing:
+        resumen = " · ".join(x for x in (f.get("placa"), f.get("servicio_nombre") or f.get("servicio"),
+                                         f"${int(f['valor']):,}".replace(",", ".") if f.get("valor") else None) if x)
+        await _alert_advisor_or_all(advisor, f"Lead por agendar: {lead['name'] or lead['phone']}",
+                                    (resumen + ". " if resumen else "") + "Agéndalo en Agendamiento → Leads de Callbell.")
+    return "pendiente"
+
+
+async def _callbell_sync() -> dict:
+    """Revisa los contactos con la etiqueta de cita y crea las citas que falten."""
+    cfg = await _callbell_config()
+    counts: Dict[str, int] = {}
+    contacts = await callbell.list_tagged_contacts(cfg["tag"], cfg.get("team_uuid"))
+    known = {l["uuid"] async for l in db.callbell_leads.find({}, {"_id": 0, "uuid": 1})}
+    for c in contacts:
+        try:
+            # El chat de los leads que ya existen se vuelve a leer cuando llega un mensaje (webhook)
+            r = await _callbell_import_contact(c, cfg, read_chat=c.get("uuid") not in known)
+        except Exception as e:  # un lead con problema no detiene a los demás
+            logging.getLogger(__name__).warning(f"[callbell] lead {c.get('uuid')}: {e}")
+            r = "error"
+        counts[r] = counts.get(r, 0) + 1
+    result = {"revisados": len(contacts), "citas_nuevas": 0, "leads": counts.get("pendiente", 0), "pendientes": counts.get("pendiente", 0),
+              "ya_importados": counts.get("ya_importado", 0), "errores": counts.get("error", 0)}
+    await db.settings.update_one({"key": CALLBELL_CONFIG_KEY}, {"$set": {
+        "key": CALLBELL_CONFIG_KEY, "last_sync_at": datetime.now(timezone.utc).isoformat(), "last_sync_result": result}}, upsert=True)
+    return result
+
+
+@api_router.post("/integrations/callbell/webhook")
+async def callbell_webhook(request: Request):
+    """Webhook de Callbell. Solo se usa el uuid del contacto: los datos se leen de la API de Callbell,
+    así que un aviso falso no puede inventar una cita. Si hay secreto configurado, se verifica la firma."""
+    raw = await request.body()
+    secret = callbell.webhook_secret()
+    if secret and not callbell.verify_signature(raw, request.headers.get("X-Callbell-Signature", ""), secret):
+        raise HTTPException(status_code=401, detail="Firma inválida")
+    try:
+        body = json.loads(raw.decode("utf-8") or "{}")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="JSON inválido")
+    event, payload = body.get("event"), body.get("payload") or {}
+    if event not in CALLBELL_CONTACT_EVENTS or not callbell.api_token():
+        return {"ok": True, "ignored": True}
+    cuuid = payload.get("uuid") if event.startswith("contact") else (payload.get("contact") or {}).get("uuid")
+    if not cuuid or not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", cuuid):
+        return {"ok": True, "ignored": True}
+    # Mensajes: solo si el contacto aún no tiene cita creada (evita consultar Callbell en cada mensaje)
+    lead = await db.callbell_leads.find_one({"uuid": cuuid}, {"_id": 0, "status": 1})
+    if lead and lead.get("status") in ("agendado", "descartado"):
+        return {"ok": True, "result": "ya_importado"}
+    if event == "message_created" and not callbell.has_tag(payload.get("contact") or {}, (await _callbell_config())["tag"]):
+        return {"ok": True, "ignored": True}
+    try:
+        contact = await callbell.get_contact(cuuid)
+        result = await _callbell_import_contact(contact or {}, await _callbell_config())
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[callbell] webhook {event} {cuuid}: {e}")
+        raise HTTPException(status_code=502, detail="No se pudo leer el contacto en Callbell")
+    return {"ok": True, "result": result}
+
+
+class CallbellConfigUpdate(BaseModel):
+    tag: Optional[str] = None
+    team_uuid: Optional[str] = None   # "" = cualquier equipo
+    team_name: Optional[str] = None
+    fields: Optional[Dict[str, str]] = None
+
+
+@api_router.get("/integrations/callbell/status")
+async def callbell_status(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    cfg = await _callbell_config()
+    counts = {s: await db.callbell_leads.count_documents({"status": s}) for s in ("agendado", "pendiente", "descartado")}
+    return {**cfg, "token_configured": bool(callbell.api_token()), "secret_configured": bool(callbell.webhook_secret()),
+            "webhook_path": "/api/integrations/callbell/webhook", "events": sorted(CALLBELL_CONTACT_EVENTS),
+            "poll_minutes": CALLBELL_POLL_SECONDS // 60, "leads": counts, "field_labels": {
+                "fecha": "Fecha de la cita", "hora": "Hora de la cita", "placa": "Placa", "marca": "Marca", "modelo": "Modelo",
+                "servicio": "Servicio", "cedula": "Cédula", "email": "Correo"}}
+
+
+@api_router.put("/integrations/callbell/config")
+async def callbell_update_config(data: CallbellConfigUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    upd: Dict[str, Any] = {"key": CALLBELL_CONFIG_KEY, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if data.tag is not None:
+        if not data.tag.strip():
+            raise HTTPException(status_code=400, detail="Escribe la etiqueta de Callbell")
+        upd["tag"] = data.tag.strip()[:80]
+    if data.fields is not None:
+        upd["fields"] = {k: str(v).strip()[:80] for k, v in data.fields.items() if k in callbell.DEFAULT_FIELDS and str(v).strip()}
+    if data.team_uuid is not None:
+        upd["team_uuid"] = data.team_uuid.strip()[:64] or None
+        upd["team_name"] = (data.team_name or "").strip()[:80] or None
+    await db.settings.update_one({"key": CALLBELL_CONFIG_KEY}, {"$set": upd}, upsert=True)
+    return {"message": "Configuración de Callbell guardada"}
+
+
+@api_router.get("/integrations/callbell/teams")
+async def callbell_teams(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Equipos de Callbell, para elegir de cuál se toman los leads."""
+    if not callbell.api_token():
+        raise HTTPException(status_code=400, detail="Falta CALLBELL_API_TOKEN en las variables del servidor")
+    try:
+        return await callbell.list_teams()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"No se pudo consultar Callbell: {e}")
+
+
+@api_router.get("/integrations/callbell/fields")
+async def callbell_field_names(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Nombres de los campos personalizados que traen los leads con la etiqueta (para configurar cuál es cuál)."""
+    if not callbell.api_token():
+        raise HTTPException(status_code=400, detail="Falta CALLBELL_API_TOKEN en las variables del servidor")
+    cfg = await _callbell_config()
+    try:
+        contacts = await callbell.list_tagged_contacts(cfg["tag"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"No se pudo consultar Callbell: {e}")
+    names: Dict[str, int] = {}
+    for c in contacts:
+        for k, v in (c.get("customFields") or {}).items():
+            if v not in (None, "", []):
+                names[k] = names.get(k, 0) + 1
+    return {"contacts": len(contacts), "fields": [{"name": k, "count": n} for k, n in sorted(names.items(), key=lambda x: -x[1])]}
+
+
+@api_router.post("/integrations/callbell/sync")
+async def callbell_sync_now(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))):
+    if not callbell.api_token():
+        raise HTTPException(status_code=400, detail="Falta CALLBELL_API_TOKEN en las variables del servidor")
+    try:
+        return await _callbell_sync()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"No se pudo sincronizar con Callbell: {e}")
+
+
+@api_router.get("/integrations/callbell/leads")
+async def callbell_leads(status: str = "pendiente", current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))):
+    """Leads de Callbell. Cada asesor ve los suyos (los pendientes sin asesor los ven todos los asesores)."""
+    query: Dict[str, Any] = {"status": status}
+    if current_user.get("role") == UserRole.ASESOR.value:
+        mine = [{"advisor_id": current_user["id"]}]
+        if status == "pendiente":
+            mine.append({"advisor_id": None})
+        query["$or"] = mine
+    leads = await db.callbell_leads.find(query, {"_id": 0}).sort("updated_at", -1).to_list(300)
+    if status == "agendado":
+        orders = {o["id"]: o for o in await db.orders.find(
+            {"id": {"$in": [l.get("order_id") for l in leads if l.get("order_id")]}},
+            {"_id": 0, "id": 1, "order_code": 1, "date": 1, "scheduled_time": 1, "status": 1, "plate": 1}).to_list(300)}
+        for l in leads:
+            o = orders.get(l.get("order_id")) or {}
+            l.update({"order_code": o.get("order_code") or l.get("order_code"), "order_date": o.get("date") or l.get("order_date"),
+                      "order_time": o.get("scheduled_time") or l.get("order_time"), "order_status": o.get("status"),
+                      "order_plate": o.get("plate")})
+    return leads
+
+
+@api_router.post("/integrations/callbell/leads/{lead_uuid}/discard")
+async def callbell_discard_lead(lead_uuid: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))):
+    res = await db.callbell_leads.update_one({"uuid": lead_uuid, "status": "pendiente"}, {"$set": {
+        "status": "descartado", "discarded_by_name": current_user.get("name"),
+        "updated_at": datetime.now(timezone.utc).isoformat()}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Lead no encontrado")
+    return {"message": "Lead descartado"}
+
+
+class CallbellAdvisorEmails(BaseModel):
+    emails: Dict[str, str]  # {user_id: correo con el que el asesor está en Callbell ("" = usar el de la app)}
+
+
+@api_router.get("/integrations/callbell/advisors")
+async def callbell_advisors(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    users = await db.users.find({"role": UserRole.ASESOR.value, "is_active": {"$ne": False}},
+                                {"_id": 0, "id": 1, "name": 1, "email": 1, "callbell_email": 1}).sort("name", 1).to_list(200)
+    for u in users:
+        u["leads"] = await db.callbell_leads.count_documents({"advisor_id": u["id"]})
+    return users
+
+
+@api_router.put("/integrations/callbell/advisors")
+async def callbell_set_advisors(data: CallbellAdvisorEmails, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    for user_id, email in data.emails.items():
+        email = (email or "").strip().lower()
+        if email and not re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            raise HTTPException(status_code=400, detail=f"Correo inválido: {email}")
+        await db.users.update_one({"id": user_id, "role": UserRole.ASESOR.value},
+                                  {"$set": {"callbell_email": email or None}})
+    return {"message": "Asesores vinculados con Callbell"}
+
+
+async def _callbell_poll_loop():
+    await asyncio.sleep(30)
+    while True:
+        if callbell.api_token():
+            try:
+                result = await _callbell_sync()
+                if result["citas_nuevas"] or result["pendientes"]:
+                    logging.getLogger(__name__).info(f"[callbell] {result}")
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"[callbell] revisión periódica: {e}")
+        await asyncio.sleep(CALLBELL_POLL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_callbell_poll():
+    asyncio.create_task(_callbell_poll_loop())
 
 
 # ==================== SEED DATA ====================
