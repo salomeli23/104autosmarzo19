@@ -3783,11 +3783,15 @@ CALLBELL_CONTACT_EVENTS = {"contact_created", "contact_updated", "message_create
 
 async def _callbell_config() -> dict:
     doc = await db.settings.find_one({"key": CALLBELL_CONFIG_KEY}, {"_id": 0}) or {}
-    return {"tag": doc.get("tag", callbell.DEFAULT_TAG) or "", "team_uuid": doc.get("team_uuid"),
+    tag = doc.get("tag", callbell.DEFAULT_TAG) or ""
+    # "AGENDADO BOGOTA NORT" es un equipo, no una etiqueta: si quedó guardado como etiqueta, no se exige
+    if callbell._norm(tag) in (callbell._norm(callbell.DEFAULT_TEAM), callbell._norm(doc.get("team_name"))):
+        tag = ""
+    return {"tag": tag, "team_uuid": doc.get("team_uuid"),
             "team_name": doc.get("team_name", callbell.DEFAULT_TEAM),
             "fields": {**callbell.DEFAULT_FIELDS, **(doc.get("fields") or {})},
             "last_sync_at": doc.get("last_sync_at"), "last_sync_result": doc.get("last_sync_result"),
-            "last_sync_team": doc.get("last_sync_team"), "last_sync_error": doc.get("last_sync_error")}
+            "last_sync_scope": doc.get("last_sync_scope"), "last_sync_error": doc.get("last_sync_error")}
 
 
 def _callbell_services(text: str, raw: str) -> List[Dict[str, Any]]:
@@ -3891,7 +3895,9 @@ async def _callbell_sync(full: bool = False) -> dict:
         raise RuntimeError("Elige el equipo de Callbell en Configuración")
     counts: Dict[str, int] = {}
     start = datetime.now(timezone.utc) - timedelta(days=CALLBELL_LOOKBACK_DAYS)
-    last = callbell.parse_iso(cfg.get("last_sync_at")) if not full and cfg.get("last_sync_team") == cfg.get("team_uuid") else None
+    # Si cambió el equipo o la etiqueta (o es la primera vez con esta versión), se revisan de nuevo los 30 días
+    scope = f"{cfg.get('team_uuid')}|{callbell._norm(cfg.get('tag'))}|formulario"
+    last = callbell.parse_iso(cfg.get("last_sync_at")) if not full and cfg.get("last_sync_scope") == scope else None
     if last and last > start:
         start = last - timedelta(minutes=15)
     contacts = await callbell.list_tagged_contacts(cfg["tag"], cfg.get("team_uuid"), start.strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -3911,12 +3917,13 @@ async def _callbell_sync(full: bool = False) -> dict:
                            "Están en Agendamiento → Leads de Callbell → Por ingresar.")
         await create_alert("coordinador", AlertType.CITA_CALLBELL, f"{nuevos} lead(s) nuevo(s) de Callbell",
                            "Están en Agendamiento → Leads de Callbell → Por ingresar.")
-    result = {"revisados": len(contacts), "citas_nuevas": 0, "nuevos": nuevos,
+    result = {"revisados": len(contacts), "citas_nuevas": 0, "nuevos": nuevos, "sin_formulario": counts.get("sin_formulario", 0),
+              "sin_etiqueta": counts.get("sin_etiqueta", 0), "otro_equipo": counts.get("otro_equipo", 0),
               "leads": counts.get("pendiente", 0) + nuevos, "pendientes": counts.get("pendiente", 0) + nuevos,
               "ya_importados": counts.get("ya_importado", 0), "errores": counts.get("error", 0)}
     await db.settings.update_one({"key": CALLBELL_CONFIG_KEY}, {"$set": {
         "key": CALLBELL_CONFIG_KEY, "last_sync_at": datetime.now(timezone.utc).isoformat(), "last_sync_result": result,
-        "last_sync_team": cfg.get("team_uuid"), "last_sync_error": None}}, upsert=True)
+        "last_sync_scope": scope, "last_sync_error": None}}, upsert=True)
     return result
 
 
