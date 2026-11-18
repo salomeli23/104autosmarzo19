@@ -9663,6 +9663,71 @@ async def delete_test_technicians_once():
         log.warning(f"No se pudieron borrar los técnicos de prueba: {e}")
 
 
+# Segundo pedido del administrador (18-nov-2026): borrar esos técnicos junto con sus servicios activos.
+# Los servicios se guardan completos en deleted_orders (se pueden recuperar). Si un servicio también lo tiene
+# un técnico que se queda, no se borra: solo se le quita el técnico borrado.
+DELETE_TEST_TECHS_ORDERS_SEED = "delete_test_technicians_with_orders_2026_11_18"
+
+
+def _is_deleted_tech_name(name: str) -> bool:
+    plain = _plain_name(name)
+    return plain in DELETE_TEST_TECH_NAMES or plain.replace(" ", "") in DELETE_TEST_TECH_NAMES
+
+
+@app.on_event("startup")
+async def delete_test_technicians_with_orders_once():
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.migrations.insert_one({"_id": DELETE_TEST_TECHS_ORDERS_SEED, "started_at": datetime.now(timezone.utc).isoformat()})
+    except DuplicateKeyError:
+        return
+    log = logging.getLogger(__name__)
+    try:
+        techs = [u async for u in db.users.find({"role": UserRole.TECNICO.value}, {"_id": 0}) if _is_deleted_tech_name(u.get("name"))]
+        ids = {u["id"] for u in techs}
+        now = datetime.now(timezone.utc).isoformat()
+        removed_orders, unassigned = [], []
+        if ids:
+            query = {"status": {"$in": ACTIVE_ORDER_STATUSES},
+                     "$or": [{"assigned_technicians.id": {"$in": list(ids)}}, {"assigned_technician_id": {"$in": list(ids)}},
+                             {"assigned_technician_2_id": {"$in": list(ids)}}]}
+            async for o in db.orders.find(query, {"_id": 0}):
+                staying = [t for t in _order_techs(o) if t.get("id") not in ids]
+                if not staying:
+                    await db.deleted_orders.insert_one({**o, "deleted_at": now, "deleted_by_name": "Pedido del administrador",
+                                                        "deleted_reason": "Técnico de prueba borrado con sus servicios"})
+                    await db.orders.delete_one({"id": o["id"]})
+                    await db.alerts.delete_many({"order_id": o["id"]})
+                    await db.ppf_cut_requests.delete_many({"order_id": o["id"], "status": "pendiente"})
+                    removed_orders.append(f"{o.get('plate')} ({o.get('status')}{', prueba' if o.get('is_test') else ''})")
+                else:
+                    first, second = staying[0], (staying[1] if len(staying) > 1 else None)
+                    await db.orders.update_one({"id": o["id"]}, {"$set": {
+                        "assigned_technicians": [t for t in (o.get("assigned_technicians") or []) if t.get("id") not in ids] or
+                                                [{"id": t["id"], "name": t.get("name"), "services": []} for t in staying],
+                        "assigned_technician_id": first["id"], "assigned_technician_name": first.get("name"),
+                        "assigned_technician_2_id": second["id"] if second else None,
+                        "assigned_technician_2_name": second.get("name") if second else None,
+                        "updated_at": now}})
+                    unassigned.append(o.get("plate"))
+        deleted = []
+        for user in techs:
+            snapshot = {k: v for k, v in user.items() if k not in ("password", "pin_hash")}
+            await db.deleted_users.insert_one({**snapshot, "deleted_at": now, "deleted_by": "sistema",
+                                               "deleted_by_name": "Pedido del administrador"})
+            await db.users.delete_one({"id": user["id"]})
+            await db.alerts.delete_many({"recipient_id": user["id"], "read": False})
+            deleted.append(user["name"])
+        await db.migrations.update_one({"_id": DELETE_TEST_TECHS_ORDERS_SEED}, {"$set": {
+            "finished_at": datetime.now(timezone.utc).isoformat(), "deleted_users": deleted,
+            "deleted_orders": removed_orders, "unassigned_orders": unassigned}})
+        log.info(f"[usuarios] Borrados: {', '.join(deleted) or 'ninguno'} · servicios borrados ({len(removed_orders)}): "
+                 f"{', '.join(removed_orders) or 'ninguno'}" + (f" · se les quitó el técnico: {', '.join(unassigned)}" if unassigned else ""))
+    except Exception as e:
+        await db.migrations.delete_one({"_id": DELETE_TEST_TECHS_ORDERS_SEED})
+        log.warning(f"No se pudieron borrar los técnicos con sus servicios: {e}")
+
+
 @api_router.post("/cutting/test-orders/remove")
 async def remove_test_cutting_orders(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Quita los servicios de PRUEBA de corte (y su historial y alertas). No devuelve metros a los rollos."""
