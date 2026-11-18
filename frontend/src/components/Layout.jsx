@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { InstallAppGate } from './InstallAppGate';
+import { ChangePinDialog } from './ChangePinDialog';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -25,6 +26,7 @@ import {
     Bell,
     Settings,
     LogOut,
+    KeyRound,
     Menu,
     Sun,
     Moon,
@@ -93,6 +95,7 @@ export const Layout = ({ children }) => {
     const navigate = useNavigate();
     const [unreadCount, setUnreadCount] = useState(0);
     const [mobileOpen, setMobileOpen] = useState(false);
+    const [pinOpen, setPinOpen] = useState(false);
 
     useEffect(() => {
         const fetchUnreadCount = async () => {
@@ -276,6 +279,12 @@ export const Layout = ({ children }) => {
                                         <p className="text-xs text-muted-foreground">{user?.email}</p>
                                     </div>
                                     <DropdownMenuSeparator />
+                                    {(user?.has_pin || user?.role === 'tecnico') && (
+                                        <DropdownMenuItem onClick={() => setPinOpen(true)} data-testid="change-pin-btn">
+                                            <KeyRound className="w-4 h-4 mr-2" />
+                                            Cambiar mi PIN
+                                        </DropdownMenuItem>
+                                    )}
                                     <DropdownMenuItem onClick={handleLogout} data-testid="logout-btn">
                                         <LogOut className="w-4 h-4 mr-2" />
                                         Cerrar Sesión
@@ -295,6 +304,7 @@ export const Layout = ({ children }) => {
 
             {/* Técnicos en celular: deben instalar la app la primera vez */}
             <InstallAppGate user={user} onLogout={handleLogout} />
+            <ChangePinDialog open={pinOpen} onOpenChange={setPinOpen} />
 
             {/* Mobile bottom navigation */}
             <nav className="mobile-nav">

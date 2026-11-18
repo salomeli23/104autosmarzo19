@@ -32,6 +32,7 @@ export const authAPI = {
     register: (data) => api.post('/auth/register', data),
     me: () => api.get('/auth/me'),
     pinLogin: (data) => api.post('/auth/pin-login', data),
+    changePin: (data) => api.put('/auth/me/pin', data),
 };
 
 // Users

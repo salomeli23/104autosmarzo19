@@ -177,6 +177,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const allZones = useMemo(() => zonesInMeasurements(tm), [tm]);
     const measuredZones = useMemo(() => allZones.filter(z => tm[z.id] && tm[z.id].aplica !== false), [allZones, tm]);
     const hasLaterals = measuredZones.some(z => z.id.startsWith('laterales'));
+    const hasWindowMeasures = measuredZones.length > 0 || (tm.ventanas || []).length > 0;
     // Zonas a cortar según el modelo elegido
     const zones = useMemo(() => {
         if (cutModel === 'lados') {
@@ -200,9 +201,18 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
             if (t && t.aplica !== false) init[z.id] = [newLine(t.medida_cm || '')];
         });
         ppfKeysFor(order.ppf_plan).forEach(k => { init[k] = [newLine()]; });
+        // Corte arranca con el modelo de corte que eligió el técnico al colocar las medidas
+        const techModel = ['lados', 'ventanas'].includes(tm.cut_model) ? tm.cut_model : 'estandar';
+        const techSel = {};
+        if (techModel === 'ventanas') {
+            (tm.ventanas || []).forEach((c, i) => {
+                techSel[`w${i + 1}`] = [...(c.windows || [])];
+                init[`w${i + 1}`] = [newLine(c.medida_cm || '')];
+            });
+        }
         setCuts(init);
-        setCutModel('estandar');
-        setWinSel({});
+        setCutModel(techModel);
+        setWinSel(techSel);
         setActive(Object.keys(init).find(k => !isPpfKey(k)) || null);
         setStep('form');
         setReuse({});
@@ -298,10 +308,15 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         } else if (model === 'lados') {
             measuredZones.filter(z => ['panoramico', 'trasero', 'sunroof'].includes(z.id))
                 .forEach(z => { next[z.id] = [newLine(tm[z.id]?.medida_cm || '')]; });
-            if (hasLaterals) SIDE_ZONES.forEach(z => { next[z.id] = [newLine()]; });
+            if (hasLaterals) SIDE_ZONES.forEach(z => { next[z.id] = [newLine(tm[z.id]?.medida_cm || '')]; });
         } else {
-            sel = { w1: [] };
-            next = { w1: [newLine()] };
+            const tv = tm.ventanas || [];
+            if (tv.length) {
+                tv.forEach((c, i) => { sel[`w${i + 1}`] = [...(c.windows || [])]; next[`w${i + 1}`] = [newLine(c.medida_cm || '')]; });
+            } else {
+                sel = { w1: [] };
+                next = { w1: [newLine()] };
+            }
         }
         setCuts({ ...next, ...keep });
         setWinSel(sel);
@@ -523,7 +538,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                 {step === 'form' ? (
                     <div className="space-y-4">
                         {/* Solo PPF: no hay vidrios que medir, se registra directo el corte PPF */}
-                        {measuredZones.length > 0 && (
+                        {hasWindowMeasures && (
                             <div className="space-y-1.5" data-testid="cut-model-picker">
                                 <Label className="text-xs">Modelo de corte</Label>
                                 <div className="grid sm:grid-cols-3 gap-2">
@@ -537,7 +552,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                 </div>
                             </div>
                         )}
-                        {(measuredZones.length > 0 || ppfKeys.length === 0) && (
+                        {(hasWindowMeasures || ppfKeys.length === 0) && (
                             <>
                                 {<div className="rounded-xl border overflow-hidden bg-[radial-gradient(ellipse_at_center,_#4b4f56_0%,_#2b2e33_55%,_#18191c_100%)] p-1">
                                     <Suspense fallback={<div className="h-[260px] flex items-center justify-center text-sm text-slate-300">Cargando carro 3D…</div>}>

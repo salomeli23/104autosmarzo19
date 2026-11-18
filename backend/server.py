@@ -1015,8 +1015,43 @@ async def login(credentials: UserLogin):
 async def get_me(current_user: dict = Depends(get_current_user)):
     return UserResponse(
         id=current_user["id"], email=current_user["email"], name=current_user["name"],
-        role=UserRole(current_user["role"]), phone=current_user.get("phone"), created_at=current_user["created_at"]
+        role=UserRole(current_user["role"]), phone=current_user.get("phone"), created_at=current_user["created_at"],
+        tecnico_roles=current_user.get("tecnico_roles") or [], has_pin=bool(current_user.get("pin_hash")),
     )
+
+
+class OwnPinChange(BaseModel):
+    current_pin: str
+    new_pin: str
+
+
+@api_router.put("/auth/me/pin")
+async def change_own_pin(data: OwnPinChange, current_user: dict = Depends(get_current_user)):
+    """El usuario cambia su propio PIN de ingreso: pide el PIN actual. 5 fallos bloquean el cambio (y el ingreso) 5 minutos."""
+    user = await db.users.find_one({"id": current_user["id"]}, {"_id": 0})
+    if not user or not user.get("pin_hash"):
+        raise HTTPException(status_code=400, detail="Tu usuario no ingresa con PIN")
+    now = datetime.now(timezone.utc)
+    if user.get("pin_locked_until") and datetime.fromisoformat(user["pin_locked_until"]) > now:
+        mins = max(1, int((datetime.fromisoformat(user["pin_locked_until"]) - now).total_seconds() // 60) + 1)
+        raise HTTPException(status_code=429, detail=f"Demasiados intentos. Intenta de nuevo en {mins} minuto(s)")
+    current = (data.current_pin or "").strip()
+    if not re.fullmatch(r"\d{4}", current) or not verify_password(current, user["pin_hash"]):
+        fails = int(user.get("pin_fails") or 0) + 1
+        if fails >= PIN_MAX_FAILS:
+            await db.users.update_one({"id": user["id"]}, {"$set": {
+                "pin_fails": 0, "pin_locked_until": (now + timedelta(minutes=PIN_LOCK_MINUTES)).isoformat()}})
+            raise HTTPException(status_code=429, detail=f"Demasiados intentos. Intenta de nuevo en {PIN_LOCK_MINUTES} minutos")
+        await db.users.update_one({"id": user["id"]}, {"$set": {"pin_fails": fails}})
+        raise HTTPException(status_code=400, detail="El PIN actual no es correcto")
+    new_pin = _valid_pin(data.new_pin)
+    if new_pin == current:
+        raise HTTPException(status_code=400, detail="El PIN nuevo debe ser diferente al actual")
+    if len(set(new_pin)) == 1 or new_pin in ("1234", "4321", "0123", "9876"):
+        raise HTTPException(status_code=400, detail="Elige un PIN más seguro (no repetido ni consecutivo)")
+    await db.users.update_one({"id": user["id"]}, {"$set": {
+        "pin_hash": hash_password(new_pin), "pin_fails": 0, "pin_locked_until": None, "pin_changed_at": now.isoformat()}})
+    return {"message": "PIN actualizado. Úsalo la próxima vez que ingreses"}
 
 # ==================== USERS ENDPOINTS ====================
 # ==================== BORRAR USUARIOS CON PIN ====================
@@ -3989,13 +4024,30 @@ class MeasureZone(BaseModel):
     piezas: Optional[int] = None       # solo laterales: número de vidrios de ese lado
 
 
+class WindowCutMeasure(BaseModel):
+    windows: List[str]                  # 1 o 2 ventanas (WINDOW_LABELS)
+    medida_cm: Optional[float] = None
+
+
 class TechMeasurements(BaseModel):
-    panoramico: MeasureZone
-    trasero: MeasureZone
-    laterales_delanteros: MeasureZone  # vidrios de las puertas delanteras (piloto y copiloto)
-    laterales_traseros: MeasureZone    # vidrios de las puertas traseras y custodias
-    sunroof: MeasureZone
+    # Modelo de corte que eligió el técnico: 'estandar' | 'lados' (Corte A / Corte B) | 'ventanas' (vidrios independientes)
+    cut_model: Optional[str] = "estandar"
+    panoramico: Optional[MeasureZone] = None
+    trasero: Optional[MeasureZone] = None
+    laterales_delanteros: Optional[MeasureZone] = None  # vidrios de las puertas delanteras (piloto y copiloto)
+    laterales_traseros: Optional[MeasureZone] = None    # vidrios de las puertas traseras y custodias
+    laterales_derecho: Optional[MeasureZone] = None     # modelo 'lados': Corte A
+    laterales_izquierdo: Optional[MeasureZone] = None   # modelo 'lados': Corte B
+    sunroof: Optional[MeasureZone] = None
+    ventanas: Optional[List[WindowCutMeasure]] = None   # modelo 'ventanas'
     notes: Optional[str] = None
+
+
+# Zonas que mide el técnico en cada modelo de corte
+TECH_MODEL_ZONES = {
+    "estandar": MEASURE_ZONES,
+    "lados": ("panoramico", "trasero", "laterales_derecho", "laterales_izquierdo", "sunroof"),
+}
 
 
 @api_router.put("/orders/{order_id}/tech-measurements")
@@ -4016,29 +4068,50 @@ async def save_tech_measurements(
     if order.get("cutting_status") == "completado":
         raise HTTPException(status_code=400, detail="El corte ya se completó; no se pueden cambiar las medidas")
 
-    zones = {}
-    for key in MEASURE_ZONES:
-        z: MeasureZone = getattr(data, key)
-        if not z.aplica:
-            zones[key] = {"aplica": False}
-            continue
-        if not z.medida_cm or z.medida_cm <= 0 or z.medida_cm > 1000:
-            raise HTTPException(status_code=400, detail=f"Coloca la medida lineal de {key}, o márcalo como No aplica")
-        zone = {"aplica": True, "medida_cm": round(float(z.medida_cm), 1)}
-        if key.startswith("laterales"):
-            zone["piezas"] = max(1, int(z.piezas or 1))
-        zones[key] = zone
-    if not any(z["aplica"] for z in zones.values()):
-        raise HTTPException(status_code=400, detail="Coloca las medidas de al menos una zona")
+    model = data.cut_model or "estandar"
+    if model not in CUT_MODELS:
+        raise HTTPException(status_code=400, detail="Modelo de corte inválido")
+    zones: Dict[str, Any] = {}
+    if model == "ventanas":
+        cuts, used = [], set()
+        for i, c in enumerate(data.ventanas or [], 1):
+            wins = [w for w in dict.fromkeys(c.windows or []) if w]
+            if not 1 <= len(wins) <= 2 or any(w not in WINDOW_LABELS for w in wins):
+                raise HTTPException(status_code=400, detail=f"Corte {i}: elige mínimo 1 y máximo 2 ventanas")
+            if used & set(wins):
+                raise HTTPException(status_code=400, detail="Una ventana no puede estar en dos cortes")
+            used |= set(wins)
+            if not c.medida_cm or c.medida_cm <= 0 or c.medida_cm > 1000:
+                raise HTTPException(status_code=400, detail=f"Coloca la medida lineal del corte {i}")
+            cuts.append({"windows": wins, "medida_cm": round(float(c.medida_cm), 1)})
+        if not cuts:
+            raise HTTPException(status_code=400, detail="Agrega al menos un corte con sus ventanas y medida")
+        zones["ventanas"] = cuts
+    else:
+        for key in TECH_MODEL_ZONES[model]:
+            z: Optional[MeasureZone] = getattr(data, key)
+            if z is None:
+                raise HTTPException(status_code=400, detail=f"Falta la medida de {_zone_label(key)}")
+            if not z.aplica:
+                zones[key] = {"aplica": False}
+                continue
+            if not z.medida_cm or z.medida_cm <= 0 or z.medida_cm > 1000:
+                raise HTTPException(status_code=400, detail=f"Coloca la medida lineal de {_zone_label(key)}, o márcalo como No aplica")
+            zone = {"aplica": True, "medida_cm": round(float(z.medida_cm), 1)}
+            if key.startswith("laterales"):
+                zone["piezas"] = max(1, int(z.piezas or 1))
+            zones[key] = zone
+        if not any(z["aplica"] for z in zones.values()):
+            raise HTTPException(status_code=400, detail="Coloca las medidas de al menos una zona")
 
     now = datetime.now(timezone.utc).isoformat()
     first_time = not (order.get("tech_measurements") or {}).get("confirmed_at")
-    record = {**zones, "notes": (data.notes or "").strip() or None, "confirmed_at": now,
+    record = {"cut_model": model, **zones, "notes": (data.notes or "").strip() or None, "confirmed_at": now,
               "confirmed_by_id": current_user["id"], "confirmed_by_name": current_user["name"]}
     await db.orders.update_one({"id": order_id}, {"$set": {"tech_measurements": record, "updated_at": now}})
     await log_order_history(
         order_id, "MEDIDAS_TECNICO", order["status"], order["status"],
-        current_user["id"], current_user["name"], {"zones": zones, "notes": record["notes"]},
+        current_user["id"], current_user["name"], {"cut_model": model, "zones": zones, "notes": record["notes"]},
     )
     await create_alert(
         UserRole.CORTE.value, AlertType.MEDIDAS_TECNICO,

@@ -20,10 +20,11 @@ import { orderTechnicians } from '../lib/workflow';
 import { CameraCapture } from '../components/CameraCapture';
 import { ConfirmTwiceDialog } from '../components/ConfirmTwiceDialog';
 import { TechnicianHistory } from '../components/TechnicianHistory';
+import { TechnicianWeek } from '../components/TechnicianWeek';
 import {
     Wrench, Play, CheckCircle, Clock, User, Phone,
     AlertTriangle, Timer, FileText, Scissors, Sparkles,
-    Package, PaintBucket, Hammer, LogIn, Users, Route as RouteIcon, Ruler, History, CheckSquare, Square,
+    Package, PaintBucket, Hammer, LogIn, Users, Route as RouteIcon, Ruler, History, CheckSquare, Square, CalendarDays,
 } from 'lucide-react';
 
 const MIN_FINISH_PHOTOS = 5;
@@ -545,7 +546,7 @@ export const TechnicianView = () => {
     const hasLegacy = SECTIONS.some(s => bySection[s.id].length > 0);
     const needsMeasures = byStage.en_corte.some(o => !o.tech_measurements?.confirmed_at);
     const defaultTab = byStage.en_proceso.length ? 'en_proceso' : needsMeasures ? 'en_corte' : byStage.asignado.length ? 'asignado'
-        : byStage.en_corte.length ? 'en_corte' : hasLegacy ? 'legacy' : 'asignado';
+        : byStage.en_corte.length ? 'en_corte' : hasLegacy ? 'legacy' : 'semana';
 
     return (
         <div className="space-y-6" data-testid="technician-page">
@@ -553,7 +554,7 @@ export const TechnicianView = () => {
                 <div>
                     <h1 className="font-heading text-3xl md:text-4xl">Mis Servicios</h1>
                     <p className="text-muted-foreground">
-                        Vehículos donde eres técnico principal o de apoyo · Corte → Instalación
+                        Tus servicios, tus entregas y lo que tienes programado en la semana
                     </p>
                 </div>
                 {totalPending > 0 && (
@@ -577,6 +578,10 @@ export const TechnicianView = () => {
             ) : (
                 <Tabs defaultValue={defaultTab} className="w-full">
                     <TabsList className="flex flex-wrap gap-1 h-auto p-1">
+                        <TabsTrigger value="semana" className="flex items-center gap-1.5 py-2" data-testid="tab-semana">
+                            <CalendarDays className="w-4 h-4" />
+                            <span className="text-xs md:text-sm">Mi semana</span>
+                        </TabsTrigger>
                         {STAGES.map(st => {
                             const Icon = st.icon;
                             const count = byStage[st.id].length;
@@ -592,7 +597,7 @@ export const TechnicianView = () => {
                         })}
                         <TabsTrigger value="terminados" className="flex items-center gap-1.5 py-2" data-testid="tab-terminados">
                             <History className="w-4 h-4" />
-                            <span className="text-xs md:text-sm">Terminados</span>
+                            <span className="text-xs md:text-sm">Mis entregas</span>
                             {history.length > 0 && <Badge variant="outline" className="ml-1 h-5 px-1 text-[10px]">{history.length}</Badge>}
                         </TabsTrigger>
                         {hasLegacy && (
@@ -629,6 +634,10 @@ export const TechnicianView = () => {
                             )}
                         </TabsContent>
                     ))}
+
+                    <TabsContent value="semana" className="mt-4" data-testid="panel-semana">
+                        <TechnicianWeek orders={orders} history={history} />
+                    </TabsContent>
 
                     <TabsContent value="terminados" className="mt-4" data-testid="panel-terminados">
                         <TechnicianHistory items={history} onChanged={fetchHistory} />
