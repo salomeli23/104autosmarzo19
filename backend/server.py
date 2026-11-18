@@ -3777,8 +3777,10 @@ async def _verify_coordinator_pin(pin: str):
 CALLBELL_CONFIG_KEY = "callbell_config"
 CALLBELL_POLL_SECONDS = 600  # revisión periódica por si se pierde un webhook
 CALLBELL_LOOKBACK_DAYS = 30   # tope de la revisión
-# Solo cuentan los formularios enviados desde esta fecha (hora de Colombia): pedido del 18-nov-2026 "de hoy en adelante"
-CALLBELL_LEADS_SINCE = datetime(2026, 11, 18, 5, 0, tzinfo=timezone.utc)  # 18-nov-2026 00:00 en Colombia
+# Solo cuentan los formularios enviados desde esta fecha (hora de Colombia): pedido del 18-nov-2026 "desde ayer en adelante"
+CALLBELL_LEADS_SINCE = datetime(2026, 11, 17, 5, 0, tzinfo=timezone.utc)  # 17-nov-2026 00:00 en Colombia
+# Versión de la lectura de formularios: al cambiarla, la siguiente revisión vuelve a mirar todo desde CALLBELL_LEADS_SINCE
+CALLBELL_PARSER_VERSION = 3
 _callbell_sync_lock = asyncio.Lock()
 CALLBELL_CONTACT_EVENTS = {"contact_created", "contact_updated", "message_created"}
 
@@ -3842,8 +3844,10 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
         return "sin_etiqueta"
     if cfg.get("team_uuid") and callbell.contact_team_uuid(contact) != cfg["team_uuid"]:
         return "otro_equipo"
-    existing = await db.callbell_leads.find_one({"uuid": cuuid}, {"_id": 0, "status": 1, "chat": 1})
-    if existing and existing.get("status") in ("agendado", "descartado"):
+    existing = await db.callbell_leads.find_one({"uuid": cuuid}, {"_id": 0, "status": 1, "chat": 1, "discarded_by_name": 1})
+    auto_discarded = existing and existing.get("status") == "descartado" and \
+        str(existing.get("discarded_by_name") or "").startswith("Formulario anterior")
+    if existing and existing.get("status") in ("agendado", "descartado") and not auto_discarded:
         return "ya_importado"
     now = datetime.now(timezone.utc).isoformat()
     custom = callbell.read_fields(contact, cfg["fields"])
@@ -3856,7 +3860,7 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
     # Solo es lead el contacto que ya tiene el formulario de agendamiento diligenciado en el chat (desde hoy)
     if not chat.get("formulario"):
         if existing and existing.get("status") == "pendiente":
-            await db.callbell_leads.update_one({"uuid": cuuid}, {"$set": {"status": "descartado", "discarded_by_name": "Formulario anterior al 18-nov",
+            await db.callbell_leads.update_one({"uuid": cuuid}, {"$set": {"status": "descartado", "discarded_by_name": "Formulario anterior a la fecha de inicio",
                                                                           "updated_at": now}})
         return "sin_formulario"
     # Lo escrito en el chat manda; los campos personalizados completan lo que falte
@@ -3904,7 +3908,7 @@ async def _callbell_sync(full: bool = False) -> dict:
     counts: Dict[str, int] = {}
     start = max(datetime.now(timezone.utc) - timedelta(days=CALLBELL_LOOKBACK_DAYS), CALLBELL_LEADS_SINCE)
     # Si cambió el equipo o la etiqueta (o es la primera vez con esta versión), se revisan de nuevo los 30 días
-    scope = f"{cfg.get('team_uuid')}|{callbell._norm(cfg.get('tag'))}|formulario|{CALLBELL_LEADS_SINCE.date()}"
+    scope = f"{cfg.get('team_uuid')}|{callbell._norm(cfg.get('tag'))}|formulario-v{CALLBELL_PARSER_VERSION}|{CALLBELL_LEADS_SINCE.date()}"
     last = callbell.parse_iso(cfg.get("last_sync_at")) if not full and cfg.get("last_sync_scope") == scope else None
     if last and last > start:
         start = last - timedelta(minutes=15)
