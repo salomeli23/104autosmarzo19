@@ -3789,8 +3789,10 @@ async def _callbell_config() -> dict:
     # "AGENDADO BOGOTA NORT" es un equipo, no una etiqueta: si quedó guardado como etiqueta, no se exige
     if callbell._norm(tag) in (callbell._norm(callbell.DEFAULT_TEAM), callbell._norm(doc.get("team_name"))):
         tag = ""
-    return {"tag": tag, "team_uuid": doc.get("team_uuid"),
-            "team_name": doc.get("team_name", callbell.DEFAULT_TEAM),
+    # Los leads salen siempre de un equipo: si quedó guardado "sin equipo", se usa AGENDADO BOGOTA NORT
+    team_name = doc.get("team_name") or callbell.DEFAULT_TEAM
+    return {"tag": tag, "team_uuid": doc.get("team_uuid") if doc.get("team_name") else None,
+            "team_name": team_name,
             "fields": {**callbell.DEFAULT_FIELDS, **(doc.get("fields") or {})},
             "last_sync_at": doc.get("last_sync_at"), "last_sync_result": doc.get("last_sync_result"),
             "last_sync_scope": doc.get("last_sync_scope"), "last_sync_error": doc.get("last_sync_error")}
