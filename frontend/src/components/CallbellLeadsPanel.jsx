@@ -36,9 +36,9 @@ export const CallbellLeadsPanel = ({ onSchedule, refreshKey, onSynced }) => {
         setSyncing(true);
         try {
             const { data } = await callbellAPI.sync();
-            toast.success(`Callbell: ${data.leads} lead(s) por agendar · ${data.revisados} revisado(s)`);
-            load();
-            onSynced?.();
+            toast.success(data.message || 'Sincronizando con Callbell');
+            // La sincronización corre en el servidor: se recargan los leads mientras termina
+            [15000, 45000, 90000].forEach(ms => setTimeout(() => { load(); onSynced?.(); }, ms));
         } catch (e) {
             toast.error(e.response?.data?.detail || 'No se pudo sincronizar con Callbell');
         } finally {
@@ -59,7 +59,7 @@ export const CallbellLeadsPanel = ({ onSchedule, refreshKey, onSynced }) => {
                     <div>
                         <p className="font-heading text-lg flex items-center gap-2"><Bot className="w-5 h-5 text-emerald-400" /> Leads de Callbell</p>
                         <p className="text-xs text-muted-foreground">
-                            Clientes agendados en Callbell por ingresar: sus datos vienen del chat. Revisa y toca Agendar para crear la cita.
+                            Clientes del equipo de Callbell con el formulario de agendamiento diligenciado en el chat. Revisa y toca Agendar para crear la cita.
                         </p>
                     </div>
                     <Button size="sm" variant="outline" onClick={sync} disabled={syncing} data-testid="callbell-sync">

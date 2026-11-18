@@ -207,7 +207,7 @@ export const callbellAPI = {
     saveConfig: (data) => api.put('/integrations/callbell/config', data),
     fields: () => api.get('/integrations/callbell/fields'),
     teams: () => api.get('/integrations/callbell/teams'),
-    sync: () => api.post('/integrations/callbell/sync'),
+    sync: (full = false) => api.post('/integrations/callbell/sync', null, { params: full ? { full: true } : {} }),
     leads: (status = 'pendiente') => api.get('/integrations/callbell/leads', { params: { status } }),
     discard: (uuid) => api.post(`/integrations/callbell/leads/${uuid}/discard`),
     advisors: () => api.get('/integrations/callbell/advisors'),

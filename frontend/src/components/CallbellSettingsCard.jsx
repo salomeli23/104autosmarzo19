@@ -68,9 +68,9 @@ export const CallbellSettingsCard = () => {
         if (!(data || []).length) toast.message('Callbell no devolvió equipos');
     });
     const sync = () => run('sync', async () => {
-        const { data } = await callbellAPI.sync();
-        toast.success(`${data.leads} lead(s) por agendar · ${data.revisados} revisado(s)`);
-        load();
+        const { data } = await callbellAPI.sync(true);
+        toast.success(data.message || 'Sincronizando con Callbell');
+        [20000, 60000].forEach(ms => setTimeout(load, ms));
     });
 
     return (
@@ -80,18 +80,20 @@ export const CallbellSettingsCard = () => {
             </CardHeader>
             <CardContent className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                    Los contactos del equipo elegido con la etiqueta llegan a Agendamiento → "Leads de Callbell" como leads por ingresar,
-                    con los datos que el cliente escribió en el chat (nombre, placa, celular, correo, servicio, valor y forma de pago).
+                    Los contactos del equipo elegido que tengan en el chat el formulario de agendamiento diligenciado (Nombre completo, Vehículo,
+                    Placa, Celular, Correo, Servicio, Valor pactado, Método de pago) llegan a Agendamiento → "Leads de Callbell" como leads por ingresar.
+                    Se revisan los clientes que escribieron en los últimos 30 días.
                     El asesor o el coordinador los agenda con un clic. Se revisa al instante (webhook) y cada {st.poll_minutes} min.
                 </p>
 
                 <div className="space-y-1">
                     <Flag ok={st.token_configured} label={st.token_configured ? 'Token de la API configurado' : 'Falta la variable CALLBELL_API_TOKEN en Railway (servicio backend)'} />
                     <Flag ok={st.secret_configured} label={st.secret_configured ? 'Firma del webhook activa' : 'Opcional: CALLBELL_WEBHOOK_SECRET (el secreto whsec_… del webhook)'} />
+                    {st.last_sync_error && <p className="text-xs text-red-400">Último error: {st.last_sync_error}</p>}
                     {st.last_sync_at && (
                         <p className="text-xs text-muted-foreground">
                             Última revisión {formatDateTime(st.last_sync_at)}
-                            {st.last_sync_result ? ` · ${st.last_sync_result.pendientes} lead(s) por agendar` : ''}
+                            {st.last_sync_result ? ` · ${st.last_sync_result.revisados} contacto(s) revisado(s), ${st.last_sync_result.pendientes} lead(s) por agendar` : ''}
                             {` · Total: ${st.leads.agendado} agendado(s), ${st.leads.pendiente} pendiente(s)`}
                         </p>
                     )}
@@ -110,20 +112,21 @@ export const CallbellSettingsCard = () => {
 
                 <div className="grid sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                        <Label>Equipo de Callbell</Label>
+                        <Label>Equipo de Callbell (de aquí salen los leads)</Label>
                         <div className="flex gap-2">
                             <select value={teamUuid} onChange={(e) => setTeamUuid(e.target.value)} data-testid="callbell-team"
                                 className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm">
-                                <option value="">Todos los equipos</option>
+                                <option value="">Sin equipo (solo por etiqueta)</option>
                                 {(teams || []).map(t => <option key={t.uuid} value={t.uuid}>{t.name}</option>)}
                             </select>
                             <Button variant="outline" size="sm" onClick={loadTeams} disabled={!st.token_configured || busy === 'teams'} title="Traer equipos de Callbell">
                                 {busy === 'teams' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                             </Button>
                         </div>
+                        {st.team_error && <p className="text-xs text-red-400">{st.team_error}</p>}
                     </div>
                     <div className="space-y-1">
-                        <Label>Etiqueta del lead agendado</Label>
+                        <Label>Etiqueta (opcional)</Label>
                         <Input value={tag} onChange={(e) => setTag(e.target.value)} data-testid="callbell-tag" />
                     </div>
                 </div>

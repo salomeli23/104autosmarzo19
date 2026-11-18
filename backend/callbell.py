@@ -1,7 +1,8 @@
 """Integración con Callbell (bot y CRM): cliente de la API, verificación de webhooks y lectura de los datos
 de la cita desde los campos personalizados del contacto.
 
-Los leads son los contactos de un equipo (team inbox) con la etiqueta configurada (por defecto "AGENDADO BOGOTA NORT").
+Los leads son los contactos del equipo (team inbox) configurado (por defecto "AGENDADO BOGOTA NORT"); opcionalmente
+también con una etiqueta.
 Sus datos (nombre, placa, celular, correo, servicio, valor, forma de pago) se leen de los mensajes que el cliente
 envió en el chat y, si existen, de los campos personalizados del contacto (customFields).
 """
@@ -20,7 +21,8 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 API_BASE = "https://api.callbell.eu/v1"
-DEFAULT_TAG = "AGENDADO BOGOTA NORT"
+DEFAULT_TAG = ""  # opcional: además del equipo, exigir esta etiqueta
+DEFAULT_TEAM = "AGENDADO BOGOTA NORT"
 # Campo de la cita → nombre del campo personalizado en Callbell (se puede cambiar en Configuración)
 DEFAULT_FIELDS = {
     "fecha": "Fecha cita",
@@ -78,10 +80,12 @@ async def get_contact(contact_uuid: str) -> Optional[Dict[str, Any]]:
     return contact
 
 
-async def list_tagged_contacts(tag: str, team_uuid: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Contactos con la etiqueta (y del equipo, si se eligió uno), recorriendo el cursor `meta.next`."""
+async def list_tagged_contacts(tag: str, team_uuid: Optional[str] = None, inbound_after: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Contactos del equipo (y con la etiqueta, si hay), recorriendo el cursor `meta.next`.
+    inbound_after (ISO 8601): solo los que escribieron desde esa fecha, los más recientes primero."""
     contacts, after = [], None
-    base = {"tags": tag, "team_uuid": team_uuid or None}
+    base = {"tags": tag or None, "team_uuid": team_uuid or None, "last_inbound_message_after": inbound_after or None,
+            "order": "last_inbound_message_at" if inbound_after else None}
     for _ in range(MAX_PAGES):
         params = {**base, "after": after} if after else base
         data = await asyncio.to_thread(_request, "/contacts", params)
@@ -112,19 +116,24 @@ def is_from_contact(message: Dict[str, Any]) -> bool:
     return message.get("status") == "received"
 
 
-async def customer_texts(contact_uuid: str, max_pages: int = 3) -> List[str]:
-    """Textos que el cliente envió en el chat, del más reciente al más antiguo."""
-    texts, after = [], None
+async def chat_messages(contact_uuid: str, max_pages: int = 2) -> List[Tuple[str, bool]]:
+    """Mensajes del chat con texto, del más reciente al más antiguo: [(texto, lo_escribió_el_cliente)]."""
+    out, after = [], None
     for _ in range(max_pages):
         data = await asyncio.to_thread(_request, f"/contacts/{urllib.parse.quote(contact_uuid)}/messages",
                                        {"after": after} if after else None)
         for m in data.get("messages") or []:
-            if is_from_contact(m) and (m.get("text") or "").strip():
-                texts.append(m["text"].strip())
+            if (m.get("text") or "").strip():
+                out.append((m["text"].strip(), is_from_contact(m)))
         after = (data.get("meta") or {}).get("next")
         if not after:
             break
-    return texts
+    return out
+
+
+async def customer_texts(contact_uuid: str, max_pages: int = 2) -> List[str]:
+    """Textos que el cliente envió en el chat, del más reciente al más antiguo."""
+    return [t for t, mine in await chat_messages(contact_uuid, max_pages) if mine]
 
 
 # ----------------------------- Datos del cliente escritos en el chat -----------------------------
@@ -167,6 +176,69 @@ def _catalog_names(catalog: Dict[str, Any]) -> List[Tuple[str, str, str, str]]:
     return sorted(entries, key=lambda e: -len(e[0]))
 
 
+# Formulario de agendamiento que se diligencia en el chat ("👤 Nombre completo: …", "🔢 Placa: …", "💰 Valor pactado: …")
+FORM_LABELS = [
+    ("nombre", r"nombre(?: completo)?"), ("vehiculo", r"veh[ií]culo"), ("placa", r"placa"), ("telefono", r"celular|tel[eé]fono|whatsapp"),
+    ("email", r"correo(?: electr[oó]nico)?|e-?mail"), ("servicio", r"servicio(?: o calidad elegida)?|calidad elegida|producto"),
+    ("valor", r"valor(?: pactado)?|precio|total"), ("pago", r"m[eé]todo de pago|forma de pago|medio de pago"),
+    ("cedula", r"c[eé]dula|documento|c\.?c\.?"), ("fecha", r"fecha(?: de la cita)?"), ("hora", r"hora(?: de la cita)?"),
+]
+_FORM_LINE = re.compile(r"^[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ*]*\*?\s*(" + "|".join(f"(?P<{k}>{rx})" for k, rx in FORM_LABELS) + r")\s*\*?\s*:\s*(?P<val>.*)$", re.I)
+_FORM_END = re.compile(r"^\W*formas de pago", re.I)
+
+
+def parse_form(text: str) -> Dict[str, str]:
+    """Campos del formulario diligenciado (solo los que traen valor). Ignora lo que viene después de "Formas de pago"."""
+    found: Dict[str, str] = {}
+    for ln in (text or "").splitlines():
+        line = ln.strip()
+        if _FORM_END.match(line):
+            break
+        m = _FORM_LINE.match(line)
+        if not m:
+            continue
+        key = next(k for k, _ in FORM_LABELS if m.group(k))
+        val = (m.group("val") or "").strip().strip("*_ ").strip()
+        if val and key not in found:
+            found[key] = val
+    return found
+
+
+def _form_labels(text: str) -> int:
+    return sum(1 for ln in (text or "").splitlines() if _FORM_LINE.match(ln.strip()))
+
+
+def parse_chat(messages: List[Tuple[str, bool]], catalog: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Datos del lead: primero el formulario diligenciado más reciente (lo haya enviado el cliente o el asesor);
+    lo que falte se completa con lo que el cliente escribió suelto en el chat."""
+    out: Dict[str, Any] = {}
+    # El formulario cuenta si tiene al menos 3 etiquetas y 2 datos diligenciados (la plantilla vacía no cuenta)
+    form_text = next((t for t, _ in messages if _form_labels(t) >= 3 and len(parse_form(t)) >= 2), None)
+    if form_text:
+        form = parse_form(form_text)
+        out["formulario"] = True
+        if form.get("vehiculo"):
+            parts = form.pop("vehiculo").split(None, 1)
+            out["marca"] = parts[0].capitalize()
+            if len(parts) > 1:
+                out["modelo"] = parts[1]
+        # Cada valor del formulario se interpreta con las mismas reglas del texto suelto, usando su etiqueta
+        labeled = {"nombre": "Nombre", "placa": "Placa", "telefono": "Celular", "email": "Correo", "servicio": "Servicio",
+                   "valor": "Valor", "pago": "Pago", "cedula": "Cedula"}
+        for key, label in labeled.items():
+            if form.get(key):
+                out.update({k: v for k, v in parse_customer_data([f"{label}: {form[key]}"], catalog).items() if k not in out})
+                if key == "servicio" and "servicio" not in out:
+                    out["servicio"] = form[key]
+        for key in ("fecha", "hora"):
+            if form.get(key):
+                out[key] = form[key]
+    loose = parse_customer_data([t for t, mine in messages if mine and t != form_text], catalog)
+    for k, v in loose.items():
+        out.setdefault(k, v)
+    return out
+
+
 def parse_customer_data(texts: List[str], catalog: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Datos que el cliente escribió en el chat (un mensaje por dato o todos juntos, con o sin etiqueta "Placa: …").
     Se toma el dato más reciente de cada tipo. texts va del mensaje más reciente al más antiguo."""
@@ -191,7 +263,7 @@ def parse_customer_data(texts: List[str], catalog: Optional[Dict[str, Any]] = No
         if "cedula" not in out and key in ("cedula", "cc", "c.c", "documento", "nit") and 5 <= len(digits) <= 11:
             out["cedula"] = digits
             continue
-        if "placa" not in out and (key == "placa" or re.fullmatch(r"[a-z]{3}\s?-?(\d{3}|\d{2}[a-z])", nval)):
+        if "placa" not in out and (key == "placa" or "placa" in nval or re.fullmatch(r"[a-z]{3}\s?-?(\d{3}|\d{2}[a-z])", nval)):
             m = _PLATE.search(val)
             if m:
                 out["placa"] = (m.group(1) + m.group(2)).upper()
@@ -236,7 +308,14 @@ def verify_signature(raw_body: bytes, header: str, secret: str, tolerance: int =
 
 
 def has_tag(contact: Dict[str, Any], tag: str) -> bool:
+    """Sin etiqueta configurada no se exige ninguna."""
+    if not _norm(tag):
+        return True
     return _norm(tag) in {_norm(t) for t in (contact.get("tags") or [])}
+
+
+def find_team(teams: List[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
+    return next((t for t in teams if _norm(t.get("name")) == _norm(name)), None)
 
 
 def read_fields(contact: Dict[str, Any], mapping: Dict[str, str]) -> Dict[str, str]:

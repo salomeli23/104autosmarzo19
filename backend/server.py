@@ -3776,14 +3776,18 @@ async def _verify_coordinator_pin(pin: str):
 # ==================== CALLBELL: LEADS CON CITA → AGENDAMIENTO ====================
 CALLBELL_CONFIG_KEY = "callbell_config"
 CALLBELL_POLL_SECONDS = 600  # revisión periódica por si se pierde un webhook
+CALLBELL_LOOKBACK_DAYS = 30   # solo clientes que escribieron en los últimos 30 días
+_callbell_sync_lock = asyncio.Lock()
 CALLBELL_CONTACT_EVENTS = {"contact_created", "contact_updated", "message_created"}
 
 
 async def _callbell_config() -> dict:
     doc = await db.settings.find_one({"key": CALLBELL_CONFIG_KEY}, {"_id": 0}) or {}
-    return {"tag": doc.get("tag") or callbell.DEFAULT_TAG, "team_uuid": doc.get("team_uuid"), "team_name": doc.get("team_name"),
+    return {"tag": doc.get("tag", callbell.DEFAULT_TAG) or "", "team_uuid": doc.get("team_uuid"),
+            "team_name": doc.get("team_name", callbell.DEFAULT_TEAM),
             "fields": {**callbell.DEFAULT_FIELDS, **(doc.get("fields") or {})},
-            "last_sync_at": doc.get("last_sync_at"), "last_sync_result": doc.get("last_sync_result")}
+            "last_sync_at": doc.get("last_sync_at"), "last_sync_result": doc.get("last_sync_result"),
+            "last_sync_team": doc.get("last_sync_team"), "last_sync_error": doc.get("last_sync_error")}
 
 
 def _callbell_services(text: str, raw: str) -> List[Dict[str, Any]]:
@@ -3820,9 +3824,10 @@ async def _alert_advisor_or_all(advisor: Optional[dict], title: str, message: st
                                 "created_at": datetime.now(timezone.utc).isoformat()})
 
 
-async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = True) -> str:
-    """Deja el contacto (del equipo y con la etiqueta configurados) como lead por ingresar a Agendamiento,
-    con los datos que el cliente escribió en el chat: nombre, placa, celular, correo, servicio, valor y forma de pago.
+async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = True, notify: bool = True) -> str:
+    """Deja el contacto (del equipo y con la etiqueta configurados) como lead por ingresar a Agendamiento, con los datos
+    del formulario de agendamiento diligenciado en el chat (nombre, vehículo, placa, celular, correo, servicio, valor
+    pactado y método de pago) y, si falta algo, lo que el cliente escribió suelto.
     No crea la cita: el asesor o el coordinador la agenda desde "Leads de Callbell"."""
     cuuid = contact.get("uuid")
     if not cuuid or not callbell.has_tag(contact, cfg["tag"]):
@@ -3837,9 +3842,12 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
     chat = (existing or {}).get("chat") or {}
     if read_chat or not existing:
         try:
-            chat = callbell.parse_customer_data(await callbell.customer_texts(cuuid), SERVICES_CATALOG)
+            chat = callbell.parse_chat(await callbell.chat_messages(cuuid), SERVICES_CATALOG)
         except Exception as e:
             logging.getLogger(__name__).warning(f"[callbell] no se pudo leer el chat de {cuuid}: {e}")
+    # Solo es lead el contacto que ya tiene el formulario de agendamiento diligenciado en el chat
+    if not chat.get("formulario"):
+        return "sin_formulario"
     # Lo escrito en el chat manda; los campos personalizados completan lo que falte
     f = {**{k: v for k, v in custom.items() if v}, **{k: v for k, v in chat.items() if v not in (None, "")}}
     missing = [label for key, label in (("placa", "placa"), ("servicio", "servicio")) if not f.get(key)]
@@ -3855,7 +3863,7 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
         "status": "pendiente", "problem": f"Falta {' y '.join(missing)} en el chat" if missing else None,
     }
     await db.callbell_leads.update_one({"uuid": cuuid}, {"$set": lead, "$setOnInsert": {"created_at": now}}, upsert=True)
-    if not existing:
+    if not existing and notify:
         resumen = " · ".join(x for x in (f.get("placa"), f.get("servicio_nombre") or f.get("servicio"),
                                          f"${int(f['valor']):,}".replace(",", ".") if f.get("valor") else None) if x)
         await _alert_advisor_or_all(advisor, f"Lead por agendar: {lead['name'] or lead['phone']}",
@@ -3863,24 +3871,52 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
     return "pendiente"
 
 
-async def _callbell_sync() -> dict:
-    """Revisa los contactos con la etiqueta de cita y crea las citas que falten."""
-    cfg = await _callbell_config()
+async def _callbell_team(cfg: dict) -> dict:
+    """El equipo configurado se guarda por nombre; su uuid se busca en Callbell la primera vez."""
+    if cfg.get("team_uuid") or not cfg.get("team_name"):
+        return cfg
+    team = callbell.find_team(await callbell.list_teams(), cfg["team_name"])
+    if not team:
+        raise RuntimeError(f"No existe el equipo \"{cfg['team_name']}\" en Callbell")
+    await db.settings.update_one({"key": CALLBELL_CONFIG_KEY}, {"$set": {
+        "key": CALLBELL_CONFIG_KEY, "team_uuid": team["uuid"], "team_name": team["name"]}}, upsert=True)
+    return {**cfg, "team_uuid": team["uuid"], "team_name": team["name"]}
+
+
+async def _callbell_sync(full: bool = False) -> dict:
+    """Revisa los contactos del equipo (y etiqueta) configurados y deja como leads los que tienen el formulario.
+    La primera vez (o full) mira los últimos 30 días; después, solo quien escribió desde la revisión anterior."""
+    cfg = await _callbell_team(await _callbell_config())
+    if not cfg.get("team_uuid") and not cfg.get("tag"):
+        raise RuntimeError("Elige el equipo de Callbell en Configuración")
     counts: Dict[str, int] = {}
-    contacts = await callbell.list_tagged_contacts(cfg["tag"], cfg.get("team_uuid"))
-    known = {l["uuid"] async for l in db.callbell_leads.find({}, {"_id": 0, "uuid": 1})}
+    start = datetime.now(timezone.utc) - timedelta(days=CALLBELL_LOOKBACK_DAYS)
+    last = callbell.parse_iso(cfg.get("last_sync_at")) if not full and cfg.get("last_sync_team") == cfg.get("team_uuid") else None
+    if last and last > start:
+        start = last - timedelta(minutes=15)
+    contacts = await callbell.list_tagged_contacts(cfg["tag"], cfg.get("team_uuid"), start.strftime("%Y-%m-%dT%H:%M:%SZ"))
     for c in contacts:
         try:
-            # El chat de los leads que ya existen se vuelve a leer cuando llega un mensaje (webhook)
-            r = await _callbell_import_contact(c, cfg, read_chat=c.get("uuid") not in known)
+            existed = await db.callbell_leads.find_one({"uuid": c.get("uuid")}, {"_id": 1})
+            r = await _callbell_import_contact(c, cfg, notify=False)
+            if r == "pendiente" and not existed:
+                r = "nuevo"
         except Exception as e:  # un lead con problema no detiene a los demás
             logging.getLogger(__name__).warning(f"[callbell] lead {c.get('uuid')}: {e}")
             r = "error"
         counts[r] = counts.get(r, 0) + 1
-    result = {"revisados": len(contacts), "citas_nuevas": 0, "leads": counts.get("pendiente", 0), "pendientes": counts.get("pendiente", 0),
+    nuevos = counts.get("nuevo", 0)
+    if nuevos:
+        await create_alert("asesor", AlertType.CITA_CALLBELL, f"{nuevos} lead(s) nuevo(s) de Callbell",
+                           "Están en Agendamiento → Leads de Callbell → Por ingresar.")
+        await create_alert("coordinador", AlertType.CITA_CALLBELL, f"{nuevos} lead(s) nuevo(s) de Callbell",
+                           "Están en Agendamiento → Leads de Callbell → Por ingresar.")
+    result = {"revisados": len(contacts), "citas_nuevas": 0, "nuevos": nuevos,
+              "leads": counts.get("pendiente", 0) + nuevos, "pendientes": counts.get("pendiente", 0) + nuevos,
               "ya_importados": counts.get("ya_importado", 0), "errores": counts.get("error", 0)}
     await db.settings.update_one({"key": CALLBELL_CONFIG_KEY}, {"$set": {
-        "key": CALLBELL_CONFIG_KEY, "last_sync_at": datetime.now(timezone.utc).isoformat(), "last_sync_result": result}}, upsert=True)
+        "key": CALLBELL_CONFIG_KEY, "last_sync_at": datetime.now(timezone.utc).isoformat(), "last_sync_result": result,
+        "last_sync_team": cfg.get("team_uuid"), "last_sync_error": None}}, upsert=True)
     return result
 
 
@@ -3906,11 +3942,14 @@ async def callbell_webhook(request: Request):
     lead = await db.callbell_leads.find_one({"uuid": cuuid}, {"_id": 0, "status": 1})
     if lead and lead.get("status") in ("agendado", "descartado"):
         return {"ok": True, "result": "ya_importado"}
-    if event == "message_created" and not callbell.has_tag(payload.get("contact") or {}, (await _callbell_config())["tag"]):
-        return {"ok": True, "ignored": True}
     try:
+        cfg = await _callbell_team(await _callbell_config())
+        # Mensajes de contactos de otro equipo: se ignoran sin consultar Callbell
+        hint = payload if event.startswith("contact") else (payload.get("contact") or {})
+        if cfg.get("team_uuid") and isinstance(hint.get("team"), dict) and hint["team"].get("uuid") not in (None, cfg["team_uuid"]):
+            return {"ok": True, "ignored": True}
         contact = await callbell.get_contact(cuuid)
-        result = await _callbell_import_contact(contact or {}, await _callbell_config())
+        result = await _callbell_import_contact(contact or {}, cfg)
     except Exception as e:
         logging.getLogger(__name__).warning(f"[callbell] webhook {event} {cuuid}: {e}")
         raise HTTPException(status_code=502, detail="No se pudo leer el contacto en Callbell")
@@ -3927,6 +3966,11 @@ class CallbellConfigUpdate(BaseModel):
 @api_router.get("/integrations/callbell/status")
 async def callbell_status(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     cfg = await _callbell_config()
+    if callbell.api_token():
+        try:
+            cfg = await _callbell_team(cfg)
+        except Exception as e:
+            cfg = {**cfg, "team_error": str(e)}
     counts = {s: await db.callbell_leads.count_documents({"status": s}) for s in ("agendado", "pendiente", "descartado")}
     return {**cfg, "token_configured": bool(callbell.api_token()), "secret_configured": bool(callbell.webhook_secret()),
             "webhook_path": "/api/integrations/callbell/webhook", "events": sorted(CALLBELL_CONTACT_EVENTS),
@@ -3939,8 +3983,6 @@ async def callbell_status(current_user: dict = Depends(require_roles([UserRole.A
 async def callbell_update_config(data: CallbellConfigUpdate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     upd: Dict[str, Any] = {"key": CALLBELL_CONFIG_KEY, "updated_at": datetime.now(timezone.utc).isoformat()}
     if data.tag is not None:
-        if not data.tag.strip():
-            raise HTTPException(status_code=400, detail="Escribe la etiqueta de Callbell")
         upd["tag"] = data.tag.strip()[:80]
     if data.fields is not None:
         upd["fields"] = {k: str(v).strip()[:80] for k, v in data.fields.items() if k in callbell.DEFAULT_FIELDS and str(v).strip()}
@@ -3967,9 +4009,9 @@ async def callbell_field_names(current_user: dict = Depends(require_roles([UserR
     """Nombres de los campos personalizados que traen los leads con la etiqueta (para configurar cuál es cuál)."""
     if not callbell.api_token():
         raise HTTPException(status_code=400, detail="Falta CALLBELL_API_TOKEN en las variables del servidor")
-    cfg = await _callbell_config()
     try:
-        contacts = await callbell.list_tagged_contacts(cfg["tag"])
+        cfg = await _callbell_team(await _callbell_config())
+        contacts = await callbell.list_tagged_contacts(cfg["tag"], cfg.get("team_uuid"))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"No se pudo consultar Callbell: {e}")
     names: Dict[str, int] = {}
@@ -3981,13 +4023,22 @@ async def callbell_field_names(current_user: dict = Depends(require_roles([UserR
 
 
 @api_router.post("/integrations/callbell/sync")
-async def callbell_sync_now(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))):
+async def callbell_sync_now(full: bool = False, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))):
     if not callbell.api_token():
         raise HTTPException(status_code=400, detail="Falta CALLBELL_API_TOKEN en las variables del servidor")
-    try:
-        return await _callbell_sync()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"No se pudo sincronizar con Callbell: {e}")
+    if _callbell_sync_lock.locked():
+        return {"started": False, "running": True, "message": "Ya se está sincronizando con Callbell; los leads aparecen en unos minutos"}
+
+    async def run():
+        async with _callbell_sync_lock:
+            try:
+                result = await _callbell_sync(full=full)
+                logging.getLogger(__name__).info(f"[callbell] sincronización: {result}")
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"[callbell] sincronización: {e}")
+                await db.settings.update_one({"key": CALLBELL_CONFIG_KEY}, {"$set": {"last_sync_error": str(e)[:300]}}, upsert=True)
+    asyncio.create_task(run())
+    return {"started": True, "message": "Sincronizando con Callbell; los leads aparecen en unos minutos"}
 
 
 @api_router.get("/integrations/callbell/leads")
@@ -4049,11 +4100,11 @@ async def callbell_set_advisors(data: CallbellAdvisorEmails, current_user: dict 
 async def _callbell_poll_loop():
     await asyncio.sleep(30)
     while True:
-        if callbell.api_token():
+        if callbell.api_token() and not _callbell_sync_lock.locked():
             try:
-                result = await _callbell_sync()
-                if result["citas_nuevas"] or result["pendientes"]:
-                    logging.getLogger(__name__).info(f"[callbell] {result}")
+                async with _callbell_sync_lock:
+                    result = await _callbell_sync()
+                logging.getLogger(__name__).info(f"[callbell] revisión periódica: {result}")
             except Exception as e:
                 logging.getLogger(__name__).warning(f"[callbell] revisión periódica: {e}")
         await asyncio.sleep(CALLBELL_POLL_SECONDS)
