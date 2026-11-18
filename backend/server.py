@@ -399,7 +399,9 @@ class OrderResponse(BaseModel):
     vehicle_type: Optional[str] = None  # 'auto' | 'camioneta' (check-in)
     over_existing_film: Optional[bool] = None  # material encima de un vidrio con material o de otro color
     over_existing_film_note: Optional[str] = None
+    ppf_approval: Optional[Dict[str, Any]] = None  # aprobación del coordinador del corte de PPF
     extra_ppf_cuts: Optional[List[Dict[str, Any]]] = None  # cortes de PPF adicionales aprobados con PIN de coordinador
+    queue_ranks: Optional[Dict[str, int]] = None  # {técnico: posición} que definió el coordinador en Priorizar
     paid_at: Optional[str] = None
     # Entrega data
     delivery_photo_url: Optional[str] = None
@@ -660,6 +662,8 @@ def _compute_discount_amount(subtotal: float, dtype: str, dvalue: float) -> floa
 
 PERCENTAGE_SERVICE_KEYS = ("polarizado", "ultrasecure", "nanooptik", "huperoptik", "black_ceramic", "ultraoptik",
                            "ceramic_i3", "spectra", "edge", "micras")
+
+
 PART_NAMES = {"panoramico": "Panorámico", "vidrio_copiloto": "Vidrio Copiloto", "vidrio_piloto": "Vidrio Piloto",
               "vidrio_trasero_piloto": "Vidrio Trasero Piloto", "vidrio_trasero_copiloto": "Vidrio Trasero Copiloto",
               "vidrio_trasero": "Vidrio Trasero", "luneta": "Luneta / Trasero", "sunroof": "Sunroof", "custodias": "Custodias"}
@@ -1677,7 +1681,7 @@ async def update_user_sede(user_id: str, data: UserSedeUpdate, current_user: dic
 
 # ==================== ORDERS ENDPOINTS ====================
 @api_router.post("/orders", response_model=OrderResponse)
-async def create_order(order: OrderCreate, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR]))):
+async def create_order(order: OrderCreate, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))):
     """Step 1: Create new appointment - Status: AGENDADO"""
     # Validate confirmation PIN
     settings = await db.settings.find_one({"key": "booking_pin"}, {"_id": 0})
@@ -4236,6 +4240,7 @@ class ZoneCutLine(BaseModel):
     metros: float
     reutilizable: bool = False  # material reutilizable: no descuenta del rollo
     reusable_piece_id: Optional[str] = None  # pieza reutilizable registrada de la que sale el corte
+    layer: Optional[str] = None  # Ultrasecure: 'polarizado' = capa de polarizado que incluye el servicio
 
 
 CuttingCompleteRequest.model_rebuild()
@@ -4312,8 +4317,18 @@ def _order_ppf_plan(order: dict) -> Optional[dict]:
     return None
 
 
-async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]], cut_model: Optional[str] = None) -> Dict[str, Any]:
-    """Valida los cortes por zona (límites de materiales/rollos y stock) antes de descontar nada."""
+POLARIZADO_REFS = {it for g in CUTTING_REFERENCE_GROUPS if g.get("categoria") == "polarizado" for it in g["items"]}
+
+
+def _order_is_ultrasecure(order: dict) -> bool:
+    return any("micras" in (s.get("service") or "").lower() or "ultrasecure" in (s.get("description") or "").lower()
+               for s in order.get("services") or [] if isinstance(s, dict))
+
+
+async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]], cut_model: Optional[str] = None,
+                          ultrasecure: bool = False) -> Dict[str, Any]:
+    """Valida los cortes por zona (límites de materiales/rollos y stock) antes de descontar nada.
+    Ultrasecure: cada vidrio lleva la película de seguridad y además la capa de polarizado que incluye el servicio."""
     lines = []
     per_roll: Dict[str, float] = {}
     model = cut_model or "estandar"
@@ -4338,6 +4353,16 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]], cut_model: Op
         else:
             raise HTTPException(status_code=400, detail=f"Zona desconocida: {zone}")
         label = _zone_label(zone)
+        if ultrasecure and not _is_ppf_zone(zone):
+            max_mat, max_rolls = max_mat + 1, max_rolls + 1
+            pol = [ln for ln in zlines if ln.layer == "polarizado"]
+            if not pol:
+                raise HTTPException(status_code=400, detail=f"{label}: el Ultrasecure incluye polarizado; registra el polarizado que se coloca")
+            if len(pol) == len(zlines):
+                raise HTTPException(status_code=400, detail=f"{label}: registra también la película de seguridad")
+            bad = next((ln.material for ln in pol if (ln.material or "").strip() and ln.material.strip() not in POLARIZADO_REFS), None)
+            if bad:
+                raise HTTPException(status_code=400, detail=f"{label}: {bad} no es un polarizado")
         if len(zlines) > max_mat:
             raise HTTPException(status_code=400, detail=f"{label} admite máximo {max_mat} material(es)")
         rolls = {ln.inventory_item_id for ln in zlines if ln.inventory_item_id and not ln.reutilizable}
@@ -4356,7 +4381,7 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]], cut_model: Op
                 per_roll[ln.inventory_item_id] = round(per_roll.get(ln.inventory_item_id, 0) + ln.metros, 2)
             lines.append({"zone": zone, "zone_label": _zone_label(zone), "material": ln.material.strip(), "inventory_item_id": ln.inventory_item_id,
                           "metros": round(ln.metros, 2), "reutilizable": bool(ln.reutilizable),
-                          "reusable_piece_id": ln.reusable_piece_id})
+                          "reusable_piece_id": ln.reusable_piece_id, "layer": ln.layer})
     if not lines:
         raise HTTPException(status_code=400, detail="Registra al menos un corte")
     piece_ids = [ln["reusable_piece_id"] for ln in lines if ln["reusable_piece_id"]]
@@ -4385,7 +4410,7 @@ async def _plan_zone_cuts(zone_cuts: Dict[str, List[ZoneCutLine]], cut_model: Op
         ln["rollo_codigo"] = roll.get("codigo") if roll else None
         ln["rollo_nombre"] = roll.get("nombre") if roll else None
     summary = "; ".join(
-        f"{_zone_label(ln['zone'])}: {ln['metros']} m {ln['material']}"
+        f"{_zone_label(ln['zone'])}{' (polarizado)' if ln.get('layer') == 'polarizado' else ''}: {ln['metros']} m {ln['material']}"
         + ((f" (pieza reutilizable {ln['reusable_piece_codigo']})" if ln.get("reusable_piece_codigo") else " (reutilizable)")
            if ln["reutilizable"] else f" · {ln['rollo_codigo']}")
         for ln in lines
@@ -4399,6 +4424,7 @@ EXTRA_PPF_CUT_CLOSED = {OrderStatus.AGENDADO.value, OrderStatus.ENTREGADO.value,
 
 class ExtraPpfCutLine(BaseModel):
     part: str  # parte del vehículo (Capot, Bomper…) o "Full Body"
+    zone: Optional[str] = None  # corte principal: zona del corte (ppf_full o ppf:<parte>)
     material: str
     inventory_item_id: Optional[str] = None
     metros: float
@@ -4407,7 +4433,7 @@ class ExtraPpfCutLine(BaseModel):
 
 
 class ExtraPpfCutRequest(BaseModel):
-    pin: str  # PIN de coordinador
+    pin: Optional[str] = None  # PIN de coordinador (sin PIN el corte va a la cola de aprobación)
     reason: str  # por qué se necesita (pieza dañada, parte adicional…)
     lines: List[ExtraPpfCutLine]
     confirm_extra_cut: bool = False
@@ -4425,26 +4451,10 @@ async def list_ppf_in_service(current_user: dict = Depends(require_roles([UserRo
     return [_ppf_order_summary(o) for o in orders if _order_ppf_plan(o)]
 
 
-@api_router.post("/cutting/{order_id}/extra-ppf-cut")
-async def add_extra_ppf_cut(order_id: str, data: ExtraPpfCutRequest,
-                            current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
-    """Registra un corte de PPF adicional en cualquier momento del servicio, aprobado con el PIN de coordinador.
-    Descuenta los rollos (con las mismas alertas de 5 m / 3 m / agotado y el corte extradimensional)."""
-    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
-    if not order:
-        raise HTTPException(status_code=404, detail="Orden no encontrada")
-    if order.get("status") in EXTRA_PPF_CUT_CLOSED:
-        raise HTTPException(status_code=400, detail="Solo se agregan cortes a vehículos en servicio (ingresados y sin entregar)")
-    if not _order_ppf_plan(order):
-        raise HTTPException(status_code=400, detail="Esta orden no tiene servicio de PPF")
-    reason = (data.reason or "").strip()
-    if len(reason) < 3:
-        raise HTTPException(status_code=400, detail="Escribe el motivo del corte adicional")
-    if not data.lines:
-        raise HTTPException(status_code=400, detail="Registra al menos un corte")
-
+async def _validate_ppf_lines(lines_in: List["ExtraPpfCutLine"], confirm_extra_cut: bool):
+    """Valida las líneas de un corte de PPF (parte, material, metros, rollo o pieza reutilizable) y el stock."""
     per_roll, lines = {}, []
-    for ln in data.lines:
+    for ln in lines_in:
         part, material = (ln.part or "").strip(), (ln.material or "").strip()
         if not part or not material:
             raise HTTPException(status_code=400, detail="Cada corte necesita la parte y el material")
@@ -4455,9 +4465,11 @@ async def add_extra_ppf_cut(order_id: str, data: ExtraPpfCutRequest,
             if not ln.inventory_item_id:
                 raise HTTPException(status_code=400, detail=f"Elige el rollo de {part} o márcalo como reutilizable")
             per_roll[ln.inventory_item_id] = round(per_roll.get(ln.inventory_item_id, 0) + ln.metros, 2)
-        lines.append({"part": part, "material": material, "metros": round(ln.metros, 2), "reutilizable": reusable,
+        lines.append({"part": part, "zone": ln.zone, "material": material, "metros": round(ln.metros, 2), "reutilizable": reusable,
                       "inventory_item_id": None if reusable else ln.inventory_item_id,
                       "reusable_piece_id": ln.reusable_piece_id})
+    if not lines:
+        raise HTTPException(status_code=400, detail="Registra al menos un corte")
     piece_ids = [ln["reusable_piece_id"] for ln in lines if ln["reusable_piece_id"]]
     pieces = {p["id"]: p for p in await db.reusable_pieces.find(
         {"id": {"$in": piece_ids}, "status": "disponible"}, {"_id": 0}).to_list(50)} if piece_ids else {}
@@ -4470,21 +4482,24 @@ async def add_extra_ppf_cut(order_id: str, data: ExtraPpfCutRequest,
             raise HTTPException(status_code=400, detail="Rollo no válido")
         if roll.get("en_stock_corte") is False:
             raise HTTPException(status_code=400, detail=f"El rollo {roll.get('codigo')} está en bodega: muévelo al stock de corte")
-        if _check_roll_cut(roll, meters) and not data.confirm_extra_cut:
+        if _check_roll_cut(roll, meters) and not confirm_extra_cut:
             raise HTTPException(status_code=400, detail=(
                 f"El rollo {roll.get('codigo')} solo tiene {roll.get('metros_restantes') or 0} m: confirma el corte "
                 "extradimensional (el rollo quedará en negativo y se dará de baja)"))
         rolls[inv_id] = roll
+    return lines, per_roll, rolls, pieces
 
-    # Todo válido: ahora sí se pide la aprobación del coordinador
-    await _verify_coordinator_pin(data.pin)
 
+async def _execute_extra_ppf_cut(order: dict, plan, reason: str, user: dict, approved_with: str,
+                                 approved_by_name: Optional[str] = None) -> dict:
+    """Descuenta los rollos de un corte de PPF adicional ya aprobado y lo registra en la orden."""
+    lines, per_roll, rolls, pieces = plan
+    order_id = order["id"]
     now = datetime.now(timezone.utc).isoformat()
-    cut_id = str(uuid.uuid4())
     results = []
     for inv_id, meters in per_roll.items():
         roll = rolls[inv_id]
-        res = await _consume_roll(roll, meters, current_user, {
+        res = await _consume_roll(roll, meters, user, {
             "type": "deduct_extra_ppf_cut", "order_id": order_id,
             "reason": f"Corte PPF adicional - Orden {order.get('order_code', '')}: {reason}"}, order)
         results.append({"item_id": inv_id, "rollo_codigo": roll.get("codigo"), "rollo_nombre": roll.get("nombre"),
@@ -4498,20 +4513,158 @@ async def add_extra_ppf_cut(order_id: str, data: ExtraPpfCutRequest,
             p = pieces[ln["reusable_piece_id"]]
             ln["reusable_piece_codigo"] = p["codigo"]
             await db.reusable_pieces.update_one({"id": p["id"], "status": "disponible"}, {"$set": {
-                "status": "usada", "used_at": now, "used_by_name": current_user.get("name"), "used_order_id": order_id,
+                "status": "usada", "used_at": now, "used_by_name": user.get("name"), "used_order_id": order_id,
                 "used_order_code": order.get("order_code"), "used_plate": order.get("plate"),
                 "used_zone": f"PPF adicional: {ln['part']}", "used_metros": ln["metros"]}})
-    entry = {"id": cut_id, "lines": lines, "reason": reason, "total_metros": round(sum(l["metros"] for l in lines), 2),
-             "order_status": order.get("status"), "approved_with": "pin_coordinador",
-             "created_by_id": current_user["id"], "created_by_name": current_user.get("name"), "created_at": now}
+    entry = {"id": str(uuid.uuid4()), "lines": lines, "reason": reason, "total_metros": round(sum(l["metros"] for l in lines), 2),
+             "order_status": order.get("status"), "approved_with": approved_with, "approved_by_name": approved_by_name,
+             "created_by_id": user["id"], "created_by_name": user.get("name"), "created_at": now}
     await db.orders.update_one({"id": order_id}, {"$push": {"extra_ppf_cuts": entry}, "$set": {"updated_at": now}})
     await log_order_history(order_id, "CORTE_PPF_ADICIONAL", order.get("status"), order.get("status"),
-                            current_user["id"], current_user.get("name"),
-                            {"reason": reason, "lines": [f"{l['part']}: {l['metros']} m {l['material']}" for l in lines]})
-    summary = "; ".join(f"{l['part']} {l['metros']} m" for l in lines)
+                            user["id"], user.get("name"),
+                            {"reason": reason, "approved_with": approved_with,
+                             "lines": [f"{l['part']}: {l['metros']} m {l['material']}" for l in lines]})
+    return {"cut": entry, "inventory_deduction": results}
+
+
+@api_router.post("/cutting/{order_id}/extra-ppf-cut")
+async def add_extra_ppf_cut(order_id: str, data: ExtraPpfCutRequest,
+                            current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    """Corte de PPF adicional en cualquier momento del servicio. Con el PIN de coordinador se aprueba y descuenta
+    al momento; sin PIN queda en la cola de aprobación del coordinador."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") in EXTRA_PPF_CUT_CLOSED:
+        raise HTTPException(status_code=400, detail="Solo se agregan cortes a vehículos en servicio (ingresados y sin entregar)")
+    if not _order_ppf_plan(order):
+        raise HTTPException(status_code=400, detail="Esta orden no tiene servicio de PPF")
+    reason = (data.reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="Escribe el motivo del corte adicional")
+    plan = await _validate_ppf_lines(data.lines, data.confirm_extra_cut)
+    if not (data.pin or "").strip():
+        req = await _create_ppf_request(order, "adicional", plan[0], reason, data.confirm_extra_cut, current_user)
+        return {"message": "Corte adicional enviado a aprobación del coordinador", "request": req, "queued": True}
+    await _verify_coordinator_pin(data.pin)
+    res = await _execute_extra_ppf_cut(order, plan, reason, current_user, "pin_coordinador")
+    summary = "; ".join(f"{l['part']} {l['metros']} m" for l in plan[0])
     await create_alert("coordinador", AlertType.CORTE_PPF_ADICIONAL, f"Corte PPF adicional · {order.get('plate')}",
                        f"{current_user.get('name')} registró con PIN de coordinador: {summary}. Motivo: {reason}", order_id)
-    return {"message": "Corte adicional de PPF registrado", "cut": entry, "inventory_deduction": results}
+    return {"message": "Corte adicional de PPF registrado", **res}
+
+
+# ==================== COLA DE APROBACIÓN DE CORTES PPF ====================
+# Todo corte de PPF lo aprueba un coordinador antes de cortar: el principal (Completar corte) y los adicionales.
+class PpfApprovalRequest(BaseModel):
+    lines: List["ExtraPpfCutLine"]
+    confirm_extra_cut: bool = False
+
+
+class PpfReview(BaseModel):
+    action: str  # 'aprobar' | 'rechazar'
+    note: Optional[str] = None
+
+
+async def _create_ppf_request(order: dict, kind: str, lines: List[dict], reason: Optional[str], confirm_extra_cut: bool,
+                              user: dict) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    if kind == "principal":
+        # Un solo pedido pendiente por orden: si corte lo vuelve a enviar, se reemplaza
+        await db.ppf_cut_requests.delete_many({"order_id": order["id"], "kind": "principal", "status": "pendiente"})
+    req = {"id": str(uuid.uuid4()), "order_id": order["id"], "order_code": order.get("order_code"), "plate": order.get("plate"),
+           "brand": order.get("brand"), "model": order.get("model"), "client_name": order.get("client_name"),
+           "ppf_plan": _order_ppf_plan(order), "kind": kind, "lines": lines, "reason": reason,
+           "total_metros": round(sum(l["metros"] for l in lines), 2), "confirm_extra_cut": bool(confirm_extra_cut),
+           "status": "pendiente", "requested_by_id": user["id"], "requested_by_name": user.get("name"), "created_at": now}
+    await db.ppf_cut_requests.insert_one(dict(req))
+    if kind == "principal":
+        await db.orders.update_one({"id": order["id"]}, {"$set": {"ppf_approval": {
+            "status": "pendiente", "request_id": req["id"], "requested_by_name": user.get("name"), "requested_at": now}}})
+    summary = "; ".join(f"{l['part']} {l['metros']} m {l['material']}" for l in lines)
+    await create_alert("coordinador", AlertType.CORTE_PPF_ADICIONAL,
+                       f"Corte PPF por aprobar · {order.get('plate')}" + (" (adicional)" if kind == "adicional" else ""),
+                       f"{user.get('name')} pide aprobar: {summary}" + (f". Motivo: {reason}" if reason else "")
+                       + ". Apruébalo en Aprobación de cortes.", order["id"])
+    return req
+
+
+@api_router.post("/cutting/{order_id}/ppf-approval")
+async def request_ppf_approval(order_id: str, data: PpfApprovalRequest,
+                               current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    """Corte envía el corte principal de PPF (material, rollo y metros de cada parte) a aprobación del coordinador."""
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.get("status") != OrderStatus.EN_CORTE.value or order.get("cutting_status") == "completado":
+        raise HTTPException(status_code=400, detail="El vehículo no está pendiente de corte")
+    if not _order_ppf_plan(order):
+        raise HTTPException(status_code=400, detail="Esta orden no tiene servicio de PPF")
+    if (order.get("ppf_approval") or {}).get("status") == "aprobado":
+        raise HTTPException(status_code=400, detail="El corte de PPF ya está aprobado")
+    lines, *_ = await _validate_ppf_lines(data.lines, data.confirm_extra_cut)
+    req = await _create_ppf_request(order, "principal", lines, None, data.confirm_extra_cut, current_user)
+    return {"message": "Corte de PPF enviado a aprobación del coordinador", "request": req,
+            "ppf_approval": {"status": "pendiente", "request_id": req["id"], "requested_by_name": current_user.get("name")}}
+
+
+@api_router.get("/cutting/ppf-requests")
+async def list_ppf_requests(status: str = "pendiente",
+                            current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.CORTE, UserRole.COORDINADOR]))):
+    query: Dict[str, Any] = {} if status == "todas" else {"status": status}
+    return await db.ppf_cut_requests.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api_router.put("/cutting/ppf-requests/{request_id}/review")
+async def review_ppf_request(request_id: str, data: PpfReview,
+                             current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """El coordinador aprueba o rechaza un corte de PPF. Un adicional aprobado se descuenta del inventario al momento;
+    el principal queda aprobado para que corte lo confirme en Completar corte."""
+    req = await db.ppf_cut_requests.find_one({"id": request_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if req["status"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya fue revisada")
+    if data.action not in ("aprobar", "rechazar"):
+        raise HTTPException(status_code=400, detail="Acción inválida")
+    note = (data.note or "").strip() or None
+    if data.action == "rechazar" and not note:
+        raise HTTPException(status_code=400, detail="Escribe por qué se rechaza")
+    order = await db.orders.find_one({"id": req["order_id"]}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    now = datetime.now(timezone.utc).isoformat()
+    review = {"reviewed_by_id": current_user["id"], "reviewed_by_name": current_user.get("name"), "reviewed_at": now,
+              "review_note": note}
+    result: Dict[str, Any] = {}
+    if data.action == "rechazar":
+        new_status = "rechazado"
+    elif req["kind"] == "adicional":
+        if order.get("status") in EXTRA_PPF_CUT_CLOSED:
+            raise HTTPException(status_code=400, detail="El vehículo ya no está en servicio")
+        line_models = [ExtraPpfCutLine(**{k: l.get(k) for k in ("part", "zone", "material", "inventory_item_id", "metros",
+                                                                "reutilizable", "reusable_piece_id")}) for l in req["lines"]]
+        plan = await _validate_ppf_lines(line_models, req.get("confirm_extra_cut"))
+        requester = await db.users.find_one({"id": req["requested_by_id"]}, {"_id": 0}) or current_user
+        result = await _execute_extra_ppf_cut(order, plan, req.get("reason") or "", requester, "cola_coordinador",
+                                              current_user.get("name"))
+        new_status = "ejecutado"
+    else:
+        new_status = "aprobado"
+    await db.ppf_cut_requests.update_one({"id": request_id}, {"$set": {"status": new_status, **review}})
+    if req["kind"] == "principal":
+        await db.orders.update_one({"id": order["id"]}, {"$set": {"ppf_approval": {
+            "status": "aprobado" if new_status == "aprobado" else "rechazado", "request_id": request_id,
+            "lines": req["lines"] if new_status == "aprobado" else None,
+            "requested_by_name": req.get("requested_by_name"), **review}}})
+    verdict = {"aprobado": "aprobado: ya puedes cortarlo", "ejecutado": "aprobado y descontado del inventario",
+               "rechazado": f"rechazado: {note}"}[new_status]
+    await db.alerts.insert_one({"id": str(uuid.uuid4()), "recipient_id": req["requested_by_id"],
+                                "alert_type": AlertType.CORTE_PPF_ADICIONAL.value,
+                                "title": f"Corte PPF {'adicional ' if req['kind'] == 'adicional' else ''}{req.get('plate')} {new_status}",
+                                "message": f"{current_user.get('name')} lo revisó: {verdict}.", "order_id": order["id"],
+                                "read": False, "created_at": now})
+    return {"message": f"Corte de PPF {new_status}", "status": new_status, **result}
 
 
 class CuttingDraft(BaseModel):
@@ -4580,9 +4733,12 @@ async def complete_cutting(
             raise HTTPException(status_code=400, detail="Hay cortes de PPF que no corresponden a lo que compró el cliente")
     elif ppf_zones:
         raise HTTPException(status_code=400, detail="Esta orden no tiene servicio PPF")
+    # Todo corte de PPF lo aprueba un coordinador antes de cortar
+    if ppf_plan and (order.get("ppf_approval") or {}).get("status") != "aprobado":
+        raise HTTPException(status_code=400, detail="El corte de PPF aún no está aprobado por un coordinador: envíalo a aprobación")
 
     # Resolve fields with body taking precedence over query params
-    zone_plan = await _plan_zone_cuts(p.zone_cuts, p.cut_model) if p.zone_cuts else None
+    zone_plan = await _plan_zone_cuts(p.zone_cuts, p.cut_model, _order_is_ultrasecure(order)) if p.zone_cuts else None
     final_measurements = p.measurements or measurements or (zone_plan["summary"] if zone_plan else None)
     final_notes = p.notes or notes
     part_measurements = p.part_measurements or {}
@@ -6643,6 +6799,94 @@ def _tech_service_names(o: dict) -> List[str]:
     if installed:
         return [x.get("name") for x in installed if x.get("name")]
     return [_service_label(s) for s in (o.get("services") or [])]
+
+
+# ==================== PRIORIZAR: ORDEN DE LA COLA DE CADA TÉCNICO ====================
+# Por defecto cada técnico atiende por orden de llegada; el coordinador puede fijar otro orden (queue_ranks).
+QUEUE_STATUSES = [OrderStatus.EN_CORTE.value, OrderStatus.ASIGNADO.value, OrderStatus.EN_PROCESO.value]
+
+
+def _arrival(o: dict) -> str:
+    return o.get("ingreso_at") or o.get("created_at") or ""
+
+
+def _queue_key(o: dict, tech_id: str):
+    rank = (o.get("queue_ranks") or {}).get(tech_id)
+    return (0 if rank is not None else 1, rank if rank is not None else 0, _arrival(o))
+
+
+def _tech_query(tech_id: str) -> dict:
+    return {"$or": [{"assigned_technician_id": tech_id}, {"assigned_technician_2_id": tech_id},
+                    {"assigned_technicians.id": tech_id}]}
+
+
+@api_router.get("/coordinator/queues")
+async def coordinator_queues(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Cola de cada técnico: sus vehículos en Corte, Por instalar y En instalación, en el orden en que los atiende."""
+    techs = await db.users.find({"role": UserRole.TECNICO.value, "is_active": {"$ne": False}},
+                                {"_id": 0, "id": 1, "name": 1}).sort("name", 1).to_list(300)
+    orders = await db.orders.find({"status": {"$in": QUEUE_STATUSES}}, {
+        "_id": 0, "id": 1, "order_code": 1, "plate": 1, "brand": 1, "model": 1, "client_name": 1, "status": 1,
+        "cutting_status": 1, "tech_measurements.confirmed_at": 1, "ingreso_at": 1, "created_at": 1, "date": 1,
+        "scheduled_time": 1, "services": 1, "is_priority": 1, "is_test": 1, "queue_ranks": 1, "queue_updated_by_name": 1,
+        "assigned_technician_id": 1, "assigned_technician_2_id": 1, "assigned_technicians": 1, "profile_photo_url": 1,
+    }).to_list(2000)
+    out = []
+    for t in techs:
+        mine = sorted([o for o in orders if t["id"] in _order_tech_ids(o)], key=lambda o: _queue_key(o, t["id"]))
+        items = [{
+            "id": o["id"], "order_code": o.get("order_code"), "plate": o.get("plate"), "brand": o.get("brand"),
+            "model": o.get("model"), "client_name": o.get("client_name"), "status": o["status"],
+            "cutting_status": o.get("cutting_status"), "measured": bool((o.get("tech_measurements") or {}).get("confirmed_at")),
+            "arrival": _arrival(o), "date": o.get("date"), "scheduled_time": o.get("scheduled_time"),
+            "services": [s.get("description") or s.get("service") for s in o.get("services") or [] if isinstance(s, dict)],
+            "is_priority": bool(o.get("is_priority")), "is_test": bool(o.get("is_test")),
+            "rank": (o.get("queue_ranks") or {}).get(t["id"]),
+            "partners": [x.get("name") for x in _order_techs(o) if x.get("id") != t["id"] and x.get("name")],
+        } for o in mine]
+        out.append({"id": t["id"], "name": t["name"], "mode": "prioridad" if any(i["rank"] is not None for i in items) else "llegada",
+                    "orders": items})
+    return out
+
+
+class QueueOrder(BaseModel):
+    order_ids: List[str]
+
+
+@api_router.put("/coordinator/queues/{tech_id}")
+async def set_technician_queue(tech_id: str, data: QueueOrder,
+                               current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Fija el orden en que el técnico atiende sus vehículos (la posición 1 va primero)."""
+    tech = await db.users.find_one({"id": tech_id, "role": UserRole.TECNICO.value}, {"_id": 0, "id": 1, "name": 1})
+    if not tech:
+        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+    ids = list(dict.fromkeys(i for i in data.order_ids if i))
+    active = {o["id"] async for o in db.orders.find({"status": {"$in": QUEUE_STATUSES}, **_tech_query(tech_id)}, {"_id": 0, "id": 1})}
+    bad = [i for i in ids if i not in active]
+    if bad:
+        raise HTTPException(status_code=400, detail="Hay vehículos que ya no están en la cola de este técnico. Actualiza y vuelve a intentar")
+    now = datetime.now(timezone.utc).isoformat()
+    for pos, oid in enumerate(ids, 1):
+        await db.orders.update_one({"id": oid}, {"$set": {f"queue_ranks.{tech_id}": pos, "queue_updated_at": now,
+                                                          "queue_updated_by_name": current_user.get("name")}})
+    rest = list(active - set(ids))
+    if rest:
+        await db.orders.update_many({"id": {"$in": rest}}, {"$unset": {f"queue_ranks.{tech_id}": ""}})
+    await db.alerts.insert_one({"id": str(uuid.uuid4()), "recipient_id": tech_id, "alert_type": AlertType.SERVICIO_ASIGNADO.value,
+                                "title": "Cambió el orden de tus servicios",
+                                "message": f"{current_user.get('name')} priorizó tu cola. Revisa Mis Servicios: atiende primero el #1.",
+                                "read": False, "created_at": now})
+    return {"message": f"Cola de {tech['name']} priorizada", "mode": "prioridad"}
+
+
+@api_router.delete("/coordinator/queues/{tech_id}")
+async def reset_technician_queue(tech_id: str, current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.COORDINADOR]))):
+    """Vuelve la cola del técnico al orden de llegada."""
+    tech = await db.users.find_one({"id": tech_id, "role": UserRole.TECNICO.value}, {"_id": 0, "name": 1})
+    if not tech:
+        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+    await db.orders.update_many({f"queue_ranks.{tech_id}": {"$exists": True}}, {"$unset": {f"queue_ranks.{tech_id}": ""}})
+    return {"message": f"La cola de {tech['name']} va por orden de llegada", "mode": "llegada"}
 
 
 @api_router.get("/technician/history")

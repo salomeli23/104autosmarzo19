@@ -328,4 +328,4 @@ export const CHECKIN_NOTICES = [
 ];
 
 // Página de inicio de cada rol (el asesor solo trabaja en agendamiento, check-in y sus comisiones)
-export const homeFor = (role) => ({ asesor: '/appointments', gerencia: '/pagos/comprobantes', tecnico: '/technician' }[role] || '/dashboard');
+export const homeFor = (role) => ({ asesor: '/appointments', gerencia: '/pagos/comprobantes', tecnico: '/technician', coordinador: '/auto-asignar' }[role] || '/dashboard');

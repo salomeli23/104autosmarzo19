@@ -50,6 +50,8 @@ import {
     FileSpreadsheet,
     FileCheck2,
     BellRing,
+    ListOrdered,
+    FilePen,
 } from 'lucide-react';
 
 const LOGO_URL = "https://customer-assets-v7afamib.emergentagent.net/job_b82a71c1-21ff-43aa-b9e3-58e664ba5004/artifacts/bi9tgemi_Recurso%203%402x.png";
@@ -88,7 +90,20 @@ const navItems = [
     { path: '/postventa', label: 'Postventa / Garantías', icon: ShieldCheck, roles: ['admin', 'coordinador'] },
     { path: '/accesorios', label: 'Accesorios', icon: PackageCheck, roles: ['admin', 'accesorios', 'coordinador'] },
     { path: '/inventory', label: 'Inventario', icon: Boxes, roles: ['admin', 'coordinador', 'corte'] },
+    { path: '/aprobacion-cortes', label: 'Aprobación de cortes', icon: ShieldCheck, roles: ['admin'] },
+    { path: '/priorizar', label: 'Priorizar', icon: ListOrdered, roles: ['admin'] },
 ];
+
+// El coordinador solo ve su flujo de trabajo, en orden: cada opción es un paso del proceso
+const COORDINATOR_FLOW = [
+    { path: '/appointments', label: 'Agendamiento', short: 'Agenda', icon: Calendar },
+    { path: '/auto-asignar', label: 'Autos por asignar', short: 'Asignar', icon: UserPlus },
+    { path: '/aprobacion-cortes', label: 'Aprobación de cortes', short: 'Aprobar', icon: ShieldCheck },
+    { path: '/priorizar', label: 'Priorizar', short: 'Priorizar', icon: ListOrdered },
+    { path: '/service-orders', label: 'Actualizar órdenes', short: 'Órdenes', icon: FilePen },
+    { path: '/autos-salida', label: 'Listos para entrega', short: 'Entrega', icon: LogOutIcon },
+    { path: '/reportes', label: 'Reportes', short: 'Reportes', icon: FileSpreadsheet },
+].map((item, i, all) => ({ ...item, step: i + 1, last: i === all.length - 1, roles: ['coordinador'] }));
 
 export const Layout = ({ children }) => {
     const { user, logout } = useAuth();
@@ -117,7 +132,7 @@ export const Layout = ({ children }) => {
     }, [user]);
 
     // Submenús: los hijos van debajo del padre; si el rol solo ve el hijo, el padre queda como título sin enlace
-    const filteredNavItems = navItems.flatMap(item => {
+    const filteredNavItems = user?.role === 'coordinador' ? COORDINATOR_FLOW : navItems.flatMap(item => {
         const kids = (item.children || []).filter(c => c.roles.includes(user?.role)).map(c => ({ ...c, sub: true }));
         if (item.roles.includes(user?.role)) return [item, ...kids];
         return kids.length ? [{ ...item, header: true }, ...kids] : [];
@@ -131,6 +146,28 @@ export const Layout = ({ children }) => {
     const NavLink = ({ item, mobile = false }) => {
         const isActive = location.pathname === item.path;
         const Icon = item.icon;
+        if (item.step) {
+            // Paso del flujo del coordinador: número + línea que lo une con el siguiente
+            return (
+                <Link
+                    to={item.path}
+                    onClick={() => mobile && setMobileOpen(false)}
+                    className={cn(
+                        "relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all touch-target",
+                        isActive ? "bg-primary text-primary-foreground font-semibold" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                    data-testid={`nav-${item.path.slice(1)}`}
+                >
+                    {!item.last && <span className="absolute left-[1.55rem] top-[2.4rem] h-[calc(100%-1.6rem)] w-0.5 bg-primary/30" aria-hidden />}
+                    <span className={cn(
+                        "relative z-10 w-7 h-7 shrink-0 rounded-full border-2 flex items-center justify-center text-xs font-bold",
+                        isActive ? "border-primary-foreground bg-primary-foreground text-primary" : "border-primary/50 bg-card text-primary"
+                    )}>{item.step}</span>
+                    <span className="leading-tight">{item.label}</span>
+                    {isActive ? <ChevronRight className="w-4 h-4 ml-auto shrink-0" /> : <Icon className="w-4 h-4 ml-auto shrink-0 opacity-60" />}
+                </Link>
+            );
+        }
         if (item.header) {
             return (
                 <div className="flex items-center gap-3 px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -175,6 +212,7 @@ export const Layout = ({ children }) => {
 
                     {/* Navigation */}
                     <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
+                        {user?.role === 'coordinador' && <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Flujo del coordinador</p>}
                         {filteredNavItems.map(item => (
                             <NavLink key={item.path} item={item} />
                         ))}

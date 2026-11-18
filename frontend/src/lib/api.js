@@ -159,6 +159,9 @@ export const cuttingAPI = {
     removeTestOrders: () => api.post('/cutting/test-orders/remove'),
     ppfInService: () => api.get('/cutting/ppf-in-service'),
     extraPpfCut: (orderId, body) => api.post(`/cutting/${orderId}/extra-ppf-cut`, body),
+    requestPpfApproval: (orderId, body) => api.post(`/cutting/${orderId}/ppf-approval`, body),
+    ppfRequests: (status = 'pendiente') => api.get('/cutting/ppf-requests', { params: { status } }),
+    reviewPpfRequest: (id, body) => api.put(`/cutting/ppf-requests/${id}/review`, body),
     // Corte confirma que entregó el material al técnico → Por Instalar
     deliver: (orderId) => api.put(`/cutting/${orderId}/deliver`),
     reusablePieces: (status = 'disponible') => api.get('/cutting/reusable-pieces', { params: { status } }),
@@ -252,6 +255,13 @@ export const inspectionsAPI = {
     },
     getVideo: (orderId) => api.get(`/orders/${orderId}/inspection-video`, { responseType: 'blob', timeout: 120000 }),
     getInspectedVehicles: () => api.get('/inspected-vehicles'),
+};
+
+// Priorizar: orden de la cola de cada técnico (coordinador)
+export const coordinatorQueuesAPI = {
+    list: () => api.get('/coordinator/queues'),
+    save: (techId, orderIds) => api.put(`/coordinator/queues/${techId}`, { order_ids: orderIds }),
+    reset: (techId) => api.delete(`/coordinator/queues/${techId}`),
 };
 
 export const technicianChargesAPI = {

@@ -191,6 +191,14 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     }, [cutModel, measuredZones, hasLaterals, winSel]);
     const ppfPlan = order?.ppf_plan || null;
     const ppfKeys = useMemo(() => ppfKeysFor(ppfPlan), [ppfPlan]);
+    // Ultrasecure incluye polarizado: cada vidrio lleva la película de seguridad y la capa de polarizado
+    const ultraSvc = useMemo(() => (order?.services || []).find(s => s && typeof s === 'object'
+        && (/micras/.test(s.service || '') || /ultrasecure/i.test(s.description || ''))), [order]);
+    const isUltra = !!ultraSvc;
+    const zoneLines = (cm = '') => (isUltra ? [newLine(cm), { ...newLine(cm), layer: 'polarizado' }] : [newLine(cm)]);
+    // Aprobación del coordinador del corte de PPF (sin aprobación no se puede cortar)
+    const [ppfApproval, setPpfApproval] = useState(null);
+    const [sendingPpf, setSendingPpf] = useState(false);
     const cutKeys = [...zones.map(z => z.id), ...ppfKeys];
 
     useEffect(() => {
@@ -198,16 +206,23 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         const init = {};
         zonesInMeasurements(tm).forEach(z => {
             const t = tm[z.id];
-            if (t && t.aplica !== false) init[z.id] = [newLine(t.medida_cm || '')];
+            if (t && t.aplica !== false) init[z.id] = zoneLines(t.medida_cm || '');
         });
-        ppfKeysFor(order.ppf_plan).forEach(k => { init[k] = [newLine()]; });
+        // PPF ya aprobado: se cargan las líneas que aprobó el coordinador
+        const approvedPpf = order.ppf_approval?.status === 'aprobado' ? order.ppf_approval.lines || [] : [];
+        ppfKeysFor(order.ppf_plan).forEach(k => {
+            const ap = approvedPpf.find(l => l.zone === k);
+            init[k] = [ap ? { ...newLine(Math.round((ap.metros || 0) * 100)), material: ap.material, inventory_item_id: ap.inventory_item_id || '',
+                reusable_piece_id: ap.reusable_piece_id || '' } : newLine()];
+        });
+        setPpfApproval(order.ppf_approval || null);
         // Corte arranca con el modelo de corte que eligió el técnico al colocar las medidas
         const techModel = ['lados', 'ventanas'].includes(tm.cut_model) ? tm.cut_model : 'estandar';
         const techSel = {};
         if (techModel === 'ventanas') {
             (tm.ventanas || []).forEach((c, i) => {
                 techSel[`w${i + 1}`] = [...(c.windows || [])];
-                init[`w${i + 1}`] = [newLine(c.medida_cm || '')];
+                init[`w${i + 1}`] = zoneLines(c.medida_cm || '');
             });
         }
         setCuts(init);
@@ -304,18 +319,18 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
         let next = {};
         let sel = {};
         if (model === 'estandar') {
-            measuredZones.forEach(z => { next[z.id] = [newLine(tm[z.id]?.medida_cm || '')]; });
+            measuredZones.forEach(z => { next[z.id] = zoneLines(tm[z.id]?.medida_cm || ''); });
         } else if (model === 'lados') {
             measuredZones.filter(z => ['panoramico', 'trasero', 'sunroof'].includes(z.id))
-                .forEach(z => { next[z.id] = [newLine(tm[z.id]?.medida_cm || '')]; });
-            if (hasLaterals) SIDE_ZONES.forEach(z => { next[z.id] = [newLine(tm[z.id]?.medida_cm || '')]; });
+                .forEach(z => { next[z.id] = zoneLines(tm[z.id]?.medida_cm || ''); });
+            if (hasLaterals) SIDE_ZONES.forEach(z => { next[z.id] = zoneLines(tm[z.id]?.medida_cm || ''); });
         } else {
             const tv = tm.ventanas || [];
             if (tv.length) {
-                tv.forEach((c, i) => { sel[`w${i + 1}`] = [...(c.windows || [])]; next[`w${i + 1}`] = [newLine(c.medida_cm || '')]; });
+                tv.forEach((c, i) => { sel[`w${i + 1}`] = [...(c.windows || [])]; next[`w${i + 1}`] = zoneLines(c.medida_cm || ''); });
             } else {
                 sel = { w1: [] };
-                next = { w1: [newLine()] };
+                next = { w1: zoneLines() };
             }
         }
         setCuts({ ...next, ...keep });
@@ -326,7 +341,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     const addWinCut = () => {
         const n = Math.max(0, ...Object.keys(winSel).map(k => parseInt(k.slice(1), 10))) + 1;
         setWinSel(prev => ({ ...prev, [`w${n}`]: [] }));
-        setCuts(prev => ({ ...prev, [`w${n}`]: [newLine()] }));
+        setCuts(prev => ({ ...prev, [`w${n}`]: zoneLines() }));
     };
     const removeWinCut = (k) => {
         setWinSel(prev => { const c = { ...prev }; delete c[k]; return c; });
@@ -347,12 +362,42 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
 
     const zoneRollError = (zone) => {
         if (!limitFor(zone)) return null;
-        const [, maxRolls] = limitFor(zone);
+        const [, maxRolls] = zoneLimit(zone);
         const used = new Set((cuts[zone] || []).map(l => l.inventory_item_id).filter(Boolean));
         return used.size > maxRolls ? `Máximo ${maxRolls} rollo(s) en esta zona` : null;
     };
 
+    const zoneLimit = (zone) => {
+        const [m, r] = limitFor(zone);
+        return isUltra && !isPpfKey(zone) ? [m + 1, r + 1] : [m, r];
+    };
+    const ppfLinesReady = ppfKeys.every(k => (cuts[k] || []).every(l => l.material && parseFloat(l.cm) > 0));
+    const sendPpfForApproval = async () => {
+        if (!ppfLinesReady) { toast.error('Completa material y metros de cada parte de PPF antes de enviarlo'); return; }
+        setSendingPpf(true);
+        try {
+            const lines = ppfKeys.flatMap(k => (cuts[k] || []).map(l => ({
+                part: ppfLabel(k), zone: k, material: l.material, inventory_item_id: l.inventory_item_id || null,
+                metros: Math.round((parseFloat(l.cm) || 0)) / 100,
+                reutilizable: !l.inventory_item_id || !!l.reusable_piece_id, reusable_piece_id: l.reusable_piece_id || null,
+            })));
+            const { data } = await cuttingAPI.requestPpfApproval(order.id, { lines, confirm_extra_cut: true });
+            setPpfApproval(data.ppf_approval);
+            toast.success('PPF enviado a aprobación del coordinador');
+            onCompleted?.();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'No se pudo enviar a aprobación');
+        } finally {
+            setSendingPpf(false);
+        }
+    };
+    const ppfBlocked = ppfKeys.length > 0 && ppfApproval?.status !== 'aprobado';
+
     const goConfirm = () => {
+        if (ppfBlocked) {
+            toast.error('El corte de PPF necesita la aprobación del coordinador antes de cortar');
+            return;
+        }
         if (allLines.length === 0) {
             toast.error('No hay zonas con medidas del técnico ni PPF para cortar');
             return;
@@ -431,6 +476,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                 metros: Math.round((parseFloat(l.cm) || 0)) / 100,
                 reutilizable: !!reuse[l.key] || !!l.reusable_piece_id,
                 reusable_piece_id: l.reusable_piece_id || null,
+                layer: l.layer || null,
             }));
         });
         setSaving(true);
@@ -470,6 +516,8 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
     // En PPF solo se ofrecen las referencias de PPF (si el catálogo las marca)
     const ppfGroups = materialGroups.filter(g => g.categoria === 'ppf');
     const ppfMaterialOptions = (ppfGroups.length ? ppfGroups : materialGroups).flatMap(g => g.items.map(it => ({ value: it, label: it, group: g.label })));
+    const polGroups = materialGroups.filter(g => g.categoria === 'polarizado');
+    const polarizadoOptions = (polGroups.length ? polGroups : materialGroups).flatMap(g => g.items.map(it => ({ value: it, label: it, group: g.label })));
     const purchased = order.cutting_services || [];
     const rollOptions = rolls.map(r => ({ value: r.id, label: `${r.nombre} · ${fmtM(r.metros_restantes || 0)} disp. · ${r.codigo}` }));
     const ppfRefs = new Set(ppfGroups.flatMap(g => g.items));
@@ -534,6 +582,11 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                 )}
                 <VehicleNotice order={order} />
                 <OrderPercentages order={order} />
+                {isUltra && (
+                    <p className="rounded-md border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-200" data-testid="cut-ultra-film">
+                        <b>Ultrasecure incluye polarizado:</b> {ultraSvc?.film_label || 'el que se acordó con el cliente'}. En cada vidrio registra la película de seguridad y el polarizado.
+                    </p>
+                )}
 
                 {step === 'form' ? (
                     <div className="space-y-4">
@@ -587,7 +640,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                         <div className="space-y-3">
                             {zones.map(z => {
                                 const ls = cuts[z.id] || [];
-                                const [maxMat] = limitFor(z.id);
+                                const [maxMat] = zoneLimit(z.id);
                                 const err = zoneRollError(z.id);
                                 return (
                                     <div
@@ -604,7 +657,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             </p>
                                             <span className="text-xs text-muted-foreground flex items-center gap-2">
                                                 {!isWinKey(z.id) && <>Técnico: <b className="text-foreground">{tm[z.id] ? zoneText(tm[z.id]) : (z.hint || '—')}</b> · </>}
-                                                {limitText(z.id)}
+                                                {limitText(z.id)}{isUltra && !isPpfKey(z.id) ? ' + polarizado' : ''}
                                                 {isWinKey(z.id) && Object.keys(winSel).length > 1 && (
                                                     <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={(e) => { e.stopPropagation(); removeWinCut(z.id); }} aria-label="Quitar corte">
                                                         <Trash2 className="w-4 h-4" />
@@ -642,12 +695,15 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                         {ls.map((l, idx) => (
                                             <div key={l.key} className="grid grid-cols-1 sm:grid-cols-[1.3fr_1.3fr_1fr_auto] gap-2 items-end" data-testid={`cut-line-${z.id}-${idx}`}>
                                                 <div className="space-y-1">
-                                                    <Label className="text-[11px]">Material {ls.length > 1 ? idx + 1 : ''}</Label>
+                                                    <Label className={`text-[11px] ${l.layer === 'polarizado' ? 'text-cyan-300 font-semibold' : ''}`}>
+                                                        {l.layer === 'polarizado' ? `Polarizado (incluido en Ultrasecure)${ultraSvc?.film_label ? ` · ${ultraSvc.film_label}` : ''}`
+                                                            : isUltra ? 'Película de seguridad' : `Material ${ls.length > 1 ? idx + 1 : ''}`}
+                                                    </Label>
                                                     <TypeAheadSelect value={l.material} onChange={(v) => updateLine(z.id, l.key, {
                                                         material: v,
                                                         reusable_piece_id: '',
                                                         inventory_item_id: rollForMaterial(l, v),
-                                                    })} options={materialOptions} placeholder="Seleccionar material… (escribe)"
+                                                    })} options={l.layer === 'polarizado' ? polarizadoOptions : materialOptions} placeholder="Seleccionar material… (escribe)"
                                                         className={selectClass} data-testid={`cut-material-${z.id}-${idx}`} />
                                                 </div>
                                                 <div className="space-y-1">
@@ -660,7 +716,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                                     <Label className="text-[11px]">Metros a cortar</Label>
                                                     <LinearMeasureInput value={l.cm} onChange={(cm) => updateLine(z.id, l.key, { cm })} testId={`cut-meters-${z.id}-${idx}`} />
                                                 </div>
-                                                {ls.length > 1 ? (
+                                                {ls.length > 1 && l.layer !== 'polarizado' && ls.filter(x => x.layer !== 'polarizado').length > 1 ? (
                                                     <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-red-500" onClick={(e) => { e.stopPropagation(); removeLine(z.id, l.key); }} aria-label="Quitar material">
                                                         <Trash2 className="w-4 h-4" />
                                                     </Button>
@@ -707,6 +763,25 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             : 'Registra el material, el rollo y los metros lineales de cada parte que compró el cliente.'}
                                     </p>
                                 </div>
+                                <div className={`rounded-md border p-2 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+                                    ppfApproval?.status === 'aprobado' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300'
+                                        : ppfApproval?.status === 'pendiente' ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
+                                            : ppfApproval?.status === 'rechazado' ? 'border-red-500/50 bg-red-500/10 text-red-300' : 'border-purple-500/40 text-purple-200'}`}
+                                    data-testid="cut-ppf-approval">
+                                    <span>
+                                        {ppfApproval?.status === 'aprobado' ? `✔ Aprobado por ${ppfApproval.reviewed_by_name || 'coordinador'}: ya puedes cortar.`
+                                            : ppfApproval?.status === 'pendiente' ? `⏳ En la cola de aprobación del coordinador (enviado por ${ppfApproval.requested_by_name || 'corte'}).`
+                                                : ppfApproval?.status === 'rechazado' ? `✖ Rechazado: ${ppfApproval.review_note || ''}. Corrige y vuelve a enviar.`
+                                                    : 'Todo corte de PPF lo aprueba un coordinador antes de cortar. Llena material, rollo y metros y envíalo.'}
+                                    </span>
+                                    {ppfApproval?.status !== 'aprobado' && ppfApproval?.status !== 'pendiente' && (
+                                        <Button type="button" size="sm" className="bg-purple-600 hover:bg-purple-700 shrink-0" onClick={sendPpfForApproval}
+                                            disabled={sendingPpf || !ppfLinesReady} data-testid="cut-ppf-send">
+                                            {sendingPpf ? 'Enviando...' : 'Enviar a aprobación'}
+                                        </Button>
+                                    )}
+                                </div>
+                                <fieldset disabled={ppfApproval?.status === 'aprobado' || ppfApproval?.status === 'pendiente'} className="space-y-3 disabled:opacity-80">
                                 {ppfKeys.map(k => (cuts[k] || []).map(l => (
                                     <div key={l.key} className="grid grid-cols-1 sm:grid-cols-[1fr_1.3fr_1.3fr_1fr] gap-2 items-end" data-testid={`cut-line-${k}`}>
                                         <p className="text-sm font-medium sm:pb-2">{ppfLabel(k)}</p>
@@ -738,6 +813,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                         />
                                     </div>
                                 )))}
+                                </fieldset>
                             </div>
                         )}
 
@@ -748,7 +824,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
 
                         <div className="flex flex-col-reverse sm:flex-row gap-2">
                             <Button variant="outline" className="sm:flex-1" onClick={requestClose}>Salir</Button>
-                            <Button className="sm:flex-1 bg-green-600 hover:bg-green-700" onClick={goConfirm} data-testid="cut-review">
+                            <Button className="sm:flex-1 bg-green-600 hover:bg-green-700" onClick={goConfirm} disabled={ppfBlocked} title={ppfBlocked ? 'Falta la aprobación del coordinador para el PPF' : undefined} data-testid="cut-review">
                                 <CheckCircle2 className="w-4 h-4 mr-2" /> Revisar y confirmar corte
                             </Button>
                         </div>
@@ -777,7 +853,7 @@ export const CompleteCuttingDialog = ({ order, onClose, onCompleted }) => {
                                             data-testid={`cut-reuse-${l.key}`}
                                         />
                                         <div className="flex-1 min-w-0 text-sm">
-                                            <p className="font-medium">{lineTitle(l.zone)} · {formatLinear(parseFloat(l.cm))}{zoneOpacityText(order, zoneKeyFor(l.zone)) ? ` · ${zoneOpacityText(order, zoneKeyFor(l.zone))}` : ''}</p>
+                                            <p className="font-medium">{lineTitle(l.zone)}{l.layer === 'polarizado' ? ' (polarizado)' : ''} · {formatLinear(parseFloat(l.cm))}{zoneOpacityText(order, zoneKeyFor(l.zone)) ? ` · ${zoneOpacityText(order, zoneKeyFor(l.zone))}` : ''}</p>
                                             <p className="text-xs text-muted-foreground truncate">
                                                 {l.material} · {l.reusable_piece_id ? `pieza reutilizable ${pieceById(l.reusable_piece_id)?.codigo || ''}` : roll ? `${roll.codigo} ${roll.nombre}` : 'sin rollo'}
                                             </p>

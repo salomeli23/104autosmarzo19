@@ -225,7 +225,7 @@ const SlotCard = ({ slot, order, onStart, onFinish, processing }) => {
 // ============================================================
 // Order Card (flujo con 2 técnicos)
 // ============================================================
-const InstallCard = ({ order, userId, onStart, onFinish, onMeasure, processing }) => {
+const InstallCard = ({ order, userId, onStart, onFinish, onMeasure, processing, turn }) => {
     const partner = orderTechnicians(order).find(t => t.id !== userId);
     const inProgress = order.status === 'en_proceso';
     const remaining = inProgress && order.service_started_at && order.service_time_minutes
@@ -240,6 +240,12 @@ const InstallCard = ({ order, userId, onStart, onFinish, onMeasure, processing }
                         <CarAvatar photoUrl={order.profile_photo_url} size={44} />
                         <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
+                                {turn && (
+                                    <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${order.queue_ranks?.[userId] != null ? 'bg-amber-500/20 text-amber-300' : 'bg-muted text-muted-foreground'}`}
+                                        title={order.queue_ranks?.[userId] != null ? 'Orden definido por el coordinador' : 'Por orden de llegada'} data-testid={`turn-${order.id}`}>
+                                        Turno {turn}
+                                    </span>
+                                )}
                                 <PlateBadge plate={order.plate} size="md" />
                                 <PostventaBadge order={order} />
                                 <AccessoryStatusTag order={order} />
@@ -433,6 +439,16 @@ export const TechnicianView = () => {
                 map[o.status].push(o);
             }
         });
+        // Orden de la cola: primero lo que priorizó el coordinador, luego por orden de llegada
+        const rank = (o) => o.queue_ranks?.[uid];
+        const arrival = (o) => o.ingreso_at || o.created_at || '';
+        Object.values(map).forEach(list => list.sort((a, b) => {
+            const ra = rank(a); const rb = rank(b);
+            if (ra != null && rb != null) return ra - rb;
+            if (ra != null) return -1;
+            if (rb != null) return 1;
+            return arrival(a).localeCompare(arrival(b));
+        }));
         return map;
     }, [orders, user]);
     const legacyPending = SECTIONS.reduce((acc, s) => acc + bySection[s.id].filter(x => x.slot.status !== 'completado').length, 0);
@@ -619,9 +635,10 @@ export const TechnicianView = () => {
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {byStage[st.id].map(o => (
+                                    {byStage[st.id].map((o, i) => (
                                         <InstallCard
                                             key={o.id}
+                                            turn={i + 1}
                                             order={o}
                                             userId={user?.id}
                                             onStart={handleStartInstall}

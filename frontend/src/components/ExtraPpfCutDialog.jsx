@@ -78,14 +78,15 @@ export const ExtraPpfCutDialog = ({ order, onClose, onDone }) => {
     });
     const overRolls = Object.entries(perRoll).filter(([id, m]) => (rollById(id)?.metros_restantes ?? 0) + 1e-6 < m);
     const incomplete = lines.some(l => !l.part.trim() || !l.material || !(toMeters(l.medida) > 0) || (!l.reutilizable && !l.inventory_item_id));
-    const canSave = !saving && lines.length > 0 && !incomplete && reason.trim().length >= 3 && pin.length >= 4
-        && (overRolls.length === 0 || extraOk);
+    const canSend = !saving && lines.length > 0 && !incomplete && reason.trim().length >= 3 && (overRolls.length === 0 || extraOk);
+    const canSave = canSend && pin.length >= 4;
 
-    const submit = async () => {
+    // withPin: aprobación al momento con el PIN; sin PIN se envía a la cola del coordinador
+    const submit = async (withPin) => {
         setSaving(true);
         try {
             const res = await cuttingAPI.extraPpfCut(order.id, {
-                pin,
+                pin: withPin ? pin : null,
                 reason: reason.trim(),
                 confirm_extra_cut: overRolls.length > 0 && extraOk,
                 lines: lines.map(l => ({
@@ -93,6 +94,12 @@ export const ExtraPpfCutDialog = ({ order, onClose, onDone }) => {
                     inventory_item_id: l.reutilizable ? null : l.inventory_item_id, reutilizable: l.reutilizable,
                 })),
             });
+            if (res.data?.queued) {
+                toast.success('Enviado a la cola de aprobación del coordinador: se descuenta cuando lo apruebe');
+                onDone?.();
+                onClose?.();
+                return;
+            }
             const ded = res.data?.inventory_deduction || [];
             toast.success(`Corte adicional registrado${ded.length ? ' · ' + ded.map(d => `${d.rollo_codigo}: -${d.meters_used} m (quedan ${d.new_remaining} m)`).join(' · ') : ''}`);
             ded.filter(d => d.dado_de_baja).forEach(d => toast.warning(`Rollo ${d.rollo_codigo} agotado: se dio de baja`));
@@ -113,7 +120,7 @@ export const ExtraPpfCutDialog = ({ order, onClose, onDone }) => {
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2"><Scissors className="w-5 h-5 text-purple-400" /> Corte adicional de PPF</DialogTitle>
                     <DialogDescription>
-                        {order.plate} · {order.brand} {order.model} · {order.client_name}. Se descuenta del rollo y lo aprueba un coordinador con su PIN.
+                        {order.plate} · {order.brand} {order.model} · {order.client_name}. Lo aprueba un coordinador (cola o PIN) y se descuenta del rollo.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -199,16 +206,20 @@ export const ExtraPpfCutDialog = ({ order, onClose, onDone }) => {
                 </div>
 
                 <div className="rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3 space-y-2">
-                    <Label className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-cyan-400" /> PIN de coordinador *</Label>
+                    <Label className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-cyan-400" /> PIN de coordinador (si está presente)</Label>
+                    <p className="text-xs text-muted-foreground">Sin PIN, el corte va a la cola y el coordinador lo aprueba desde su sesión. Con PIN se aprueba y descuenta al momento.</p>
                     <Input type="password" inputMode="numeric" autoComplete="off" maxLength={10} value={pin}
                         onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} placeholder="El coordinador digita su PIN" className="max-w-xs font-mono" data-testid="extra-pin" />
                 </div>
 
                 <div className="flex flex-col-reverse sm:flex-row gap-2">
                     <Button variant="outline" className="sm:flex-1" onClick={onClose} disabled={saving}>Cancelar</Button>
-                    <Button className="sm:flex-1 bg-purple-600 hover:bg-purple-700" onClick={submit} disabled={!canSave} data-testid="extra-submit">
+                    <Button variant="outline" className="sm:flex-1 border-purple-500/50" onClick={() => submit(false)} disabled={!canSend} data-testid="extra-queue">
+                        Enviar a aprobación
+                    </Button>
+                    <Button className="sm:flex-1 bg-purple-600 hover:bg-purple-700" onClick={() => submit(true)} disabled={!canSave} data-testid="extra-submit">
                         {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Scissors className="w-4 h-4 mr-2" />}
-                        Aprobar y registrar corte
+                        Aprobar con PIN
                     </Button>
                 </div>
             </DialogContent>

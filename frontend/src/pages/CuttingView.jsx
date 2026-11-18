@@ -14,6 +14,7 @@ import { ExtraPpfCutDialog } from '../components/ExtraPpfCutDialog';
 import { CoordinatorPinCard } from '../components/CoordinatorPinCard';
 import { useAuth } from '../context/AuthContext';
 import { VehicleNotice, OrderPercentages } from '../components/VehicleNotice';
+import { PpfApprovalQueue } from '../components/PpfApprovalQueue';
 import { partLabel } from '../lib/opacity';
 
 // Solo PPF: se corta sin las medidas de vidrios del técnico
@@ -199,6 +200,8 @@ const CuttingView = () => {
                 </Card>
             </div>
 
+            <PpfApprovalQueue canReview={canManageCoordPin} onChanged={fetchOrders} />
+
             {/* Pending Orders */}
             {pendingOrders.length > 0 && (
                 <div className="space-y-4">
@@ -217,7 +220,11 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}{order.ppf_plan && order.cutting_status !== 'completado' && (
+                                                        <span className={`ml-2 text-xs px-1.5 py-0.5 rounded align-middle ${order.ppf_approval?.status === 'aprobado' ? 'bg-emerald-500/20 text-emerald-300' : order.ppf_approval?.status === 'pendiente' ? 'bg-amber-500/20 text-amber-300' : 'bg-purple-500/20 text-purple-300'}`}>
+                                                            PPF {order.ppf_approval?.status === 'aprobado' ? 'aprobado' : order.ppf_approval?.status === 'pendiente' ? 'por aprobar' : order.ppf_approval?.status === 'rechazado' ? 'rechazado' : 'sin enviar'}
+                                                        </span>
+                                                    )}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
@@ -300,7 +307,11 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}{order.ppf_plan && order.cutting_status !== 'completado' && (
+                                                        <span className={`ml-2 text-xs px-1.5 py-0.5 rounded align-middle ${order.ppf_approval?.status === 'aprobado' ? 'bg-emerald-500/20 text-emerald-300' : order.ppf_approval?.status === 'pendiente' ? 'bg-amber-500/20 text-amber-300' : 'bg-purple-500/20 text-purple-300'}`}>
+                                                            PPF {order.ppf_approval?.status === 'aprobado' ? 'aprobado' : order.ppf_approval?.status === 'pendiente' ? 'por aprobar' : order.ppf_approval?.status === 'rechazado' ? 'rechazado' : 'sin enviar'}
+                                                        </span>
+                                                    )}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
@@ -391,7 +402,11 @@ const CuttingView = () => {
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}</h3>
+                                                    <h3 className="font-bold text-lg">{order.plate}{order.is_test && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 align-middle">PRUEBA</span>}{order.cutting_draft && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 align-middle">Borrador guardado</span>}{order.ppf_plan && order.cutting_status !== 'completado' && (
+                                                        <span className={`ml-2 text-xs px-1.5 py-0.5 rounded align-middle ${order.ppf_approval?.status === 'aprobado' ? 'bg-emerald-500/20 text-emerald-300' : order.ppf_approval?.status === 'pendiente' ? 'bg-amber-500/20 text-amber-300' : 'bg-purple-500/20 text-purple-300'}`}>
+                                                            PPF {order.ppf_approval?.status === 'aprobado' ? 'aprobado' : order.ppf_approval?.status === 'pendiente' ? 'por aprobar' : order.ppf_approval?.status === 'rechazado' ? 'rechazado' : 'sin enviar'}
+                                                        </span>
+                                                    )}</h3>
                                                     {getStatusBadge(order)}
                                                 </div>
                                                 <p className="text-muted-foreground">{order.brand} {order.model}</p>
