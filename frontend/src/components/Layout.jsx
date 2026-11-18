@@ -46,6 +46,7 @@ import {
     HandCoins,
     Landmark,
     BadgeDollarSign,
+    Wallet,
     FileSpreadsheet,
     FileCheck2,
     BellRing,
@@ -66,7 +67,8 @@ const navItems = [
             { path: '/cutting/alertas', label: 'Alertas de rollos', icon: BellRing, roles: ['admin', 'corte', 'coordinador'] },
         ],
     },
-    { path: '/technician', label: 'Mis Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
+    { path: '/technician', label: 'Mis Servicios', short: 'Servicios', icon: Wrench, roles: ['admin', 'tecnico'] },
+    { path: '/mis-pagos', label: 'Mis pagos', short: 'Pagos', icon: Wallet, roles: ['tecnico'] },
     // Facturación (/billing) oculta del menú; la ruta sigue disponible
     {
         path: '/pagos', label: 'Pagos', icon: Receipt, roles: ['admin', 'facturacion', 'coordinador'],
@@ -78,7 +80,7 @@ const navItems = [
     { path: '/retenciones', label: 'Retenciones', icon: Landmark, roles: ['admin', 'facturacion', 'coordinador'] },
     { path: '/calidad', label: 'Control de Calidad', icon: BadgeCheck, roles: ['admin', 'calidad', 'coordinador'] },
     { path: '/liquidaciones', label: 'Liquidaciones', icon: HandCoins, roles: ['admin', 'liquidaciones'] },
-    { path: '/mis-comisiones', label: 'Mis Comisiones', icon: BadgeDollarSign, roles: ['asesor'] },
+    { path: '/mis-comisiones', label: 'Mis Comisiones', short: 'Comisiones', icon: BadgeDollarSign, roles: ['asesor'] },
     { path: '/reportes', label: 'Reportes', icon: FileSpreadsheet, roles: ['admin', 'liquidaciones', 'facturacion', 'coordinador', 'calidad', 'gerencia'] },
     { path: '/autos-salida', label: 'Listo para Entrega', icon: LogOutIcon, roles: ['admin', 'facturacion', 'coordinador', 'calidad', 'seguridad'] },
     { path: '/quotes', label: 'Cotizaciones', icon: FileText, roles: ['admin'] },
@@ -323,7 +325,7 @@ export const Layout = ({ children }) => {
                                 data-testid={`mobile-nav-${item.path.slice(1)}`}
                             >
                                 <Icon className="w-5 h-5" />
-                                <span className="text-[10px] font-medium">{item.label.split(' ')[0]}</span>
+                                <span className="text-[10px] font-medium">{item.short || item.label.split(' ')[0]}</span>
                             </Link>
                         );
                     })}

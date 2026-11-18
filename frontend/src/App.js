@@ -29,6 +29,7 @@ import { Calidad } from './pages/Calidad';
 import { Liquidaciones } from './pages/Liquidaciones';
 import { Retenciones } from './pages/Retenciones';
 import { MisComisiones } from './pages/MisComisiones';
+import { MisPagos } from './pages/MisPagos';
 import { Reportes } from './pages/Reportes';
 import { Comprobantes } from './pages/Comprobantes';
 import { AlertasRollos } from './pages/AlertasRollos';
@@ -267,6 +268,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute allowedRoles={['asesor', 'admin']}>
                         <MisComisiones />
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/mis-pagos" 
+                element={
+                    <ProtectedRoute allowedRoles={['tecnico', 'admin']}>
+                        <MisPagos />
                     </ProtectedRoute>
                 } 
             />
