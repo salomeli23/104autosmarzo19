@@ -57,7 +57,7 @@ export const CallbellLeadsPanel = ({ onSchedule, refreshKey, onSynced }) => {
             <CardContent className="pt-5 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
-                        <p className="font-heading text-lg flex items-center gap-2"><Bot className="w-5 h-5 text-emerald-400" /> Leads de Callbell</p>
+                        <p className="font-heading text-lg flex items-center gap-2"><Bot className="w-5 h-5 text-emerald-400" /> Clientes Bot</p>
                         <p className="text-xs text-muted-foreground">
                             Clientes del equipo de Callbell con el formulario de agendamiento diligenciado en el chat. Revisa y toca Agendar para crear la cita.
                         </p>

@@ -81,7 +81,7 @@ export const CallbellSettingsCard = () => {
             <CardContent className="space-y-4">
                 <p className="text-sm text-muted-foreground">
                     Los contactos del equipo elegido que tengan en el chat el formulario de agendamiento diligenciado (Nombre completo, Vehículo,
-                    Placa, Celular, Correo, Servicio, Valor pactado, Método de pago) llegan a Agendamiento → "Leads de Callbell" como leads por ingresar.
+                    Placa, Celular, Correo, Servicio, Valor pactado, Método de pago) llegan a Agendamiento → "Clientes Bot" como leads por ingresar.
                     Se revisan los clientes que escribieron en los últimos 30 días.
                     El asesor o el coordinador los agenda con un clic. Se revisa al instante (webhook) y cada {st.poll_minutes} min.
                 </p>

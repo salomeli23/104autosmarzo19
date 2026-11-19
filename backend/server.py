@@ -3883,7 +3883,7 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
         resumen = " · ".join(x for x in (f.get("placa"), f.get("servicio_nombre") or f.get("servicio"),
                                          f"${int(f['valor']):,}".replace(",", ".") if f.get("valor") else None) if x)
         await _alert_advisor_or_all(advisor, f"Lead por agendar: {lead['name'] or lead['phone']}",
-                                    (resumen + ". " if resumen else "") + "Agéndalo en Agendamiento → Leads de Callbell.")
+                                    (resumen + ". " if resumen else "") + "Agéndalo en Agendamiento → Clientes Bot.")
     return "pendiente"
 
 
@@ -3926,9 +3926,9 @@ async def _callbell_sync(full: bool = False) -> dict:
     nuevos = counts.get("nuevo", 0)
     if nuevos:
         await create_alert("asesor", AlertType.CITA_CALLBELL, f"{nuevos} lead(s) nuevo(s) de Callbell",
-                           "Están en Agendamiento → Leads de Callbell → Por ingresar.")
+                           "Están en Agendamiento → Clientes Bot → Por ingresar.")
         await create_alert("coordinador", AlertType.CITA_CALLBELL, f"{nuevos} lead(s) nuevo(s) de Callbell",
-                           "Están en Agendamiento → Leads de Callbell → Por ingresar.")
+                           "Están en Agendamiento → Clientes Bot → Por ingresar.")
     result = {"revisados": len(contacts), "citas_nuevas": 0, "nuevos": nuevos, "sin_formulario": counts.get("sin_formulario", 0),
               "sin_etiqueta": counts.get("sin_etiqueta", 0), "otro_equipo": counts.get("otro_equipo", 0),
               "leads": counts.get("pendiente", 0) + nuevos, "pendientes": counts.get("pendiente", 0) + nuevos,
