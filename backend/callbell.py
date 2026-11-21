@@ -176,7 +176,12 @@ _NOT_NAME = {"hola", "buenas", "buenos", "gracias", "ok", "listo", "si", "no", "
              "puede", "quede", "queda", "quedo", "pero", "y", "o", "u", "como", "cuando", "donde", "porque", "bien", "manana", "hoy",
              "tarde", "temprano", "carro", "vehiculo", "moto", "favor", "claro", "vale", "perfecto", "dale", "un", "una", "uno",
              "tengo", "tiene", "hay", "es", "son", "fue", "ser", "hacer", "vez", "mas", "menos", "muy", "tambien", "todo", "nada",
-             "unero", "uneros", "senor", "senora", "amigo", "buen", "dia", "minutos", "rato", "momento", "ahorita", "pronto"}
+             "unero", "uneros", "senor", "senora", "amigo", "buen", "dia", "minutos", "rato", "momento", "ahorita", "pronto",
+             # Marcas, películas y servicios ("Huper Optik", "Black Ceramic", "Nano Optik")
+             "huper", "hupper", "optik", "optic", "nano", "ultra", "nanooptik", "ultraoptik", "huperoptik", "ceramic", "ceramica",
+             "ceramico", "autobahn", "black", "llumar", "xpel", "suntek", "3m", "pelicula", "polarizar", "polarizados", "ppf",
+             "wrap", "wrapping", "detailing", "nanoceramica", "aswf", "ultrasecure", "seguridad", "antirrayas", "full", "premium",
+             "basico", "medio", "alto", "calidad", "kit", "sunroof", "panoramico", "parabrisas"}
 
 
 def _money(text: str) -> Optional[int]:
@@ -322,7 +327,11 @@ def parse_customer_data(texts: List[str], catalog: Optional[Dict[str, Any]] = No
                 out["valor"] = v
                 continue
         if "servicio" not in out and names:
-            hit = next((e for e in names if re.search(rf"\b{re.escape(e[0])}\b", nval)), None)
+            joined = nval.replace(" ", "")
+            hit = next((e for e in names if re.search(rf"\b{re.escape(e[0])}\b", nval)
+                        or (" " not in e[0] and len(e[0]) >= 6 and e[0] in joined.split())), None)
+            if not hit:  # "Huper Optik" escrito separado = servicio "Huperoptik"
+                hit = next((e for e in names if " " not in e[0] and len(e[0]) >= 6 and e[0] == joined), None)
             if hit or key in ("servicio", "producto"):
                 out["servicio"] = val
                 if hit:

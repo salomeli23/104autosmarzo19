@@ -3842,7 +3842,7 @@ CALLBELL_LOOKBACK_DAYS = 30   # tope de la revisión
 # Solo cuentan los formularios enviados desde esta fecha (hora de Colombia): pedido del 18-nov-2026 "desde ayer en adelante"
 CALLBELL_LEADS_SINCE = datetime(2026, 11, 17, 5, 0, tzinfo=timezone.utc)  # 17-nov-2026 00:00 en Colombia
 # Versión de la lectura de formularios: al cambiarla, la siguiente revisión vuelve a mirar todo desde CALLBELL_LEADS_SINCE
-CALLBELL_PARSER_VERSION = 5  # v4: asesor que atendió y asignado · v5: el nombre no se toma de frases sueltas del chat
+CALLBELL_PARSER_VERSION = 6  # v4: asesor · v5: sin frases como nombre · v6: marcas ("Huper Optik") no son nombre
 _callbell_sync_lock = asyncio.Lock()
 CALLBELL_CONTACT_EVENTS = {"contact_created", "contact_updated", "message_created"}
 
