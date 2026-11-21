@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
-import { Bot, Copy, CheckCircle2, XCircle, ListChecks, RefreshCw, Loader2, UserPlus, Link2 } from 'lucide-react';
+import { Bot, Copy, CheckCircle2, XCircle, ListChecks, RefreshCw, Loader2, UserPlus, Link2, Users, AlertTriangle } from 'lucide-react';
 
 const WEBHOOK_BASE = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -93,6 +93,7 @@ export const CallbellSettingsCard = () => {
     const [advEmails, setAdvEmails] = useState({});
     const [busy, setBusy] = useState('');
     const [agents, setAgents] = useState(null);
+    const [created, setCreated] = useState(null);
 
     const load = () => callbellAPI.status().then(res => {
         setSt(res.data);
@@ -126,6 +127,19 @@ export const CallbellSettingsCard = () => {
         loadAdvisors();
         loadAgents();
     });
+    const createMissing = () => run('missing', async () => {
+        const n = (agents || []).filter(a => !a.ok && !a.user).length;
+        if (!window.confirm(`¿Crear ${n} cuenta(s) de asesor con contraseña temporal? Cada asesor entra con su correo de Callbell y cambia la contraseña al entrar.`)) return;
+        const { data } = await callbellAPI.createMissingAgents();
+        setCreated(data.created || []);
+        toast.success(data.message);
+        loadAgents();
+        loadAdvisors();
+    });
+    const copyAccess = (list) => {
+        const text = list.map(c => `${c.name}\nUsuario: ${c.email}\nContraseña temporal: ${c.password}\nEntra en ${window.location.origin}`).join('\n\n');
+        navigator.clipboard?.writeText(text).then(() => toast.success('Accesos copiados'), () => toast.error('No se pudo copiar'));
+    };
     const findFields = () => run('fields', async () => {
         const { data } = await callbellAPI.fields();
         setFound(data);
@@ -234,6 +248,29 @@ export const CallbellSettingsCard = () => {
                     {agents === null ? <p className="text-xs text-muted-foreground">Cargando…</p>
                         : agents.length === 0 ? <p className="text-xs text-muted-foreground">Aún no hay asesores de Callbell: aparecen después de sincronizar.</p>
                         : agents.map(a => <AgentRow key={a.email} a={a} advisors={advisors} onDone={() => { loadAgents(); loadAdvisors(); }} />)}
+                    {agents && agents.some(a => !a.ok && !a.user) && (
+                        <Button size="sm" onClick={createMissing} disabled={busy === 'missing'} data-testid="callbell-create-missing">
+                            {busy === 'missing' ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Users className="w-4 h-4 mr-1" />}
+                            Crear las cuentas que faltan ({agents.filter(a => !a.ok && !a.user).length})
+                        </Button>
+                    )}
+                    {created && created.length > 0 && (
+                        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 space-y-2" data-testid="callbell-created-access">
+                            <p className="text-sm font-medium text-emerald-300">Accesos creados</p>
+                            <p className="text-xs text-amber-300 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Las contraseñas temporales solo se muestran ahora. Cópialas y entrégaselas a cada asesor; al entrar la cambian.</p>
+                            {created.map(c => (
+                                <div key={c.email} className="rounded border bg-background/60 p-2 text-sm grid sm:grid-cols-3 gap-1">
+                                    <span className="font-medium">{c.name}</span>
+                                    <span className="font-mono text-xs break-all">{c.email}</span>
+                                    <span className="font-mono text-xs">{c.password}</span>
+                                </div>
+                            ))}
+                            <div className="flex gap-2">
+                                <Button size="sm" variant="outline" onClick={() => copyAccess(created)}><Copy className="w-4 h-4 mr-1" /> Copiar accesos</Button>
+                                <Button size="sm" variant="ghost" onClick={() => setCreated(null)}>Ya los copié</Button>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 <div className="space-y-2" data-testid="callbell-advisors">

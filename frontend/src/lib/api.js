@@ -33,6 +33,7 @@ export const authAPI = {
     me: () => api.get('/auth/me'),
     pinLogin: (data) => api.post('/auth/pin-login', data),
     changePin: (data) => api.put('/auth/me/pin', data),
+    changePassword: (data) => api.put('/auth/me/password', data),
 };
 
 // Users
@@ -215,6 +216,7 @@ export const callbellAPI = {
     saveAdvisors: (emails) => api.put('/integrations/callbell/advisors', { emails }),
     agents: () => api.get('/integrations/callbell/agents'),
     agentAccount: (data) => api.post('/integrations/callbell/agents/account', data),
+    createMissingAgents: () => api.post('/integrations/callbell/agents/create-missing'),
 };
 
 // Settings (admin)

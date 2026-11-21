@@ -282,6 +282,7 @@ class UserResponse(BaseModel):
     tecnico_roles: List[str] = []  # roles funcionales del técnico
     has_pin: bool = False  # el técnico puede ingresar con PIN
     entry_id: Optional[str] = None  # ID de entrada del técnico (solo lo ve el administrador)
+    must_change_password: bool = False  # cuenta creada con contraseña temporal: la cambia al entrar
     created_at: str
 
 class TokenResponse(BaseModel):
@@ -1011,7 +1012,8 @@ async def register(user_data: UserCreate, current_user: dict = Depends(require_r
 
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
-    user = await db.users.find_one({"email": credentials.email}, {"_id": 0})
+    user = await db.users.find_one({"email": credentials.email}, {"_id": 0}) \
+        or await db.users.find_one({"email": str(credentials.email).strip().lower()}, {"_id": 0})
     if not user or not verify_password(credentials.password, user["password"]):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
     
@@ -1020,7 +1022,8 @@ async def login(credentials: UserLogin):
         access_token=token,
         user=UserResponse(
             id=user["id"], email=user["email"], name=user["name"],
-            role=UserRole(user["role"]), phone=user.get("phone"), created_at=user["created_at"]
+            role=UserRole(user["role"]), phone=user.get("phone"), created_at=user["created_at"],
+            must_change_password=bool(user.get("must_change_password")),
         )
     )
 
@@ -1030,7 +1033,30 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         id=current_user["id"], email=current_user["email"], name=current_user["name"],
         role=UserRole(current_user["role"]), phone=current_user.get("phone"), created_at=current_user["created_at"],
         tecnico_roles=current_user.get("tecnico_roles") or [], has_pin=bool(current_user.get("pin_hash")),
+        must_change_password=bool(current_user.get("must_change_password")),
     )
+
+
+class OwnPasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@api_router.put("/auth/me/password")
+async def change_own_password(data: OwnPasswordChange, current_user: dict = Depends(get_current_user)):
+    """El usuario cambia su contraseña (obligatorio la primera vez si la cuenta se creó con una temporal)."""
+    user = await db.users.find_one({"id": current_user["id"]}, {"_id": 0, "password": 1})
+    if not user or not verify_password(data.current_password or "", user["password"]):
+        raise HTTPException(status_code=400, detail="La contraseña actual no es correcta")
+    new = data.new_password or ""
+    if len(new) < 8:
+        raise HTTPException(status_code=400, detail="La contraseña nueva debe tener al menos 8 caracteres")
+    if new == data.current_password:
+        raise HTTPException(status_code=400, detail="La contraseña nueva debe ser diferente a la temporal")
+    await db.users.update_one({"id": current_user["id"]}, {"$set": {
+        "password": hash_password(new), "must_change_password": False,
+        "password_changed_at": datetime.now(timezone.utc).isoformat()}})
+    return {"message": "Contraseña actualizada"}
 
 
 class OwnPinChange(BaseModel):
@@ -4250,6 +4276,34 @@ async def _callbell_agent_rows() -> List[dict]:
 async def callbell_agents(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
     """Asesores de Callbell y si ya tienen cuenta de asesor en la app (los que no, hay que crearlos)."""
     return await _callbell_agent_rows()
+
+
+def _temp_password() -> str:
+    """Contraseña temporal fácil de dictar (sin 0/O ni 1/l): Pya-XXXX-0000."""
+    import secrets as _secrets
+    letters = "ABCDEFGHJKMNPQRSTUVWXYZ"
+    digits = "23456789"
+    return "Pya-" + "".join(_secrets.choice(letters) for _ in range(4)) + "-" + "".join(_secrets.choice(digits) for _ in range(4))
+
+
+@api_router.post("/integrations/callbell/agents/create-missing")
+async def callbell_create_missing_agents(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Crea la cuenta de asesor de cada asesor de Callbell que no tiene: usuario = su correo de Callbell,
+    contraseña temporal que solo ve el administrador (una vez) y que el asesor cambia al entrar."""
+    created = []
+    for row in await _callbell_agent_rows():
+        if row["ok"] or row.get("user") or await db.users.find_one({"email": row["email"]}, {"_id": 1}):
+            continue
+        password = _temp_password()
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()), "email": row["email"], "password": hash_password(password), "name": row["name"],
+            "role": UserRole.ASESOR.value, "phone": None, "callbell_email": row["email"], "must_change_password": True,
+            "created_at": datetime.now(timezone.utc).isoformat(), "created_by": current_user["id"],
+        })
+        created.append({"name": row["name"], "email": row["email"], "password": password, "leads": row["leads"]})
+    moved = await _callbell_relink_leads() if created else 0
+    return {"created": created, "leads_moved": moved,
+            "message": f"{len(created)} cuenta(s) de asesor creada(s)" if created else "No faltan cuentas de asesor"}
 
 
 class CallbellAgentAccount(BaseModel):

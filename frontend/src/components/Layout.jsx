@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { InstallAppGate } from './InstallAppGate';
 import { ChangePinDialog } from './ChangePinDialog';
+import { ForcePasswordChange } from './ForcePasswordChange';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -345,6 +346,7 @@ export const Layout = ({ children }) => {
             {/* Técnicos en celular: deben instalar la app la primera vez */}
             <InstallAppGate user={user} onLogout={handleLogout} />
             <ChangePinDialog open={pinOpen} onOpenChange={setPinOpen} />
+            <ForcePasswordChange />
 
             {/* Mobile bottom navigation */}
             <nav className="mobile-nav">
