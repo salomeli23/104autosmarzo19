@@ -3842,7 +3842,7 @@ CALLBELL_LOOKBACK_DAYS = 30   # tope de la revisión
 # Solo cuentan los formularios enviados desde esta fecha (hora de Colombia): pedido del 18-nov-2026 "desde ayer en adelante"
 CALLBELL_LEADS_SINCE = datetime(2026, 11, 17, 5, 0, tzinfo=timezone.utc)  # 17-nov-2026 00:00 en Colombia
 # Versión de la lectura de formularios: al cambiarla, la siguiente revisión vuelve a mirar todo desde CALLBELL_LEADS_SINCE
-CALLBELL_PARSER_VERSION = 4  # v4: guarda quién atendió el chat y quién está asignado
+CALLBELL_PARSER_VERSION = 5  # v4: asesor que atendió y asignado · v5: el nombre no se toma de frases sueltas del chat
 _callbell_sync_lock = asyncio.Lock()
 CALLBELL_CONTACT_EVENTS = {"contact_created", "contact_updated", "message_created"}
 
@@ -3926,10 +3926,16 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
     if cfg.get("team_uuid") and callbell.contact_team_uuid(contact) != cfg["team_uuid"]:
         return "otro_equipo"
     existing = await db.callbell_leads.find_one({"uuid": cuuid}, {"_id": 0, "status": 1, "chat": 1, "discarded_by_name": 1,
-                                                                   "agents_v": 1, "order_id": 1})
+                                                                   "agents_v": 1, "order_id": 1, "name": 1})
     auto_discarded = existing and existing.get("status") == "descartado" and \
         str(existing.get("discarded_by_name") or "").startswith("Formulario anterior")
     if existing and existing.get("status") in ("agendado", "descartado") and not auto_discarded:
+        bad = existing.get("name")
+        if existing.get("status") == "agendado" and callbell.looks_like_phrase(bad) and contact.get("name"):
+            # El nombre se había tomado de una frase del chat: se pone el nombre del cliente en Callbell
+            await db.callbell_leads.update_one({"uuid": cuuid}, {"$set": {"name": contact["name"], "fields.nombre": contact["name"]}})
+            if existing.get("order_id"):
+                await db.orders.update_one({"id": existing["order_id"], "client_name": bad}, {"$set": {"client_name": contact["name"]}})
         if existing.get("status") == "agendado" and not existing.get("agents_v"):
             # Leads ya agendados: solo se completa quién atendió el chat y quién está asignado
             agents: List[dict] = []
@@ -3960,11 +3966,16 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
         return "sin_formulario"
     # Lo escrito en el chat manda; los campos personalizados completan lo que falte
     f = {**{k: v for k, v in custom.items() if v}, **{k: v for k, v in chat.items() if v not in (None, "")}}
+    if callbell.looks_like_phrase(f.get("nombre")):
+        f.pop("nombre")
+    if not f.get("nombre") and contact.get("name"):
+        f["nombre"] = contact["name"]
     missing = [label for key, label in (("placa", "placa"), ("servicio", "servicio")) if not f.get(key)]
     advisor = await _callbell_advisor(contact.get("assignedUser"))
     team = contact.get("team") if isinstance(contact.get("team"), dict) else {}
     lead = {
-        "uuid": cuuid, "name": f.get("nombre") or contact.get("name"), "contact_name": contact.get("name"),
+        "uuid": cuuid, "name": (f.get("nombre") if not callbell.looks_like_phrase(f.get("nombre")) else None) or contact.get("name"),
+        "contact_name": contact.get("name"),
         "phone": f.get("telefono") or contact.get("phoneNumber"), "fields": f, "chat": chat,
         "tags": contact.get("tags") or [], "team_name": team.get("name"), "href": contact.get("href"),
         "conversation_href": contact.get("conversationHref"), "assigned_user": contact.get("assignedUser"),

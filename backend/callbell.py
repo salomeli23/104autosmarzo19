@@ -168,7 +168,15 @@ _LABEL = re.compile(r"^\s*(nombre|cliente|placa|celular|telefono|tel|whatsapp|co
 _PLATE = re.compile(r"\b([a-z]{3})\s?-?(\d{3}|\d{2}[a-z])\b", re.I)
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _NOT_NAME = {"hola", "buenas", "buenos", "gracias", "ok", "listo", "si", "no", "dias", "tardes", "noches", "quiero", "necesito",
-             "precio", "cuanto", "valor", "cita", "agendar", "polarizado", "ppf", "ultrasecure", "transferencia", "efectivo"}
+             "precio", "cuanto", "valor", "cita", "agendar", "polarizado", "ppf", "ultrasecure", "transferencia", "efectivo",
+             # Palabras de frases del chat ("Ya voy en camino", "A esa hora se quede", "Perdón quería decir…")
+             "a", "al", "el", "las", "los", "lo", "en", "por", "para", "con", "sin", "que", "se", "me", "te", "le", "les", "mi", "su",
+             "ya", "voy", "va", "vamos", "vengo", "llego", "llegando", "salgo", "estoy", "esta", "estan", "alla", "aca", "aqui", "ahi",
+             "camino", "hora", "horas", "esa", "ese", "eso", "este", "esto", "perdon", "queria", "quería", "decir", "dije", "puedo",
+             "puede", "quede", "queda", "quedo", "pero", "y", "o", "u", "como", "cuando", "donde", "porque", "bien", "manana", "hoy",
+             "tarde", "temprano", "carro", "vehiculo", "moto", "favor", "claro", "vale", "perfecto", "dale", "un", "una", "uno",
+             "tengo", "tiene", "hay", "es", "son", "fue", "ser", "hacer", "vez", "mas", "menos", "muy", "tambien", "todo", "nada",
+             "unero", "uneros", "senor", "senora", "amigo", "buen", "dia", "minutos", "rato", "momento", "ahorita", "pronto"}
 
 
 def _money(text: str) -> Optional[int]:
@@ -240,7 +248,12 @@ def parse_chat(messages: List[Tuple[str, bool]], catalog: Optional[Dict[str, Any
         # El asesor envió la plantilla vacía y el cliente respondió con sus datos (una línea por dato, sin etiquetas)
         idx = next((i for i, (t, _) in enumerate(messages) if _form_labels(t) >= 3), None)
         if idx is not None:
-            reply = parse_customer_data([t for t, mine in messages[:idx] if mine], catalog)
+            client = [t for t, mine in messages[:idx] if mine]
+            # El nombre sin etiqueta solo se toma del mensaje con los datos (no de frases como "Ya voy en camino")
+            block = max(client, key=lambda t: len(parse_customer_data([t], catalog, loose_name=False)), default=None)
+            reply = parse_customer_data([block], catalog) if block else {}
+            for k, v in parse_customer_data(client, catalog, loose_name=False).items():
+                reply.setdefault(k, v)
             if sum(1 for k in ("nombre", "placa", "telefono", "email", "servicio", "valor") if reply.get(k)) >= 2:
                 return {"formulario": True, "respuesta_a_plantilla": True, **reply}
     if form_text:
@@ -262,15 +275,16 @@ def parse_chat(messages: List[Tuple[str, bool]], catalog: Optional[Dict[str, Any
         for key in ("fecha", "hora"):
             if form.get(key):
                 out[key] = form[key]
-    loose = parse_customer_data([t for t, mine in messages if mine and t != form_text], catalog)
+    loose = parse_customer_data([t for t, mine in messages if mine and t != form_text], catalog, loose_name=False)
     for k, v in loose.items():
         out.setdefault(k, v)
     return out
 
 
-def parse_customer_data(texts: List[str], catalog: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def parse_customer_data(texts: List[str], catalog: Optional[Dict[str, Any]] = None, loose_name: bool = True) -> Dict[str, Any]:
     """Datos que el cliente escribió en el chat (un mensaje por dato o todos juntos, con o sin etiqueta "Placa: …").
-    Se toma el dato más reciente de cada tipo. texts va del mensaje más reciente al más antiguo."""
+    Se toma el dato más reciente de cada tipo. texts va del mensaje más reciente al más antiguo.
+    loose_name=False: el nombre solo se toma si viene con etiqueta ("Nombre: …"), no de una frase suelta del chat."""
     out: Dict[str, Any] = {}
     names = _catalog_names(catalog or {})
     lines = [ln.strip() for t in texts for ln in re.split(r"[\n\r]+", t or "") if ln.strip()]
@@ -317,10 +331,16 @@ def parse_customer_data(texts: List[str], catalog: Optional[Dict[str, Any]] = No
         if key in ("marca", "modelo", "linea") and val:
             out.setdefault("marca" if key == "marca" else "modelo", val)
             continue
-        if "nombre" not in out and (key in ("nombre", "cliente") or (
+        if "nombre" not in out and (key in ("nombre", "cliente") or (loose_name and
                 re.fullmatch(r"[a-zñ ]{5,60}", nval) and 2 <= len(nval.split()) <= 5 and not (set(nval.split()) & _NOT_NAME))):
             out["nombre"] = " ".join(w.capitalize() for w in val.split())
     return out
+
+
+def looks_like_phrase(name: Optional[str]) -> bool:
+    """True si el "nombre" es en realidad una frase del chat ("Ya Voy En Camino", "A Esa Hora Se Quede")."""
+    words = _norm(name or "").split()
+    return len(words) >= 2 and bool(set(words) & _NOT_NAME)
 
 
 def verify_signature(raw_body: bytes, header: str, secret: str, tolerance: int = 300) -> bool:
