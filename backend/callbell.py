@@ -116,15 +116,31 @@ def is_from_contact(message: Dict[str, Any]) -> bool:
     return message.get("status") == "received"
 
 
-async def chat_messages(contact_uuid: str, max_pages: int = 2, since: Optional[datetime] = None) -> List[Tuple[str, bool]]:
+def agent_of(message: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Asesor de Callbell que escribió el mensaje: {name, email}; None si lo escribió el cliente, el bot o el sistema."""
+    sender = message.get("sender") or {}
+    user = sender.get("user") if isinstance(sender, dict) else None
+    if not isinstance(sender, dict) or sender.get("type") != "agent" or not isinstance(user, dict):
+        return None
+    name, email = str(user.get("name") or "").strip(), str(user.get("email") or "").strip().lower()
+    return {"name": name or email, "email": email} if (name or email) else None
+
+
+async def chat_messages(contact_uuid: str, max_pages: int = 2, since: Optional[datetime] = None,
+                        agents: Optional[List[Dict[str, str]]] = None) -> List[Tuple[str, bool]]:
     """Mensajes del chat con texto, del más reciente al más antiguo: [(texto, lo_escribió_el_cliente)].
-    since: solo los mensajes enviados desde esa fecha (los mensajes vienen del más nuevo al más viejo)."""
+    since: solo los mensajes enviados desde esa fecha (los mensajes vienen del más nuevo al más viejo).
+    agents: si se pasa una lista, se llena con los asesores que escribieron en el chat (del más reciente al más antiguo)."""
     out, after = [], None
     for _ in range(max_pages):
         data = await asyncio.to_thread(_request, f"/contacts/{urllib.parse.quote(contact_uuid)}/messages",
                                        {"after": after} if after else None)
         older = False
         for m in data.get("messages") or []:
+            if agents is not None:
+                a = agent_of(m)
+                if a:
+                    agents.append(a)
             created = parse_iso(m.get("createdAt"))
             if since and created and created < since:
                 older = True

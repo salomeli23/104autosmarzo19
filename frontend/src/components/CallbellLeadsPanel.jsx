@@ -5,7 +5,7 @@ import { Button } from './ui/button';
 import { formatDateTime, formatCurrency, ORDER_STATUS_LABELS } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'sonner';
-import { Bot, RefreshCw, CalendarPlus, X, ExternalLink, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react';
+import { Bot, RefreshCw, CalendarPlus, X, ExternalLink, AlertTriangle, Loader2, CheckCircle2, Headset } from 'lucide-react';
 
 const PAY_LABELS = {
     efectivo: 'Efectivo', breb: 'Bre-B', nequi: 'Nequi', daviplata: 'Daviplata', bancolombia: 'Bancolombia',
@@ -17,6 +17,22 @@ export const payLabel = (code) => PAY_LABELS[code] || code;
  * Agendamiento: leads de Callbell por ingresar (contactos del equipo con la etiqueta de agendado), con los datos
  * que el cliente escribió en el chat. El asesor o el coordinador los agenda. Props: onSchedule(lead), refreshKey
  */
+/** Quién atendió el chat y a quién está asignado el contacto en Callbell */
+const AgentLine = ({ l }) => {
+    if (!l.attended_by_name && !l.assigned_name) return null;
+    const same = l.attended_by_name && l.attended_by_name === l.assigned_name;
+    return (
+        <p className="text-xs text-sky-300 flex items-center gap-1 flex-wrap" data-testid={`callbell-agent-${l.uuid}`}>
+            <Headset className="w-3 h-3" />
+            {same ? <>Atendió y asignado: <b>{l.attended_by_name}</b></> : <>
+                {l.attended_by_name && <>Atendió en el chat: <b>{l.attended_by_name}</b></>}
+                {l.attended_by_name && l.assigned_name && <span className="text-muted-foreground">·</span>}
+                {l.assigned_name && <>Asignado en Callbell: <b>{l.assigned_name}</b></>}
+            </>}
+        </p>
+    );
+};
+
 export const CallbellLeadsPanel = ({ onSchedule, refreshKey, onSynced }) => {
     const [leads, setLeads] = useState([]);
     const [scheduled, setScheduled] = useState([]);
@@ -85,6 +101,7 @@ export const CallbellLeadsPanel = ({ onSchedule, refreshKey, onSynced }) => {
                                             {l.order_date} {l.order_time} · Orden {l.order_code}
                                             {!isAdvisor && <> · <span className="text-purple-400">{l.advisor_name || 'Sin asesor'}</span></>}
                                         </p>
+                                        <AgentLine l={l} />
                                     </div>
                                     <span className="text-xs px-2 py-0.5 rounded bg-muted shrink-0">{ORDER_STATUS_LABELS[l.order_status] || l.order_status || '—'}</span>
                                 </div>
@@ -105,8 +122,11 @@ export const CallbellLeadsPanel = ({ onSchedule, refreshKey, onSynced }) => {
                             {l.problem
                                 ? <p className="text-xs text-amber-400 flex items-center gap-1 mt-0.5"><AlertTriangle className="w-3 h-3" /> {l.problem}</p>
                                 : <p className="text-xs text-emerald-400 flex items-center gap-1 mt-0.5"><CheckCircle2 className="w-3 h-3" /> Listo para agendar</p>}
+                            <AgentLine l={l} />
                             {l.team_name && <p className="text-[11px] text-muted-foreground">Equipo: {l.team_name}</p>}
-                            <p className="text-xs text-purple-400">{l.advisor_name ? `Asesor: ${l.advisor_name}` : 'Sin asesor en Callbell: lo toma quien lo agende'}</p>
+                            <p className="text-xs text-purple-400">{l.advisor_name ? `Asesor en la app: ${l.advisor_name}`
+                                : l.assigned_name ? 'Lo ven todos los asesores: queda de quien lo agende'
+                                : 'Sin asesor en Callbell: lo toma quien lo agende'}</p>
                             <p className="text-[11px] text-muted-foreground">{formatDateTime(l.updated_at)}</p>
                         </div>
                         <div className="flex gap-1.5 shrink-0">

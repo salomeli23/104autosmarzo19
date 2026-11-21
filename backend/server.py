@@ -409,6 +409,8 @@ class OrderResponse(BaseModel):
     source: Optional[str] = None  # 'callbell' si la cita llegó del bot
     callbell_uuid: Optional[str] = None
     callbell_href: Optional[str] = None
+    callbell_attended_by: Optional[str] = None   # asesor que atendió el chat en Callbell
+    callbell_assigned_name: Optional[str] = None # asesor asignado al contacto en Callbell
     paid_at: Optional[str] = None
     # Entrega data
     delivery_photo_url: Optional[str] = None
@@ -1848,7 +1850,8 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
     }
     await db.orders.insert_one(order_doc)
     if order.callbell_uuid:
-        lead_doc = await db.callbell_leads.find_one({"uuid": order.callbell_uuid}, {"_id": 0, "advisor_id": 1, "advisor_name": 1}) or {}
+        lead_doc = await db.callbell_leads.find_one({"uuid": order.callbell_uuid}, {"_id": 0, "advisor_id": 1, "advisor_name": 1,
+                                                                                    "attended_by_name": 1, "assigned_name": 1}) or {}
         await db.callbell_leads.update_one({"uuid": order.callbell_uuid}, {"$set": {
             "status": "agendado", "order_id": order_id, "order_code": order_code,
             "order_date": order.date, "order_time": scheduled_time,
@@ -1856,7 +1859,9 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
             "advisor_id": lead_doc.get("advisor_id") or current_user["id"],
             "advisor_name": lead_doc.get("advisor_name") if lead_doc.get("advisor_id") else current_user.get("name"),
             "updated_at": datetime.now(timezone.utc).isoformat()}})
-        await db.orders.update_one({"id": order_id}, {"$set": {"source": "callbell", "callbell_uuid": order.callbell_uuid}})
+        await db.orders.update_one({"id": order_id}, {"$set": {
+            "source": "callbell", "callbell_uuid": order.callbell_uuid,
+            "callbell_attended_by": lead_doc.get("attended_by_name"), "callbell_assigned_name": lead_doc.get("assigned_name")}})
     
     # Incrementar contador de uso del código de descuento
     if disc_doc:
@@ -3837,7 +3842,7 @@ CALLBELL_LOOKBACK_DAYS = 30   # tope de la revisión
 # Solo cuentan los formularios enviados desde esta fecha (hora de Colombia): pedido del 18-nov-2026 "desde ayer en adelante"
 CALLBELL_LEADS_SINCE = datetime(2026, 11, 17, 5, 0, tzinfo=timezone.utc)  # 17-nov-2026 00:00 en Colombia
 # Versión de la lectura de formularios: al cambiarla, la siguiente revisión vuelve a mirar todo desde CALLBELL_LEADS_SINCE
-CALLBELL_PARSER_VERSION = 3
+CALLBELL_PARSER_VERSION = 4  # v4: guarda quién atendió el chat y quién está asignado
 _callbell_sync_lock = asyncio.Lock()
 CALLBELL_CONTACT_EVENTS = {"contact_created", "contact_updated", "message_created"}
 
@@ -3881,6 +3886,25 @@ async def _callbell_advisor(assigned: Optional[str]) -> Optional[dict]:
         {"_id": 0, "id": 1, "name": 1, "role": 1}, sort=[("callbell_email", -1)])
 
 
+async def _callbell_agent_fields(contact: dict, agents: List[dict]) -> dict:
+    """Quién atendió el chat (los asesores que escribieron, el más reciente primero) y a quién está asignado en Callbell.
+    Los nombres de los asesores de Callbell se guardan por correo para poder nombrar al asignado."""
+    names: List[str] = []
+    for a in agents:
+        if a.get("email") and a.get("name"):
+            await db.callbell_agents.update_one({"email": a["email"]}, {"$set": {"email": a["email"], "name": a["name"]}}, upsert=True)
+        if a.get("name") and a["name"] not in names:
+            names.append(a["name"])
+    email = str(contact.get("assignedUser") or "").strip().lower()
+    assigned = None
+    if email:
+        known = await db.callbell_agents.find_one({"email": email}, {"_id": 0, "name": 1})
+        app_user = await _callbell_advisor(email)
+        assigned = (known or {}).get("name") or (app_user or {}).get("name") or email
+    return {"attended_by_name": names[0] if names else None, "attended_by": names,
+            "assigned_name": assigned, "agents_v": 1}
+
+
 async def _alert_advisor_or_all(advisor: Optional[dict], title: str, message: str, order_id: Optional[str] = None):
     """Avisa al asesor dueño del lead; si el lead no tiene asesor, a todos los asesores."""
     if not advisor:
@@ -3901,17 +3925,31 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
         return "sin_etiqueta"
     if cfg.get("team_uuid") and callbell.contact_team_uuid(contact) != cfg["team_uuid"]:
         return "otro_equipo"
-    existing = await db.callbell_leads.find_one({"uuid": cuuid}, {"_id": 0, "status": 1, "chat": 1, "discarded_by_name": 1})
+    existing = await db.callbell_leads.find_one({"uuid": cuuid}, {"_id": 0, "status": 1, "chat": 1, "discarded_by_name": 1,
+                                                                   "agents_v": 1, "order_id": 1})
     auto_discarded = existing and existing.get("status") == "descartado" and \
         str(existing.get("discarded_by_name") or "").startswith("Formulario anterior")
     if existing and existing.get("status") in ("agendado", "descartado") and not auto_discarded:
+        if existing.get("status") == "agendado" and not existing.get("agents_v"):
+            # Leads ya agendados: solo se completa quién atendió el chat y quién está asignado
+            agents: List[dict] = []
+            try:
+                await callbell.chat_messages(cuuid, since=CALLBELL_LEADS_SINCE, agents=agents)
+                info = await _callbell_agent_fields(contact, agents)
+                await db.callbell_leads.update_one({"uuid": cuuid}, {"$set": info})
+                if existing.get("order_id"):
+                    await db.orders.update_one({"id": existing["order_id"]}, {"$set": {
+                        "callbell_attended_by": info["attended_by_name"], "callbell_assigned_name": info["assigned_name"]}})
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"[callbell] no se pudo leer el asesor de {cuuid}: {e}")
         return "ya_importado"
     now = datetime.now(timezone.utc).isoformat()
     custom = callbell.read_fields(contact, cfg["fields"])
     chat = (existing or {}).get("chat") or {}
+    agents: List[dict] = []
     if read_chat or not existing:
         try:
-            chat = callbell.parse_chat(await callbell.chat_messages(cuuid, since=CALLBELL_LEADS_SINCE), SERVICES_CATALOG)
+            chat = callbell.parse_chat(await callbell.chat_messages(cuuid, since=CALLBELL_LEADS_SINCE, agents=agents), SERVICES_CATALOG)
         except Exception as e:
             logging.getLogger(__name__).warning(f"[callbell] no se pudo leer el chat de {cuuid}: {e}")
     # Solo es lead el contacto que ya tiene el formulario de agendamiento diligenciado en el chat (desde hoy)
@@ -3935,6 +3973,8 @@ async def _callbell_import_contact(contact: dict, cfg: dict, read_chat: bool = T
         "status": "pendiente", "problem": f"Falta {' y '.join(missing)} en el chat" if missing else None,
         "form_since": CALLBELL_LEADS_SINCE.isoformat(),  # leído con la regla "solo formularios desde el 18-nov"
     }
+    if read_chat or not existing:
+        lead.update(await _callbell_agent_fields(contact, agents))
     await db.callbell_leads.update_one({"uuid": cuuid}, {"$set": lead, "$setOnInsert": {"created_at": now}}, upsert=True)
     if not existing and notify:
         resumen = " · ".join(x for x in (f.get("placa"), f.get("servicio_nombre") or f.get("servicio"),
@@ -4131,6 +4171,12 @@ async def callbell_leads(status: str = "pendiente", current_user: dict = Depends
             mine.append({"advisor_id": None})
         query["$or"] = mine
     leads = await db.callbell_leads.find(query, {"_id": 0}).sort("updated_at", -1).to_list(300)
+    missing = {str(l.get("assigned_user") or "").lower() for l in leads if l.get("assigned_user") and not l.get("assigned_name")}
+    if missing:
+        names = {a["email"]: a["name"] async for a in db.callbell_agents.find({"email": {"$in": list(missing)}}, {"_id": 0})}
+        for l in leads:
+            if l.get("assigned_user") and not l.get("assigned_name"):
+                l["assigned_name"] = names.get(str(l["assigned_user"]).lower())
     if status == "agendado":
         orders = {o["id"]: o for o in await db.orders.find(
             {"id": {"$in": [l.get("order_id") for l in leads if l.get("order_id")]}},

@@ -1062,6 +1062,7 @@ export const Appointments = () => {
                             {callbellLead && (
                                 <p className="text-xs text-emerald-400" data-testid="callbell-scheduling-note">
                                     Agendando el lead de Callbell de {callbellLead.name || callbellLead.phone}{callbellLead.problem ? `: ${callbellLead.problem}` : ''}
+                                    {(callbellLead.attended_by_name || callbellLead.assigned_name) && ` · Atendió: ${callbellLead.attended_by_name || callbellLead.assigned_name}`}
                                 </p>
                             )}
                             <DialogDescription>Complete los datos del cliente, vehículo y servicios</DialogDescription>
@@ -2114,6 +2115,8 @@ export const Appointments = () => {
                                                                     {order.source === 'callbell' && (
                                                                         <p className="text-xs text-emerald-400 mt-0.5" data-testid={`callbell-tag-${order.id}`}>
                                                                             Llegó del bot de Callbell
+                                                                            {order.callbell_attended_by && <> · Atendió {order.callbell_attended_by}</>}
+                                                                            {order.callbell_assigned_name && order.callbell_assigned_name !== order.callbell_attended_by && <> · Asignado a {order.callbell_assigned_name}</>}
                                                                             {order.callbell_href && <> · <a href={order.callbell_href} target="_blank" rel="noreferrer" className="underline">ver chat</a></>}
                                                                         </p>
                                                                     )}
