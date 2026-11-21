@@ -52,6 +52,8 @@ export const Appointments = () => {
     const [createdOrder, setCreatedOrder] = useState(null);
     const [showQRDialog, setShowQRDialog] = useState(false);
     const [slotsAvailability, setSlotsAvailability] = useState(null);
+    // Cupos de postventa (2 por franja, sábados sin agenda) para el formulario de Nueva Cita
+    const [pvAvailability, setPvAvailability] = useState(null);
     const [loadingSlots, setLoadingSlots] = useState(false);
     
     // Notification email (editable in QR dialog)
@@ -118,6 +120,15 @@ export const Appointments = () => {
         fetchCatalog();
     }, []);
 
+    const fetchPvAvailability = useCallback(async (date) => {
+        try {
+            const { data } = await slotsAPI.getAvailability(format(date, 'yyyy-MM-dd'), 'postventa');
+            setPvAvailability(data);
+        } catch (e) {
+            setPvAvailability(null);
+        }
+    }, []);
+
     // Fetch slot availability when date changes
     const fetchSlotsAvailability = useCallback(async (date) => {
         try {
@@ -151,6 +162,13 @@ export const Appointments = () => {
         fetchOrders(selectedDate);
         fetchSlotsAvailability(selectedDate);
     }, [selectedDate, fetchOrders, fetchSlotsAvailability]);
+
+    const isPvForm = formData.appointment_type === 'postventa';
+    useEffect(() => {
+        if (isPvForm) fetchPvAvailability(selectedDate);
+    }, [isPvForm, selectedDate, fetchPvAvailability]);
+    // Franjas del formulario: las de postventa tienen su propio cupo
+    const formSlots = isPvForm ? pvAvailability : slotsAvailability;
 
     // Valor bruto de los servicios seleccionados (sin descuentos, sin IVA)
     const calculateGross = () => {
@@ -378,12 +396,12 @@ export const Appointments = () => {
     const openReschedule = async (order) => {
         setRescheduleOrder(order);
         setRsDate(order.date ? new Date(order.date + 'T00:00:00') : new Date());
-        setRsSlot(order.time_slot || '');
+        setRsSlot(order.is_postventa ? '' : (order.time_slot || ''));
         setRsPassword('');
         setRsReason('');
         // Cargar disponibilidad para la fecha actual de la orden
         try {
-            const res = await slotsAPI.getAvailability(order.date || format(new Date(), 'yyyy-MM-dd'));
+            const res = await slotsAPI.getAvailability(order.date || format(new Date(), 'yyyy-MM-dd'), order.is_postventa ? 'postventa' : undefined);
             setRsSlotsAvailability(res.data);
         } catch (e) {
             setRsSlotsAvailability(null);
@@ -397,7 +415,7 @@ export const Appointments = () => {
         setRsDate(newDate);
         setRsSlot('');
         try {
-            const res = await slotsAPI.getAvailability(format(newDate, 'yyyy-MM-dd'));
+            const res = await slotsAPI.getAvailability(format(newDate, 'yyyy-MM-dd'), rescheduleOrder?.is_postventa ? 'postventa' : undefined);
             setRsSlotsAvailability(res.data);
         } catch (e) {
             setRsSlotsAvailability(null);
@@ -644,7 +662,7 @@ export const Appointments = () => {
                 toast.error('Selecciona una franja horaria');
                 return;
             }
-            const selectedSlot = slotsAvailability?.slots?.find(s => s.id === formData.time_slot);
+            const selectedSlot = formSlots?.slots?.find(s => s.id === formData.time_slot);
             if (selectedSlot && selectedSlot.remaining <= 0) {
                 toast.error('Esta franja ya no tiene cupos disponibles');
                 return;
@@ -735,6 +753,7 @@ export const Appointments = () => {
             setShowQRDialog(true);
             fetchOrders(selectedDate);
             fetchSlotsAvailability(selectedDate);
+            if (isPvForm) fetchPvAvailability(selectedDate);
             resetForm();
             if (callbellLead) { setCallbellLead(null); setCallbellRefresh(n => n + 1); }
         } catch (error) {
@@ -1270,10 +1289,13 @@ export const Appointments = () => {
                                             <Clock className="w-4 h-4" />
                                             Franja Horaria *
                                         </Label>
-                                        {!slotsAvailability?.is_open ? (
+                                        {isPvForm && (
+                                            <p className="text-xs text-muted-foreground" data-testid="pv-slot-rule">Postventa: máximo 2 citas por franja, de lunes a viernes.</p>
+                                        )}
+                                        {!formSlots?.is_open ? (
                                             <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 flex items-center gap-2">
                                                 <AlertCircle className="w-5 h-5" />
-                                                <span>El día seleccionado no tiene servicio</span>
+                                                <span>{isPvForm && formSlots?.message ? formSlots.message : 'El día seleccionado no tiene servicio'}</span>
                                             </div>
                                         ) : loadingSlots ? (
                                             <div className="flex justify-center py-4">
@@ -1281,7 +1303,7 @@ export const Appointments = () => {
                                             </div>
                                         ) : (
                                             <div className="space-y-2">
-                                                {slotsAvailability?.slots?.map((slot) => {
+                                                {formSlots?.slots?.map((slot) => {
                                                     const isTimeAvailable = isSlotAvailableByTime(slot);
                                                     const isAvailable = slot.available && isTimeAvailable;
                                                     const isPastSlot = !isTimeAvailable;
@@ -1341,7 +1363,7 @@ export const Appointments = () => {
                                                     );
                                                 })}
                                                 <p className="text-xs text-muted-foreground">
-                                                    * Registro hasta las {slotsAvailability?.last_registration}
+                                                    * Registro hasta las {formSlots?.last_registration}
                                                 </p>
                                                 {format(selectedDate, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') && (
                                                     <p className="text-xs text-cyan-400 mt-1">
@@ -1867,7 +1889,7 @@ export const Appointments = () => {
                                     (selectedServices.length === 0 && formData.appointment_type !== 'postventa') ||
                                     (formData.appointment_type === 'franja' && (!slotsAvailability?.is_open || !formData.confirmation_pin)) ||
                                     (formData.appointment_type === 'prioridad' && !formData.authorization_code) ||
-                                    (formData.appointment_type === 'postventa' && (!slotsAvailability?.is_open || !formData.postventa_code))
+                                    (formData.appointment_type === 'postventa' && (!formSlots?.is_open || !formData.postventa_code))
                                 }
                             >
                                 <DollarSign className="w-4 h-4 mr-2" />
@@ -2179,6 +2201,13 @@ export const Appointments = () => {
                         <div>
                             <Label className="flex items-center gap-1"><Clock className="w-3 h-3" /> Nueva Franja *</Label>
                             <div className="grid grid-cols-1 gap-2 mt-1">
+                                {rescheduleOrder?.is_postventa && (
+                                    <p className="text-xs text-muted-foreground" data-testid="rs-pv-rule">
+                                        Postventa: máximo 2 citas por franja, de lunes a viernes.
+                                        {rsSlotsAvailability && !rsSlotsAvailability.is_open && <span className="block text-red-400">{rsSlotsAvailability.message}</span>}
+                                    </p>
+                                )}
+                                {!rescheduleOrder?.is_postventa && (
                                 <button
                                     type="button"
                                     onClick={() => setRsSlot('prioridad')}
@@ -2191,6 +2220,7 @@ export const Appointments = () => {
                                 >
                                     ⚡ <b>Prioridad</b> · se agenda inmediatamente (sin franja)
                                 </button>
+                                )}
                                 {(rsSlotsAvailability?.slots || []).map(slot => (
                                     <button
                                         key={slot.id}

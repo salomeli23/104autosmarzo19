@@ -1734,6 +1734,10 @@ async def create_order(order: OrderCreate, current_user: dict = Depends(require_
             if s.no_charge:
                 s.price = 0
     
+    # Postventa: máx. 2 por franja y sin agenda los sábados
+    if order.is_postventa:
+        await _check_postventa_slot(order.date, None if order.is_priority else order.time_slot)
+
     # Block duplicate: same plate + same date (excluding desistimiento and postventa)
     # Postventa/Garantía sí permite múltiples órdenes para misma placa+fecha si fuera necesario
     plate_upper = order.plate.upper()
@@ -3569,9 +3573,42 @@ def get_day_config(date_str: str):
     else:  # Lunes a Viernes
         return TIME_SLOTS_CONFIG["weekday"]
 
+# Postventa: máximo 2 citas por franja y no hay agenda los sábados
+POSTVENTA_SLOT_CAPACITY = 2
+POSTVENTA_CLOSED_MSG = "Los sábados no hay agenda de postventa"
+
+
+def _postventa_day_closed(date_str: str) -> Optional[str]:
+    """Mensaje si ese día no se agendan postventas (sábado y domingo)."""
+    wd = datetime.strptime(date_str, "%Y-%m-%d").weekday()
+    if wd == 5:
+        return POSTVENTA_CLOSED_MSG
+    if wd == 6:
+        return "Domingos cerrado"
+    return None
+
+
+async def _check_postventa_slot(date_str: str, slot_id: Optional[str], exclude_order_id: Optional[str] = None):
+    """Valida que la cita de postventa caiga en un día y una franja con cupo (máx. 2 por franja)."""
+    try:
+        closed = _postventa_day_closed(date_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida (formato YYYY-MM-DD)")
+    if closed:
+        raise HTTPException(status_code=400, detail=closed)
+    if not slot_id or slot_id == "prioridad":
+        raise HTTPException(status_code=400, detail="Las citas de postventa se agendan en una franja")
+    q: Dict[str, Any] = {"date": date_str, "time_slot": slot_id, "is_postventa": True, "status": {"$nin": ["desistimiento"]}}
+    if exclude_order_id:
+        q["id"] = {"$ne": exclude_order_id}
+    if await db.orders.count_documents(q) >= POSTVENTA_SLOT_CAPACITY:
+        raise HTTPException(status_code=409, detail=f"Esa franja ya tiene {POSTVENTA_SLOT_CAPACITY} citas de postventa. Elige otra franja u otro día")
+
+
 @api_router.get("/slots/availability")
-async def get_slot_availability(date: str):
-    """Get available time slots with remaining capacity for a specific date"""
+async def get_slot_availability(date: str, kind: Optional[str] = None):
+    """Get available time slots with remaining capacity for a specific date.
+    kind=postventa: cupos de postventa (2 por franja, sábados sin agenda)."""
     # Validate date format
     try:
         date_obj = datetime.strptime(date, "%Y-%m-%d")
@@ -3580,6 +3617,9 @@ async def get_slot_availability(date: str):
     
     # Get day configuration
     day_config = get_day_config(date)
+    is_pv = kind == "postventa"
+    if is_pv and day_config is not None and date_obj.weekday() == 5:
+        return {"date": date, "is_open": False, "message": POSTVENTA_CLOSED_MSG, "slots": [], "kind": "postventa"}
     
     # If Sunday, return closed message
     if day_config is None:
@@ -3595,20 +3635,24 @@ async def get_slot_availability(date: str):
     
     for slot in day_config["slots"]:
         # Count orders for this slot on this date
-        booked_count = await db.orders.count_documents({
+        q = {
             "date": date,
             "time_slot": slot["id"],
             "status": {"$nin": ["desistimiento"]}  # Exclude withdrawn orders
-        })
+        }
+        if is_pv:
+            q["is_postventa"] = True
+        booked_count = await db.orders.count_documents(q)
+        capacity = POSTVENTA_SLOT_CAPACITY if is_pv else slot["capacity"]
         
-        remaining = slot["capacity"] - booked_count
+        remaining = capacity - booked_count
         
         slots_with_availability.append({
             "id": slot["id"],
             "name": slot["name"],
             "start": slot["start"],
             "end": slot["end"],
-            "capacity": slot["capacity"],
+            "capacity": capacity,
             "booked": booked_count,
             "remaining": max(0, remaining),
             "available": remaining > 0
@@ -3619,7 +3663,8 @@ async def get_slot_availability(date: str):
         "is_open": True,
         "operating_hours": day_config["operating_hours"],
         "last_registration": day_config["last_registration"],
-        "slots": slots_with_availability
+        "slots": slots_with_availability,
+        **({"kind": "postventa"} if is_pv else {}),
     }
 
 @api_router.get("/")
@@ -8857,6 +8902,8 @@ async def reschedule_appointment(
         new_date = datetime.strptime(data.new_date, "%Y-%m-%d").date()
     except Exception:
         raise HTTPException(status_code=400, detail="Fecha inválida (formato YYYY-MM-DD)")
+    if order.get("is_postventa"):
+        await _check_postventa_slot(data.new_date, data.new_time_slot, exclude_order_id=order_id)
 
     old_date = order.get("date")
     old_time = order.get("scheduled_time")

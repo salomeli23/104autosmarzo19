@@ -62,7 +62,8 @@ export const Postventa = () => {
     useEffect(() => {
         if (!dialogOpen) return;
         const dateStr = format(selectedDate, 'yyyy-MM-dd');
-        slotsAPI.getAvailability(dateStr)
+        setForm(f => ({ ...f, time_slot: '' }));
+        slotsAPI.getAvailability(dateStr, 'postventa')
             .then(r => setSlotsAvailability(r.data))
             .catch(() => setSlotsAvailability(null));
     }, [dialogOpen, selectedDate]);
@@ -281,7 +282,7 @@ export const Postventa = () => {
                                             mode="single"
                                             selected={selectedDate}
                                             onSelect={(d) => d && setSelectedDate(d)}
-                                            disabled={(d) => d < new Date(new Date().setHours(0,0,0,0))}
+                                            disabled={(d) => d < new Date(new Date().setHours(0,0,0,0)) || d.getDay() === 6 || d.getDay() === 0}
                                         />
                                     </PopoverContent>
                                 </Popover>
@@ -304,10 +305,11 @@ export const Postventa = () => {
                                 <Clock className="w-4 h-4" />
                                 Franja Horaria *
                             </Label>
+                            <p className="text-xs text-muted-foreground">Postventa: máximo 2 citas por franja, de lunes a viernes.</p>
                             {!slotsAvailability ? (
                                 <p className="text-sm text-muted-foreground">Cargando franjas...</p>
                             ) : !slotsAvailability.is_open ? (
-                                <p className="text-sm text-yellow-500">No hay servicio en esta fecha</p>
+                                <p className="text-sm text-yellow-500" data-testid="postventa-closed">{slotsAvailability.message || 'No hay servicio en esta fecha'}</p>
                             ) : (
                                 <div className="grid sm:grid-cols-3 gap-2">
                                     {(slotsAvailability.slots || []).map((slot) => {
@@ -324,7 +326,7 @@ export const Postventa = () => {
                                             >
                                                 <p className="font-medium">{slot.name || slot.id}</p>
                                                 <p className="text-xs text-muted-foreground">{slot.start} - {slot.end}</p>
-                                                <p className="text-xs">{slot.current}/{slot.capacity}</p>
+                                                <p className={`text-xs ${slot.remaining > 0 ? '' : 'text-red-400'}`}>{slot.remaining > 0 ? `${slot.remaining} de ${slot.capacity} cupos` : 'Sin cupos'}</p>
                                             </button>
                                         );
                                     })}

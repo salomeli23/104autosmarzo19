@@ -132,7 +132,8 @@ export const servicesAPI = {
 
 // Time slots availability
 export const slotsAPI = {
-    getAvailability: (date) => api.get('/slots/availability', { params: { date } }),
+    // kind='postventa': cupos de postventa (2 por franja, sábados sin agenda)
+    getAvailability: (date, kind) => api.get('/slots/availability', { params: kind ? { date, kind } : { date } }),
 };
 
 // Bahias (Garage bays)
