@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { formatDateTime } from '../lib/utils';
 import { toast } from 'sonner';
-import { Bot, Copy, CheckCircle2, XCircle, ListChecks, RefreshCw, Loader2 } from 'lucide-react';
+import { Bot, Copy, CheckCircle2, XCircle, ListChecks, RefreshCw, Loader2, UserPlus, Link2 } from 'lucide-react';
 
 const WEBHOOK_BASE = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -15,6 +15,71 @@ const Flag = ({ ok, label }) => (
         {ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />} {label}
     </p>
 );
+
+/** Un asesor de Callbell: si ya tiene cuenta de asesor en la app, o crearla / vincularla */
+const AgentRow = ({ a, advisors, onDone }) => {
+    const [mode, setMode] = useState('');
+    const [name, setName] = useState(a.name);
+    const [password, setPassword] = useState('');
+    const [userId, setUserId] = useState('');
+    const [busy, setBusy] = useState(false);
+    const submit = async () => {
+        setBusy(true);
+        try {
+            const { data } = await callbellAPI.agentAccount(mode === 'link' ? { email: a.email, name, user_id: userId } : { email: a.email, name, password });
+            toast.success(data.message);
+            setMode(''); setPassword('');
+            onDone();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || 'No se pudo guardar');
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <div className={`rounded-md border p-2.5 space-y-2 ${a.ok ? '' : 'border-amber-500/40 bg-amber-500/5'}`} data-testid={`callbell-agent-row-${a.email}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0 text-sm">
+                    <p className="font-medium">{a.name}</p>
+                    <p className="text-xs text-muted-foreground break-all">{a.email} · {a.leads} lead(s){a.pendientes ? ` · ${a.pendientes} por ingresar` : ''}</p>
+                </div>
+                {a.ok ? (
+                    <span className="text-xs text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Cuenta: {a.user?.name}</span>
+                ) : (
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-amber-400">Falta la cuenta</span>
+                        <Button size="sm" variant="outline" className="h-7" onClick={() => setMode(mode === 'create' ? '' : 'create')} data-testid={`agent-create-${a.email}`}>
+                            <UserPlus className="w-3.5 h-3.5 mr-1" /> Crear
+                        </Button>
+                        {advisors.length > 0 && (
+                            <Button size="sm" variant="ghost" className="h-7" onClick={() => setMode(mode === 'link' ? '' : 'link')}>
+                                <Link2 className="w-3.5 h-3.5 mr-1" /> Vincular
+                            </Button>
+                        )}
+                    </div>
+                )}
+            </div>
+            {mode === 'create' && (
+                <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                    <div className="space-y-1"><Label className="text-xs">Nombre</Label><Input value={name} onChange={(e) => setName(e.target.value)} className="h-8 text-sm" /></div>
+                    <div className="space-y-1"><Label className="text-xs">Contraseña inicial</Label>
+                        <Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-8 text-sm" placeholder="Mínimo 6 caracteres" /></div>
+                    <Button size="sm" onClick={submit} disabled={busy || password.length < 6 || name.trim().length < 3}>{busy ? 'Creando...' : 'Crear asesor'}</Button>
+                    <p className="text-[11px] text-muted-foreground sm:col-span-3">Entra con el correo {a.email}. Sus leads de Callbell pasan a su sesión.</p>
+                </div>
+            )}
+            {mode === 'link' && (
+                <div className="flex flex-wrap gap-2 items-center">
+                    <select value={userId} onChange={(e) => setUserId(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-sm">
+                        <option value="">Elige la cuenta de asesor…</option>
+                        {advisors.map(u => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
+                    </select>
+                    <Button size="sm" onClick={submit} disabled={busy || !userId}>{busy ? 'Guardando...' : 'Vincular'}</Button>
+                </div>
+            )}
+        </div>
+    );
+};
 
 /** Configuración: conexión con Callbell (leads del bot con cita → Agendamiento) */
 export const CallbellSettingsCard = () => {
@@ -27,6 +92,7 @@ export const CallbellSettingsCard = () => {
     const [advisors, setAdvisors] = useState([]);
     const [advEmails, setAdvEmails] = useState({});
     const [busy, setBusy] = useState('');
+    const [agents, setAgents] = useState(null);
 
     const load = () => callbellAPI.status().then(res => {
         setSt(res.data);
@@ -39,7 +105,8 @@ export const CallbellSettingsCard = () => {
         setAdvisors(res.data || []);
         setAdvEmails(Object.fromEntries((res.data || []).map(a => [a.id, a.callbell_email || ''])));
     }).catch(() => setAdvisors([]));
-    useEffect(() => { load(); loadAdvisors(); }, []);
+    const loadAgents = () => callbellAPI.agents().then(res => setAgents(res.data || [])).catch(() => setAgents([]));
+    useEffect(() => { load(); loadAdvisors(); loadAgents(); }, []);
 
     if (!st) return null;
     const webhookUrl = `${WEBHOOK_BASE}${st.webhook_path}`;
@@ -57,6 +124,7 @@ export const CallbellSettingsCard = () => {
         await callbellAPI.saveAdvisors(advEmails);
         toast.success('Asesores vinculados con Callbell');
         loadAdvisors();
+        loadAgents();
     });
     const findFields = () => run('fields', async () => {
         const { data } = await callbellAPI.fields();
@@ -152,6 +220,20 @@ export const CallbellSettingsCard = () => {
                         ))}
                     </div>
                     <p className="text-xs text-muted-foreground">Si el nombre no coincide exacto, se busca un campo que lo contenga (por ejemplo "fecha", "hora", "placa").</p>
+                </div>
+
+                <div className="space-y-2" data-testid="callbell-agents">
+                    <div className="flex items-center justify-between gap-2">
+                        <Label>Asesores de Callbell y su cuenta en la app</Label>
+                        <Button size="sm" variant="ghost" className="h-7" onClick={loadAgents}><RefreshCw className="w-3.5 h-3.5" /></Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                        El administrador ve todos los leads; cada asesor ve solo los que tiene asignados en Callbell.
+                        {agents && agents.some(a => !a.ok) && <b className="text-amber-400"> Faltan {agents.filter(a => !a.ok).length} cuenta(s) de asesor: sus leads solo los ve el administrador.</b>}
+                    </p>
+                    {agents === null ? <p className="text-xs text-muted-foreground">Cargando…</p>
+                        : agents.length === 0 ? <p className="text-xs text-muted-foreground">Aún no hay asesores de Callbell: aparecen después de sincronizar.</p>
+                        : agents.map(a => <AgentRow key={a.email} a={a} advisors={advisors} onDone={() => { loadAgents(); loadAdvisors(); }} />)}
                 </div>
 
                 <div className="space-y-2" data-testid="callbell-advisors">

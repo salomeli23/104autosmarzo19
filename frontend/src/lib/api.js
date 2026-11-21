@@ -213,6 +213,8 @@ export const callbellAPI = {
     discard: (uuid) => api.post(`/integrations/callbell/leads/${uuid}/discard`),
     advisors: () => api.get('/integrations/callbell/advisors'),
     saveAdvisors: (emails) => api.put('/integrations/callbell/advisors', { emails }),
+    agents: () => api.get('/integrations/callbell/agents'),
+    agentAccount: (data) => api.post('/integrations/callbell/agents/account', data),
 };
 
 // Settings (admin)

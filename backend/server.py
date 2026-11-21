@@ -4031,6 +4031,10 @@ async def _callbell_sync(full: bool = False) -> dict:
             logging.getLogger(__name__).warning(f"[callbell] lead {c.get('uuid')}: {e}")
             r = "error"
         counts[r] = counts.get(r, 0) + 1
+    try:
+        await _callbell_relink_leads()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[callbell] asignar leads a su asesor: {e}")
     nuevos = counts.get("nuevo", 0)
     if nuevos:
         await create_alert("asesor", AlertType.CITA_CALLBELL, f"{nuevos} lead(s) nuevo(s) de Callbell",
@@ -4171,16 +4175,14 @@ async def callbell_sync_now(full: bool = False, current_user: dict = Depends(req
 
 @api_router.get("/integrations/callbell/leads")
 async def callbell_leads(status: str = "pendiente", current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR]))):
-    """Leads de Callbell. Cada asesor ve los suyos (los pendientes sin asesor los ven todos los asesores)."""
+    """Leads de Callbell. El administrador y el coordinador ven todos; cada asesor ve solo los suyos
+    (los que tiene asignados en Callbell)."""
     query: Dict[str, Any] = {"status": status}
     if status == "pendiente":
         # Los leads que quedaron de revisiones anteriores (formularios de antes del 18-nov) no se muestran
         query["form_since"] = CALLBELL_LEADS_SINCE.isoformat()
     if current_user.get("role") == UserRole.ASESOR.value:
-        mine = [{"advisor_id": current_user["id"]}]
-        if status == "pendiente":
-            mine.append({"advisor_id": None})
-        query["$or"] = mine
+        query["advisor_id"] = current_user["id"]
     leads = await db.callbell_leads.find(query, {"_id": 0}).sort("updated_at", -1).to_list(300)
     missing = {str(l.get("assigned_user") or "").lower() for l in leads if l.get("assigned_user") and not l.get("assigned_name")}
     if missing:
@@ -4210,6 +4212,85 @@ async def callbell_discard_lead(lead_uuid: str, current_user: dict = Depends(req
     return {"message": "Lead descartado"}
 
 
+async def _callbell_relink_leads() -> int:
+    """Pone cada lead (por ingresar o agendado) a nombre del asesor de la app que lo tiene asignado en Callbell.
+    Sirve cuando se crea o se vincula la cuenta del asesor después de que llegó el lead."""
+    changed = 0
+    for email in await db.callbell_leads.distinct("assigned_user", {"status": {"$in": ["pendiente", "agendado"]}}):
+        adv = await _callbell_advisor(email)
+        if not adv:
+            continue
+        res = await db.callbell_leads.update_many(
+            {"assigned_user": email, "status": {"$in": ["pendiente", "agendado"]}, "advisor_id": {"$ne": adv["id"]}},
+            {"$set": {"advisor_id": adv["id"], "advisor_name": adv["name"]}})
+        changed += res.modified_count
+    return changed
+
+
+async def _callbell_agent_rows() -> List[dict]:
+    """Asesores que aparecen en Callbell (asignados a los contactos o que escribieron en los chats), con su cuenta en la app."""
+    names = {a["email"]: a.get("name") async for a in db.callbell_agents.find({}, {"_id": 0})}
+    for email in await db.callbell_leads.distinct("assigned_user"):
+        e = str(email or "").strip().lower()
+        if e:
+            names.setdefault(e, None)
+    rows = []
+    for email, name in names.items():
+        assigned = await db.callbell_leads.count_documents({"assigned_user": {"$in": [email, email.upper()]}})
+        pending = await db.callbell_leads.count_documents({"assigned_user": email, "status": "pendiente",
+                                                           "form_since": CALLBELL_LEADS_SINCE.isoformat()})
+        user = await db.users.find_one({"is_active": {"$ne": False}, "$or": [{"callbell_email": email}, {"email": email}]},
+                                       {"_id": 0, "id": 1, "name": 1, "role": 1, "email": 1})
+        rows.append({"email": email, "name": name or email.split("@")[0], "leads": assigned, "pendientes": pending,
+                     "user": user, "ok": bool(user and user.get("role") in (UserRole.ASESOR.value, UserRole.ADMIN.value))})
+    return sorted(rows, key=lambda r: (r["ok"], -r["leads"], r["name"].lower()))
+
+
+@api_router.get("/integrations/callbell/agents")
+async def callbell_agents(current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Asesores de Callbell y si ya tienen cuenta de asesor en la app (los que no, hay que crearlos)."""
+    return await _callbell_agent_rows()
+
+
+class CallbellAgentAccount(BaseModel):
+    email: str                      # correo del asesor en Callbell
+    name: str
+    password: Optional[str] = None  # para crear la cuenta nueva
+    user_id: Optional[str] = None   # o vincular una cuenta de asesor que ya existe
+
+
+@api_router.post("/integrations/callbell/agents/account")
+async def callbell_agent_account(data: CallbellAgentAccount, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
+    """Crea la cuenta de asesor de un asesor de Callbell (con su mismo correo) o la vincula a una que ya existe,
+    y le pasa sus leads."""
+    email = (data.email or "").strip().lower()
+    if not re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Correo inválido")
+    if data.user_id:
+        user = await db.users.find_one({"id": data.user_id, "role": UserRole.ASESOR.value}, {"_id": 0, "id": 1, "name": 1})
+        if not user:
+            raise HTTPException(status_code=404, detail="Asesor no encontrado")
+        await db.users.update_many({"callbell_email": email, "id": {"$ne": user["id"]}}, {"$set": {"callbell_email": None}})
+        await db.users.update_one({"id": user["id"]}, {"$set": {"callbell_email": email}})
+        msg = f"{user['name']} quedó vinculado con Callbell"
+    else:
+        name = (data.name or "").strip()
+        if len(name) < 3:
+            raise HTTPException(status_code=400, detail="Escribe el nombre del asesor")
+        if not data.password or len(data.password) < 6:
+            raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres")
+        if await db.users.find_one({"email": email}, {"_id": 1}):
+            raise HTTPException(status_code=400, detail="Ya hay una cuenta con ese correo: vincúlala en vez de crear otra")
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()), "email": email, "password": hash_password(data.password), "name": name,
+            "role": UserRole.ASESOR.value, "phone": None, "callbell_email": email,
+            "created_at": datetime.now(timezone.utc).isoformat(), "created_by": current_user["id"],
+        })
+        msg = f"Cuenta de asesor creada para {name}"
+    moved = await _callbell_relink_leads()
+    return {"message": msg + (f" · {moved} lead(s) pasaron a su sesión" if moved else ""), "leads_moved": moved}
+
+
 class CallbellAdvisorEmails(BaseModel):
     emails: Dict[str, str]  # {user_id: correo con el que el asesor está en Callbell ("" = usar el de la app)}
 
@@ -4231,7 +4312,8 @@ async def callbell_set_advisors(data: CallbellAdvisorEmails, current_user: dict 
             raise HTTPException(status_code=400, detail=f"Correo inválido: {email}")
         await db.users.update_one({"id": user_id, "role": UserRole.ASESOR.value},
                                   {"$set": {"callbell_email": email or None}})
-    return {"message": "Asesores vinculados con Callbell"}
+    moved = await _callbell_relink_leads()
+    return {"message": "Asesores vinculados con Callbell" + (f" · {moved} lead(s) pasaron a su asesor" if moved else "")}
 
 
 async def _callbell_poll_loop():
