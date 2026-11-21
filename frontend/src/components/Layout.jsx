@@ -319,10 +319,10 @@ export const Layout = ({ children }) => {
                                         <p className="text-xs text-muted-foreground">{user?.email}</p>
                                     </div>
                                     <DropdownMenuSeparator />
-                                    {(user?.has_pin || user?.role === 'tecnico') && (
+                                    {(user?.has_pin || ['tecnico', 'coordinador', 'asesor'].includes(user?.role)) && (
                                         <DropdownMenuItem onClick={() => setPinOpen(true)} data-testid="change-pin-btn">
                                             <KeyRound className="w-4 h-4 mr-2" />
-                                            Cambiar mi PIN
+                                            {user?.has_pin || user?.role === 'tecnico' ? 'Cambiar mi PIN' : 'Crear mi PIN'}
                                         </DropdownMenuItem>
                                     )}
                                     <DropdownMenuItem onClick={handleLogout} data-testid="logout-btn">

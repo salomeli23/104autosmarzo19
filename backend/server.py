@@ -1032,14 +1032,26 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 
 
 class OwnPinChange(BaseModel):
-    current_pin: str
+    current_pin: Optional[str] = None
     new_pin: str
+    password: Optional[str] = None   # para crear el primer PIN (coordinador / asesor)
 
 
 @api_router.put("/auth/me/pin")
 async def change_own_pin(data: OwnPinChange, current_user: dict = Depends(get_current_user)):
     """El usuario cambia su propio PIN de ingreso: pide el PIN actual. 5 fallos bloquean el cambio (y el ingreso) 5 minutos."""
     user = await db.users.find_one({"id": current_user["id"]}, {"_id": 0})
+    if user and not user.get("pin_hash") and user.get("role") in RESCHEDULE_PIN_ROLES:
+        # Primer PIN de un coordinador o asesor: confirma con su contraseña de ingreso
+        if not data.password or not user.get("password") or not verify_password(data.password, user["password"]):
+            raise HTTPException(status_code=400, detail="La contraseña no es correcta")
+        new_pin = _valid_pin(data.new_pin)
+        if len(set(new_pin)) == 1 or new_pin in ("1234", "4321", "0123", "9876"):
+            raise HTTPException(status_code=400, detail="Elige un PIN más seguro (no repetido ni consecutivo)")
+        await db.users.update_one({"id": user["id"]}, {"$set": {
+            "pin_hash": hash_password(new_pin), "pin_fails": 0, "pin_locked_until": None,
+            "pin_changed_at": datetime.now(timezone.utc).isoformat()}})
+        return {"message": "PIN creado. Con él autorizas reagendar citas", "has_pin": True}
     if not user or not user.get("pin_hash"):
         raise HTTPException(status_code=400, detail="Tu usuario no ingresa con PIN")
     now = datetime.now(timezone.utc)
@@ -8782,8 +8794,38 @@ async def deliver_accessory_request(
 class RescheduleAppointment(BaseModel):
     new_date: str          # YYYY-MM-DD
     new_time_slot: str     # franja_X o 'prioridad'
-    password: str          # contraseña de autorización para reagendar
+    pin: Optional[str] = None       # PIN (4 dígitos) de un coordinador o de un asesor
+    password: Optional[str] = None  # compatibilidad: igual se trata como PIN
     reason: Optional[str] = None
+
+
+RESCHEDULE_PIN_ROLES = [UserRole.COORDINADOR.value, UserRole.ASESOR.value]
+_reschedule_pin_fails: Dict[str, List[datetime]] = {}
+
+
+async def _reschedule_authorizer(pin: str, requester_id: str) -> dict:
+    """Devuelve el coordinador o asesor dueño del PIN. 5 PIN errados del mismo usuario bloquean 5 minutos."""
+    now = datetime.now(timezone.utc)
+    recent = [t for t in _reschedule_pin_fails.get(requester_id, []) if t > now - timedelta(minutes=PIN_LOCK_MINUTES)]
+    _reschedule_pin_fails[requester_id] = recent
+    if len(recent) >= PIN_MAX_FAILS:
+        raise HTTPException(status_code=429, detail=f"Demasiados PIN errados. Intenta de nuevo en {PIN_LOCK_MINUTES} minutos")
+    pin = (pin or "").strip()
+    if re.fullmatch(r"\d{4}", pin):
+        users = await db.users.find(
+            {"role": {"$in": RESCHEDULE_PIN_ROLES}, "pin_hash": {"$exists": True, "$ne": None}, "active": {"$ne": False}},
+            {"_id": 0, "id": 1, "name": 1, "role": 1, "pin_hash": 1},
+        ).to_list(200)
+        # Primero el PIN de quien está reagendando
+        users.sort(key=lambda u: u["id"] != requester_id)
+        for u in users:
+            if verify_password(pin, u["pin_hash"]):
+                _reschedule_pin_fails.pop(requester_id, None)
+                return u
+    _reschedule_pin_fails[requester_id].append(now)
+    left = PIN_MAX_FAILS - len(_reschedule_pin_fails[requester_id])
+    raise HTTPException(status_code=400, detail="PIN incorrecto: usa el PIN de un coordinador o de un asesor"
+                        + (f" ({left} intento(s) más)" if 0 < left < PIN_MAX_FAILS else ""))
 
 
 @api_router.post("/orders/{order_id}/reschedule")
@@ -8792,7 +8834,7 @@ async def reschedule_appointment(
     data: RescheduleAppointment,
     current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.ASESOR, UserRole.COORDINADOR])),
 ):
-    """Reasigna (pospone o adelanta) una cita agendada. Requiere contraseña.
+    """Reasigna (pospone o adelanta) una cita agendada. La autoriza el PIN de un coordinador o de un asesor.
 
     - Actualiza date, time_slot y recalcula scheduled_time.
     - Envía correo con la cita actualizada al cliente.
@@ -8806,11 +8848,9 @@ async def reschedule_appointment(
             detail=f"Solo se puede reasignar una cita en estado AGENDADO. Estado actual: {order.get('status')}",
         )
 
-    # Validar contraseña (configurable en /settings · default 861123)
-    pin_settings = await db.settings.find_one({"key": "reschedule_pin"}, {"_id": 0})
-    expected_pin = (pin_settings or {}).get("value", "861123")
-    if str(data.password).strip() != str(expected_pin).strip():
-        raise HTTPException(status_code=400, detail="Contraseña de reagendación inválida")
+    # Autoriza el PIN de un coordinador o de un asesor
+    authorizer = await _reschedule_authorizer(data.pin or data.password or "", current_user["id"])
+    auth_role = "Coordinador" if authorizer["role"] == UserRole.COORDINADOR.value else "Asesor"
 
     # Parse new date
     try:
@@ -8841,6 +8881,7 @@ async def reschedule_appointment(
             "is_priority": is_priority,
             "rescheduled_at": now,
             "rescheduled_by": current_user["name"],
+            "rescheduled_authorized_by": authorizer["name"],
             "reschedule_count": int(order.get("reschedule_count") or 0) + 1,
             "reschedule_history": [
                 *(order.get("reschedule_history") or []),
@@ -8848,6 +8889,7 @@ async def reschedule_appointment(
                     "from_date": old_date, "from_time": old_time, "from_slot": old_slot,
                     "to_date": data.new_date, "to_time": new_scheduled_time, "to_slot": data.new_time_slot,
                     "at": now, "by": current_user["name"],
+                    "authorized_by": authorizer["name"], "authorized_role": auth_role,
                     "reason": data.reason,
                 },
             ],
@@ -8859,7 +8901,8 @@ async def reschedule_appointment(
         order_id, "CITA_REAGENDADA",
         old_date or "", data.new_date,
         current_user["id"], current_user["name"],
-        {"old_time": old_time, "new_time": new_scheduled_time, "reason": data.reason},
+        {"old_time": old_time, "new_time": new_scheduled_time, "reason": data.reason,
+         "authorized_by": f"{authorizer['name']} ({auth_role})"},
     )
 
     # Enviar correo con la cita actualizada
@@ -8879,6 +8922,7 @@ async def reschedule_appointment(
 
     return {
         "message": "Cita reagendada",
+        "authorized_by": authorizer["name"], "authorized_role": auth_role,
         "old_date": old_date, "old_time": old_time,
         "new_date": data.new_date, "new_time": new_scheduled_time,
         "email_sent": bool(email_id),

@@ -70,6 +70,14 @@ export const AuthProvider = ({ children }) => {
         return userData;
     };
 
+    // Vuelve a leer el usuario (por ejemplo, después de crear su PIN)
+    const refreshUser = async () => {
+        const response = await authAPI.me();
+        setUser(response.data);
+        localStorage.setItem('user', JSON.stringify(response.data));
+        return response.data;
+    };
+
     const logout = () => {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
@@ -82,6 +90,7 @@ export const AuthProvider = ({ children }) => {
         login,
         loginWithPin,
         register,
+        refreshUser,
         logout,
         isAuthenticated: !!user,
         isAdmin: user?.role === 'admin',

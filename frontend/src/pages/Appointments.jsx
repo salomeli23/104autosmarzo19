@@ -365,7 +365,7 @@ export const Appointments = () => {
     };
 
     // ============================================================
-    // REASIGNAR CITA (posponer / adelantar con password)
+    // REAGENDAR CITA (posponer / adelantar con el PIN de un coordinador o asesor)
     // ============================================================
     const [rescheduleOrder, setRescheduleOrder] = useState(null);
     const [rsDate, setRsDate] = useState(new Date());
@@ -409,8 +409,8 @@ export const Appointments = () => {
             toast.error('Selecciona una nueva franja');
             return;
         }
-        if (!rsPassword.trim()) {
-            toast.error('Ingresa la contraseña de autorización');
+        if (rsPassword.length !== 4) {
+            toast.error('Escribe el PIN de 4 dígitos del coordinador o del asesor');
             return;
         }
         setRsLoading(true);
@@ -418,18 +418,19 @@ export const Appointments = () => {
             const res = await paymentsAPI.reschedule(rescheduleOrder.id, {
                 new_date: format(rsDate, 'yyyy-MM-dd'),
                 new_time_slot: rsSlot,
-                password: rsPassword.trim(),
+                pin: rsPassword,
                 reason: rsReason || null,
             });
+            const who = res.data.authorized_by ? ` · Autorizó ${res.data.authorized_by} (${res.data.authorized_role})` : '';
             toast.success(
-                res.data.email_sent
-                    ? `Cita reagendada a ${res.data.new_date} ${res.data.new_time} · Correo enviado`
-                    : `Cita reagendada a ${res.data.new_date} ${res.data.new_time}`
+                `Cita reagendada a ${res.data.new_date} ${res.data.new_time}${who}${res.data.email_sent ? ' · Correo enviado' : ''}`
             );
             closeReschedule();
-            fetchOrders();
+            fetchOrders(selectedDate);
+            fetchSlotsAvailability(selectedDate);
         } catch (e) {
             toast.error(e.response?.data?.detail || 'Error al reagendar');
+            setRsPassword('');
         } finally {
             setRsLoading(false);
         }
@@ -2111,7 +2112,7 @@ export const Appointments = () => {
                                                                             data-testid={`reschedule-btn-${order.id}`}
                                                                         >
                                                                             <CalendarClock className="w-3 h-3 mr-1" />
-                                                                            Reasignar
+                                                                            Reagendar
                                                                         </Button>
                                                                     )}
                                                                     <ServiceInfoButton orderId={order.id} />
@@ -2141,7 +2142,7 @@ export const Appointments = () => {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <CalendarClock className="w-5 h-5 text-cyan-400" />
-                            Reasignar Cita
+                            Reagendar cita
                         </DialogTitle>
                         <DialogDescription asChild>
                             {rescheduleOrder ? (
@@ -2231,27 +2232,27 @@ export const Appointments = () => {
                         <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
                             <Label className="flex items-center gap-1 text-amber-400">
                                 <Lock className="w-4 h-4" />
-                                Contraseña de autorización *
+                                PIN del Coordinador o del Asesor *
                             </Label>
                             <Input
                                 type="password"
                                 inputMode="numeric"
                                 autoComplete="off"
-                                maxLength={10}
+                                maxLength={4}
                                 value={rsPassword}
-                                onChange={(e) => setRsPassword(e.target.value.replace(/\D/g, ''))}
-                                placeholder="Ingresa la contraseña"
-                                className="mt-2"
+                                onChange={(e) => setRsPassword(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                                placeholder="••••"
+                                className="mt-2 font-mono text-xl tracking-[0.5em] text-center h-12"
                                 data-testid="rs-password-input"
                             />
                             <p className="text-[11px] text-muted-foreground mt-1">
-                                Solo administradores tienen esta contraseña. Configurable en /settings.
+                                Lo autoriza un coordinador o un asesor con su PIN de 4 dígitos. Si aún no tiene PIN, lo crea en su menú de usuario → Crear mi PIN.
                             </p>
                         </div>
 
                         <Button
                             onClick={submitReschedule}
-                            disabled={rsLoading || !rsSlot || !rsPassword.trim()}
+                            disabled={rsLoading || !rsSlot || rsPassword.length !== 4}
                             className="w-full brand-glow"
                             data-testid="rs-confirm-btn"
                         >
