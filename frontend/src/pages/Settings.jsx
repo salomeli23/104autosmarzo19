@@ -48,7 +48,7 @@ export const Settings = () => {
     const [completionPinSaving, setCompletionPinSaving] = useState(false);
 
     // Crear usuario
-    const emptyNewUser = { name: '', email: '', phone: '', role: 'accesorios', password: '', pin: '', entry_id: '' };
+    const emptyNewUser = { name: '', username: '', email: '', phone: '', role: 'accesorios', password: '', pin: '', entry_id: '' };
     const [newUser, setNewUser] = useState(emptyNewUser);
     const [creatingUser, setCreatingUser] = useState(false);
     const [createdAccess, setCreatedAccess] = useState(null); // acceso del usuario recién creado, para copiar o enviar
@@ -215,8 +215,8 @@ export const Settings = () => {
     };
 
     const handleCreateUser = async () => {
-        if (!newUser.name.trim() || !newUser.email.trim()) {
-            toast.error('Escribe el nombre y el correo');
+        if (!newUser.name.trim() || (!newUser.email.trim() && !newUser.username.trim())) {
+            toast.error('Escribe el nombre y el usuario o el correo');
             return;
         }
         if (newUser.password.length < 6) {
@@ -231,7 +231,8 @@ export const Settings = () => {
             setCreatingUser(true);
             const res = await authAPI.register({
                 name: newUser.name.trim(),
-                email: newUser.email.trim().toLowerCase(),
+                email: newUser.email.trim().toLowerCase() || null,
+                username: newUser.username.trim() || null,
                 phone: newUser.phone.trim() || null,
                 role: newUser.role,
                 password: newUser.password,
@@ -242,7 +243,7 @@ export const Settings = () => {
             const u = res.data.user;
             setCreatedAccess(u.role === 'tecnico' && newUser.pin
                 ? { user_id: u.id, name: u.name, role: u.role, entry_id: u.entry_id || newUser.entry_id, pin: newUser.pin, phone: u.phone }
-                : { user_id: u.id, name: u.name, role: u.role, email: u.email, password: newUser.password, phone: u.phone });
+                : { user_id: u.id, name: u.name, role: u.role, email: u.email, username: u.username, password: newUser.password, phone: u.phone });
             setNewUser(emptyNewUser);
             toast.success(`Usuario ${res.data.user.name} creado como ${ROLE_LABELS[res.data.user.role] || res.data.user.role}`);
         } catch (error) {
@@ -451,9 +452,15 @@ export const Settings = () => {
                             <Input id="new-user-name" value={newUser.name} onChange={(e) => setNewUser(u => ({ ...u, name: e.target.value }))} data-testid="new-user-name" />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="new-user-email">Correo *</Label>
+                            <Label htmlFor="new-user-username">Usuario para entrar</Label>
+                            <Input id="new-user-username" autoCapitalize="none" autoComplete="off" placeholder="Ej. frankn"
+                                value={newUser.username} onChange={(e) => setNewUser(u => ({ ...u, username: e.target.value.toLowerCase().replace(/\s/g, '') }))} data-testid="new-user-username" />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="new-user-email">Correo {newUser.username.trim() ? '(opcional)' : '*'}</Label>
                             <Input id="new-user-email" type="email" value={newUser.email} onChange={(e) => setNewUser(u => ({ ...u, email: e.target.value }))} data-testid="new-user-email" />
                         </div>
+                        <p className="sm:col-span-2 -mt-1 text-xs text-muted-foreground">Entra con el usuario o con el correo. Si no tiene correo, basta con el usuario.</p>
                         <div className="space-y-2">
                             <Label htmlFor="new-user-phone">Teléfono</Label>
                             <Input id="new-user-phone" value={newUser.phone} onChange={(e) => setNewUser(u => ({ ...u, phone: e.target.value }))} />
@@ -529,7 +536,7 @@ export const Settings = () => {
                                         </div>
                                         <div>
                                             <p className="font-medium">{u.name}</p>
-                                            <p className="text-sm text-muted-foreground">{u.email}</p>
+                                            <p className="text-sm text-muted-foreground">{u.username ? <>Usuario: <b>{u.username}</b>{u.email !== u.username ? ` · ${u.email}` : ''}</> : u.email}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">

@@ -22,7 +22,7 @@ export const accessText = (a) => {
     return [
         `Hola ${a.name}, este es tu acceso a PolarizadosYA! (${ROLE_LABELS[a.role] || a.role})`,
         `Entra aquí: ${appUrl()}/login`,
-        `Correo: *${a.email}*`,
+        a.username ? `Usuario: *${a.username}*` : `Correo: *${a.email}*`,
         `Contraseña: *${a.password}*`,
         `Te recomendamos cambiarla al entrar.`,
     ].join('\n');

@@ -259,7 +259,8 @@ def validate_transition(current_status: str, new_status: str) -> bool:
 
 # ==================== MODELS ====================
 class UserCreate(BaseModel):
-    email: EmailStr
+    email: Optional[EmailStr] = None   # opcional si tiene nombre de usuario
+    username: Optional[str] = None     # para entrar sin correo (ej. "frankn")
     password: str
     name: str
     role: UserRole = UserRole.ASESOR
@@ -268,7 +269,7 @@ class UserCreate(BaseModel):
     entry_id: Optional[str] = None  # técnicos: ID de entrada de 10 dígitos (se usa con el PIN)
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: str      # correo o nombre de usuario
     password: str
 
 class UserResponse(BaseModel):
@@ -283,6 +284,7 @@ class UserResponse(BaseModel):
     has_pin: bool = False  # el técnico puede ingresar con PIN
     entry_id: Optional[str] = None  # ID de entrada del técnico (solo lo ve el administrador)
     must_change_password: bool = False  # cuenta creada con contraseña temporal: la cambia al entrar
+    username: Optional[str] = None  # nombre de usuario para entrar (opcional)
     created_at: str
 
 class TokenResponse(BaseModel):
@@ -974,16 +976,44 @@ async def send_access_sms(user_id: str, data: AccessSms, request: Request,
     return {"message": f"SMS enviado a {user['name']} ({sms.mask_phone(to)})", "simulated": sms.dry_run()}
 
 
+def _clean_username(raw: Optional[str]) -> Optional[str]:
+    """Nombre de usuario en minúsculas, sin tildes ni espacios: "Angélica S" → "angelicas". 3 a 30 letras, números, punto o guion."""
+    if not raw or not str(raw).strip():
+        return None
+    import unicodedata
+    u = unicodedata.normalize("NFKD", str(raw).strip().lower())
+    u = "".join(ch for ch in u if not unicodedata.combining(ch)).replace(" ", "")
+    if not re.fullmatch(r"[a-z0-9._-]{3,30}", u):
+        raise HTTPException(status_code=400, detail="El usuario debe tener de 3 a 30 letras o números (sin espacios)")
+    return u
+
+
+async def _login_taken(value: str, exclude_id: Optional[str] = None) -> bool:
+    """Un correo o nombre de usuario ya lo usa otra cuenta para entrar."""
+    q: Dict[str, Any] = {"$or": [{"email": value}, {"username": value}]}
+    if exclude_id:
+        q["id"] = {"$ne": exclude_id}
+    return bool(await db.users.find_one(q, {"_id": 1}))
+
+
 @api_router.post("/auth/register", response_model=TokenResponse)
 async def register(user_data: UserCreate, current_user: dict = Depends(require_roles([UserRole.ADMIN]))):
-    existing = await db.users.find_one({"email": user_data.email})
-    if existing:
+    username = _clean_username(user_data.username)
+    email = str(user_data.email).strip().lower() if user_data.email else None
+    if not email and not username:
+        raise HTTPException(status_code=400, detail="Escribe el correo o el nombre de usuario")
+    if email and await _login_taken(email):
         raise HTTPException(status_code=400, detail="El email ya está registrado")
+    if username and await _login_taken(username):
+        raise HTTPException(status_code=400, detail=f"El usuario {username} ya existe")
+    if len(user_data.password or "") < 6:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres")
     
     user_id = str(uuid.uuid4())
     user_doc = {
         "id": user_id,
-        "email": user_data.email,
+        "email": email or username,  # sin correo, el usuario sirve también como identificador
+        "username": username,
         "password": hash_password(user_data.password),
         "name": user_data.name,
         "role": user_data.role.value,
@@ -999,11 +1029,11 @@ async def register(user_data: UserCreate, current_user: dict = Depends(require_r
         user_doc["entry_id"] = await _free_entry_id(user_data.entry_id)
     await db.users.insert_one(user_doc)
     
-    token = create_token(user_id, user_data.email, user_data.role.value)
+    token = create_token(user_id, user_doc["email"], user_data.role.value)
     return TokenResponse(
         access_token=token,
         user=UserResponse(
-            id=user_id, email=user_data.email, name=user_data.name,
+            id=user_id, email=user_doc["email"], username=username, name=user_data.name,
             role=user_data.role, phone=user_data.phone, has_pin=bool(user_doc.get("pin_hash")),
             entry_id=user_doc.get("entry_id"),
             created_at=user_doc["created_at"]
@@ -1012,8 +1042,10 @@ async def register(user_data: UserCreate, current_user: dict = Depends(require_r
 
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
-    user = await db.users.find_one({"email": credentials.email}, {"_id": 0}) \
-        or await db.users.find_one({"email": str(credentials.email).strip().lower()}, {"_id": 0})
+    raw = str(credentials.email or "").strip()
+    low = raw.lower()
+    user = await db.users.find_one({"email": raw}, {"_id": 0}) \
+        or await db.users.find_one({"$or": [{"email": low}, {"username": low}]}, {"_id": 0})
     if not user or not verify_password(credentials.password, user["password"]):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
     
@@ -1023,7 +1055,7 @@ async def login(credentials: UserLogin):
         user=UserResponse(
             id=user["id"], email=user["email"], name=user["name"],
             role=UserRole(user["role"]), phone=user.get("phone"), created_at=user["created_at"],
-            must_change_password=bool(user.get("must_change_password")),
+            must_change_password=bool(user.get("must_change_password")), username=user.get("username"),
         )
     )
 
@@ -1033,7 +1065,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         id=current_user["id"], email=current_user["email"], name=current_user["name"],
         role=UserRole(current_user["role"]), phone=current_user.get("phone"), created_at=current_user["created_at"],
         tecnico_roles=current_user.get("tecnico_roles") or [], has_pin=bool(current_user.get("pin_hash")),
-        must_change_password=bool(current_user.get("must_change_password")),
+        must_change_password=bool(current_user.get("must_change_password")), username=current_user.get("username"),
     )
 
 
@@ -1200,6 +1232,7 @@ async def get_users(role: Optional[str] = None, current_user: dict = Depends(get
         tecnico_roles=u.get("tecnico_roles") or [],
         has_pin=bool(u.get("pin_hash")),
         entry_id=u.get("entry_id") if current_user["role"] == UserRole.ADMIN.value else None,
+        username=u.get("username"),
         created_at=u["created_at"]
     ) for u in users]
 
@@ -1213,6 +1246,7 @@ async def get_technicians(current_user: dict = Depends(get_current_user)):
         tecnico_roles=u.get("tecnico_roles") or [],
         has_pin=bool(u.get("pin_hash")),
         entry_id=u.get("entry_id") if current_user["role"] == UserRole.ADMIN.value else None,
+        username=u.get("username"),
         created_at=u["created_at"]
     ) for u in users]
 

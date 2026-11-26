@@ -102,11 +102,14 @@ export const Login = () => {
                         <>
                         <form onSubmit={handleLogin} className="space-y-4">
                             <div className="space-y-2">
-                                <Label htmlFor="login-email">Correo Electrónico</Label>
+                                <Label htmlFor="login-email">Usuario o correo</Label>
                                 <Input
                                     id="login-email"
-                                    type="email"
-                                    placeholder="correo@ejemplo.com"
+                                    type="text"
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    autoComplete="username"
+                                    placeholder="usuario o correo@ejemplo.com"
                                     value={loginData.email}
                                     onChange={(e) => setLoginData({ ...loginData, email: e.target.value })}
                                     required
